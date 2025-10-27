@@ -1,9 +1,11 @@
 import os
+import logging
 import telebot
 from pytube import YouTube
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+logging.basicConfig(level=logging.INFO)
 
+BOT_TOKEN = os.getenv("TOKEN_KEY")
 bot = telebot.TeleBot(BOT_TOKEN)
 
 @bot.message_handler(commands=['start'])
@@ -13,6 +15,9 @@ def start(message):
 @bot.message_handler(func=lambda msg: True)
 def baixar_video(message):
     url = message.text
+    if "youtube.com" not in url and "youtu.be" not in url:
+        bot.reply_to(message, "❗ Por favor, envie um link válido do YouTube.")
+        return
     try:
         bot.reply_to(message, "⬇️ Baixando vídeo, aguarde...")
         yt = YouTube(url)
@@ -22,6 +27,7 @@ def baixar_video(message):
             bot.send_video(message.chat.id, f)
         os.remove(video_path)
     except Exception as e:
-        bot.reply_to(message, f"❌ Erro: {e}")
+        logging.error(f"Erro ao baixar vídeo: {e}")
+        bot.reply_to(message, "❌ Ocorreu um erro ao tentar baixar o vídeo.")
 
-bot.polling()
+bot.infinity_polling()
