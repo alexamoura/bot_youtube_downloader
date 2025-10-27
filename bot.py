@@ -42,7 +42,8 @@ def process_download(update, context, url):
             'retries': 10,
             'fragment_retries': 10,
             'noplaylist': True,
-            'no_check_certificate': True
+            'no_check_certificate': True,
+            'cookiefile': 'cookies.txt'  # <- cookies incluídos aqui
         }
 
         try:
