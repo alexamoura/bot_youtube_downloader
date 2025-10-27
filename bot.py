@@ -27,7 +27,7 @@ def start(update: Update, context: CallbackContext):
 
 # Processamento do download
 def process_download(update, context, url):
-    msg = update.message.reply_text("📤 Preparando download...")
+    msg = update.reply_text("📤 Preparando download...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         caminho_saida = os.path.join(tmpdir, "%(title)s.%(ext)s")
@@ -47,25 +47,25 @@ def process_download(update, context, url):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
         except Exception as e:
-            update.message.reply_text(f"🚧 Erro no download: {str(e)}")
+            update.reply_text(f"🚧 Erro no download: {str(e)}")
             return
 
         arquivos = os.listdir(tmpdir)
         if not arquivos:
-            update.message.reply_text("🚧 Nenhum vídeo encontrado.")
+            update.reply_text("🚧 Nenhum vídeo encontrado.")
             return
 
         arquivo = os.path.join(tmpdir, arquivos[0])
         tamanho = os.path.getsize(arquivo)
 
         if tamanho > 50 * 1024 * 1024:
-            update.message.reply_text("🚧 O vídeo é muito grande para ser enviado pelo Telegram.")
+            update.reply_text("🚧 O vídeo é muito grande para ser enviado pelo Telegram.")
             return
 
         with open(arquivo, "rb") as f:
-            update.message.reply_video(video=f)
+            update.reply_video(video=f)
 
-        update.message.reply_text("✅ Vídeo enviado com sucesso!")
+        update.reply_text("✅ Vídeo enviado com sucesso!")
 
 # Worker da fila
 def worker():
