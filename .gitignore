@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+env/
+.venv/
+venv/
+
+# local secrets / cookies
+cookies.txt
+*.b64
+.env
+
+# OS
+.DS_Store
