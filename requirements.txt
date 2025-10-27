@@ -1,4 +1,0 @@
-flask
-git+https://github.com/pytube/pytube
-yt_dlp
-python-telegram-bot==13.15
