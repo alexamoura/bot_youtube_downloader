@@ -35,12 +35,14 @@ def process_download(update, context, url):
         ydl_opts = {
             'outtmpl': caminho_saida,
             'quiet': True,
-            'format': 'best[height<=720]+bestaudio/best',
+            'format': 'best[height<=720]/best',
             'merge_output_format': 'mp4',
             'concurrent_fragment_downloads': 2,
             'force_ipv4': True,
             'retries': 10,
-            'fragment_retries': 10
+            'fragment_retries': 10,
+            'noplaylist': True,
+            'no_check_certificate': True
         }
 
         try:
@@ -61,6 +63,7 @@ def process_download(update, context, url):
         if tamanho > 50 * 1024 * 1024:
             update.reply_text("🚧 O vídeo é muito grande para ser enviado pelo Telegram.")
             return
+
         with open(arquivo, "rb") as f:
             update.reply_video(video=f)
 
