@@ -19,10 +19,11 @@ def iniciar_bot():
 
 threading.Thread(target=iniciar_bot).start()
 
-# Comandos do bot
+# Comando /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Olá! Envie /download <link> para baixar um vídeo permitido 🎥")
 
+# Comando /download
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Uso correto: /download <link>")
@@ -30,6 +31,15 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = context.args[0]
     msg = await update.message.reply_text("📥 Preparando download...")
+
+    # Verifica se o arquivo cookies.txt existe
+    cookies_path = "cookies.txt"
+    if not os.path.exists(cookies_path):
+        await update.message.reply_text(
+            "⚠️ O arquivo 'cookies.txt' não foi encontrado.\n"
+            "Para baixar vídeos que exigem login, acesse o YouTube com sua conta e exporte os cookies usando a extensão 'Get cookies.txt'."
+        )
+        return
 
     with tempfile.TemporaryDirectory() as tmpdir:
         caminho_saida = os.path.join(tmpdir, "%(title)s.%(ext)s")
@@ -66,7 +76,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'force_ipv4': True,
             'retries': 10,
             'fragment_retries': 10,
-            'cookies': 'cookies.txt'
+            'cookies': cookies_path
         }
 
         try:
