@@ -1,4 +1,3 @@
-
 import os
 import tempfile
 import asyncio
@@ -100,7 +99,7 @@ application.add_handler(CommandHandler("download", download))
 def webhook():
     update_data = request.get_json(force=True)
     update = Update.de_json(update_data, application.bot)
-    asyncio.create_task(application.update_queue.put(update))
+    application.process_update(update)
     return "ok"
 
 @app.route("/")
