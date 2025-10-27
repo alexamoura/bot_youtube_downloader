@@ -173,23 +173,38 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # cria token e fluxo de confirmação igual ao do handle_message
-        token = uuid.uuid4().hex
-        confirm_keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("📥 Baixar", callback_data=f"dl:{token}"),
-                    InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}"),
-                ]
-            ]
+        
+token = uuid.uuid4().hex
+confirm_keyboard = InlineKeyboardMarkup([
+    [
+        InlineKeyboardButton("📥 Baixar", callback_data=f"dl:{token}"),
+        InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}")
+    ]
+])
+
+# Envia botão por DM se estiver em grupo
+if chat_type in ["group", "supergroup"]:
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"Você quer baixar este link?\n{url}",
+            reply_markup=confirm_keyboard
         )
-        confirm_msg = await update.message.reply_text(f"Você quer baixar este link?\n{url}", reply_markup=confirm_keyboard)
-        PENDING[token] = {
-            "url": url,
-            "chat_id": update.message.chat_id,
-            "from_user_id": update.message.from_user.id,
-            "confirm_msg_id": confirm_msg.message_id,
-            "progress_msg": None,
-        }
+        await update.message.reply_text("✅ Link recebido! Verifique sua conversa privada comigo para confirmar o download.")
+    except Exception:
+        await update.message.reply_text("⚠️ Não consegui enviar mensagem privada. Verifique se você iniciou uma conversa comigo.")
+else:
+    confirm_msg = await update.message.reply_text(f"Você quer baixar este link?\n{url}", reply_markup=confirm_keyboard)
+
+        
+PENDING[token] = {
+    "url": url,
+    "chat_id": update.message.chat_id,
+    "from_user_id": user_id,
+    "confirm_msg_id": confirm_msg.message_id if chat_type == "private" else None,
+    "progress_msg": None,
+}
+
         return
 
     # comportamento padrão
