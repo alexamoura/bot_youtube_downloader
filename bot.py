@@ -1,6 +1,7 @@
 import os
 import tempfile
 import asyncio
+import threading
 import yt_dlp
 from flask import Flask, request
 from telegram import Update
@@ -10,6 +11,15 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 app = Flask(__name__)
 application = ApplicationBuilder().token(TOKEN).build()
 
+# Inicializa o bot em uma thread separada
+def iniciar_bot():
+    async def init():
+        await application.initialize()
+    asyncio.run(init())
+
+threading.Thread(target=iniciar_bot).start()
+
+# Comandos do bot
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Olá! Envie /download <link> para baixar um vídeo permitido 🎥")
 
@@ -92,9 +102,11 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text("✅ Vídeo enviado com sucesso!")
 
+# Handlers
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("download", download))
 
+# Webhook
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     update_data = request.get_json(force=True)
