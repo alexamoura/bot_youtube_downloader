@@ -173,38 +173,36 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # cria token e fluxo de confirmação igual ao do handle_message
-        
-token = uuid.uuid4().hex
-confirm_keyboard = InlineKeyboardMarkup([
-    [
-        InlineKeyboardButton("📥 Baixar", callback_data=f"dl:{token}"),
-        InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}")
-    ]
-])
-
-# Envia botão por DM se estiver em grupo
-if chat_type in ["group", "supergroup"]:
+        token = uuid.uuid4().hex
+        confirm_keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("📥 Baixar", callback_data=f"dl:{token}"),
+                    InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}"),
+                ]
+            ]
+        )
+        if chat_type in ['group', 'supergroup']:
     try:
         await context.bot.send_message(
             chat_id=user_id,
-            text=f"Você quer baixar este link?\n{url}",
+            text=f'Você quer baixar este link?
+{url}',
             reply_markup=confirm_keyboard
         )
-        await update.message.reply_text("✅ Link recebido! Verifique sua conversa privada comigo para confirmar o download.")
+        await update.message.reply_text('✅ Link recebido! Verifique sua conversa privada comigo para confirmar o download.')
     except Exception:
-        await update.message.reply_text("⚠️ Não consegui enviar mensagem privada. Verifique se você iniciou uma conversa comigo.")
+        await update.message.reply_text('⚠️ Não consegui enviar mensagem privada. Verifique se você iniciou uma conversa comigo.')
 else:
-    confirm_msg = await update.message.reply_text(f"Você quer baixar este link?\n{url}", reply_markup=confirm_keyboard)
-
-        
-PENDING[token] = {
-    "url": url,
-    "chat_id": update.message.chat_id,
-    "from_user_id": user_id,
-    "confirm_msg_id": confirm_msg.message_id if chat_type == "private" else None,
-    "progress_msg": None,
-}
-
+    confirm_msg = await update.message.reply_text(f'Você quer baixar este link?
+{url}', reply_markup=confirm_keyboard)
+        PENDING[token] = {
+            "url": url,
+            "chat_id": update.message.chat_id,
+            "from_user_id": update.message.from_user.id,
+            "confirm_msg_id": confirm_msg.message_id,
+            "progress_msg": None,
+        }
         return
 
     # comportamento padrão
@@ -221,7 +219,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = update.message.text.strip()
-    chat_type = update.message.chat.type  # 'private', 'group', 'supergroup', 'channel'
+    
+    user_id = update.message.from_user.id
+    if chat_type == 'private' and user_id != 6766920288:
+        return
+    if chat_type != 'private' and not is_bot_mentioned(update):
+        return
+chat_type = update.message.chat.type  # 'private', 'group', 'supergroup', 'channel'
 
     # se não for privado, só processa quando o bot for mencionado
     if chat_type != "private":
@@ -267,7 +271,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
-        confirm_msg = await update.message.reply_text(f"Você quer baixar este link?\n{url}", reply_markup=confirm_keyboard)
+        if chat_type in ['group', 'supergroup']:
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f'Você quer baixar este link?
+{url}',
+            reply_markup=confirm_keyboard
+        )
+        await update.message.reply_text('✅ Link recebido! Verifique sua conversa privada comigo para confirmar o download.')
+    except Exception:
+        await update.message.reply_text('⚠️ Não consegui enviar mensagem privada. Verifique se você iniciou uma conversa comigo.')
+else:
+    confirm_msg = await update.message.reply_text(f'Você quer baixar este link?
+{url}', reply_markup=confirm_keyboard)
     except Exception:
         confirm_msg = await context.bot.send_message(chat_id=update.message.chat_id, text=f"Você quer baixar este link?\n{url}", reply_markup=confirm_keyboard)
 
