@@ -206,18 +206,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = update.message.text.strip()
-    
-chat_type = update.message.chat.type
-user_id = update.message.from_user.id
+    chat_type = update.message.chat.type  # 'private', 'group', 'supergroup', 'channel'
 
-# Ignora mensagens privadas de outros usuários, exceto do dono
-if chat_type == "private" and user_id != 6766920288:
-    return
-
-# Se não for privado, só processa quando o bot for mencionado
-if chat_type != "private" and not is_bot_mentioned(update):
-    return
-
+    # se não for privado, só processa quando o bot for mencionado
+    if chat_type != "private":
+        if not is_bot_mentioned(update):
+            return
 
     # extrair URL por entidades primeiro
     url = None
