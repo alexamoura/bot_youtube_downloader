@@ -1,4 +1,3 @@
-
 import os
 import tempfile
 import yt_dlp
@@ -22,11 +21,11 @@ youtube_regex = re.compile(r"https?://(www\.)?(youtube\.com|youtu\.be)/[\w\-?=&#
 
 # Comando /start
 def start(update: Update, context: CallbackContext):
-    update.message.reply_text("Olá! Envie um link do YouTube para baixar o vídeo f3a5")
+    update.message.reply_text("Olá! Envie um link do YouTube para baixar o vídeo 🎥")
 
 # Processamento do download
 def process_download(update, context, url):
-    msg = update.message.reply_text("f4e5 Preparando download...")
+    msg = update.message.reply_text("📤 Preparando download...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         caminho_saida = os.path.join(tmpdir, "%(title)s.%(ext)s")
@@ -46,19 +45,19 @@ def process_download(update, context, url):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
         except Exception as e:
-            update.message.reply_text(f"f6a7 Erro no download: {str(e)}")
+            update.message.reply_text(f"🚧 Erro no download: {str(e)}")
             return
 
         arquivos = os.listdir(tmpdir)
         if not arquivos:
-            update.message.reply_text("f6a7 Nenhum vídeo encontrado.")
+            update.message.reply_text("🚧 Nenhum vídeo encontrado.")
             return
 
         arquivo = os.path.join(tmpdir, arquivos[0])
         tamanho = os.path.getsize(arquivo)
 
         if tamanho > 50 * 1024 * 1024:
-            update.message.reply_text("f6a7 O vídeo é muito grande para ser enviado pelo Telegram.")
+            update.message.reply_text("🚧 O vídeo é muito grande para ser enviado pelo Telegram.")
             return
 
         with open(arquivo, "rb") as f:
@@ -85,8 +84,7 @@ def handle_message(update: Update, context: CallbackContext):
         url = match.group(0)
         keyboard = [[InlineKeyboardButton("Sim, baixar", callback_data=f"download|{url}")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        update.message.reply_text(f"Você quer baixar este vídeo?
-{url}", reply_markup=reply_markup)
+        update.message.reply_text(f'Você quer baixar este vídeo?\n{url}', reply_markup=reply_markup)
 
 # Callback do botão
 def button_callback(update: Update, context: CallbackContext):
@@ -112,6 +110,9 @@ def webhook():
 def index():
     return "Bot está rodando com webhook!"
 
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
