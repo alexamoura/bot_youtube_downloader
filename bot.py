@@ -43,7 +43,9 @@ def process_download(update, context, url):
             'fragment_retries': 10,
             'noplaylist': True,
             'no_check_certificate': True,
-            'cookiefile': 'cookies.txt'  # <- cookies incluídos aqui
+            'cookiefile': 'cookies.txt',
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'force_generic_extractor': True
         }
 
         try:
