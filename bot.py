@@ -100,7 +100,7 @@ application.add_handler(CommandHandler("download", download))
 def webhook():
     update_data = request.get_json(force=True)
     update = Update.de_json(update_data, application.bot)
-    application.update_queue.put(update)
+    asyncio.create_task(application.update_queue.put(update))
     return "ok"
 
 @app.route("/")
