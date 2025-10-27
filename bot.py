@@ -4,6 +4,7 @@ import yt_dlp
 import threading
 import queue
 import re
+import uuid
 from flask import Flask, request
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Dispatcher, CommandHandler, CallbackContext, MessageHandler, Filters, CallbackQueryHandler
@@ -15,6 +16,7 @@ app = Flask(__name__)
 dispatcher = Dispatcher(bot=bot, update_queue=None, use_context=True)
 
 job_queue = queue.Queue()
+download_links = {}
 
 # Regex para detectar links do YouTube
 youtube_regex = re.compile(r"https?://(www\.)?(youtube\.com|youtu\.be)/[\w\-?=&#%]+")
@@ -82,9 +84,11 @@ def handle_message(update: Update, context: CallbackContext):
     match = youtube_regex.search(text)
     if match:
         url = match.group(0)
-        keyboard = [[InlineKeyboardButton("Sim, baixar", callback_data=f"download|{url}")]]
+        uid = str(uuid.uuid4())[:8]
+        download_links[uid] = url
+        keyboard = [[InlineKeyboardButton("Sim, baixar", callback_data=f"download|{uid}")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        update.message.reply_text(f'Você quer baixar este vídeo?\n{url}', reply_markup=reply_markup)
+        update.message.reply_text(f"Você quer baixar este vídeo?\n{url}", reply_markup=reply_markup)
 
 # Callback do botão
 def button_callback(update: Update, context: CallbackContext):
@@ -92,7 +96,11 @@ def button_callback(update: Update, context: CallbackContext):
     query.answer()
     data = query.data
     if data.startswith("download|"):
-        url = data.split("|", 1)[1]
+        uid = data.split("|", 1)[1]
+        url = download_links.get(uid)
+        if not url:
+            query.edit_message_text("🚫 Link não encontrado ou expirado.")
+            return
         query.edit_message_text("⏳ Seu download foi adicionado à fila. Aguarde...")
         job_queue.put((query.message, context, url))
 
