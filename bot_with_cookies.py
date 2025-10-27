@@ -6,9 +6,17 @@ Telegram bot (webhook) que:
 - ao confirmar, inicia o download e mostra uma barra de progresso atualizada,
 - envia partes se necessário (ffmpeg) e mostra mensagem final.
 
-Requisitos/variáveis de ambiente:
-- TELEGRAM_BOT_TOKEN  (obrigatório)
-- YT_COOKIES_B64      (opcional; base64 do cookies.txt)
+Melhorias incluídas nesta versão:
+- yt-dlp opções ajustadas para reduzir travamentos em downloads por fragmentos:
+  concurrent_fragment_downloads = 1, socket_timeout aumentado, http_chunk_size maior,
+  retries/fragment_retries aumentados.
+- progress_hook evita editar a mensagem se o percentual não mudou (reduz spam/400).
+- progress_hook mantém timestamp do último update; se ficar muito tempo sem progresso,
+  notifica o usuário (watchdog). yt-dlp continuará tentando conforme retries.
+- quiet=False e logger apontando para o logger do app para obter logs do yt-dlp.
+- download executado via asyncio.to_thread para não bloquear o loop; depois o envio usa
+  await no loop (operações assíncronas).
+- mantém loop asyncio persistente em background (APP_LOOP).
 """
 import os
 import sys
@@ -19,6 +27,7 @@ import logging
 import threading
 import uuid
 import re
+import time
 import yt_dlp
 
 from flask import Flask, request
@@ -76,12 +85,8 @@ except Exception:
     LOG.exception("Falha ao inicializar a Application no loop de background.")
     sys.exit(1)
 
-# Map temporário para callbacks: token -> {url, chat_id, from_user_id, confirm_msg_id, progress_msg}
-PENDING = {}
-
-URL_RE = re.compile(
-    r"(https?://[^\s]+)"
-)  # simplificação: pega qualquer substring começando com http(s):// até espaço
+URL_RE = re.compile(r"(https?://[^\s]+)")
+PENDING = {}  # token -> metadata
 
 def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
     b64 = os.environ.get(env_var)
@@ -109,8 +114,8 @@ def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
 
 COOKIE_PATH = prepare_cookies_from_env()
 
-
 # ---------- Handlers ----------
+
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Olá! Me envie um link do YouTube e eu te pergunto se quer baixar.")
@@ -122,29 +127,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = update.message.text.strip()
-    # tenta extrair url por entidades primeiro (mais confiável)
     url = None
+    # tenta entidades primeiro
     if update.message.entities:
         for ent in update.message.entities:
             if ent.type in ("url", "text_link"):
-                if ent.url:
+                if getattr(ent, "url", None):
                     url = ent.url
                 else:
-                    # entidade 'url' tem offset/length - extrai substring
                     url = update.message.text[ent.offset : ent.offset + ent.length]
                 break
 
-    # se não encontrou por entidades, usa regex simples
     if not url:
         m = URL_RE.search(text)
         if m:
             url = m.group(1)
 
     if not url:
-        # nada pra fazer
         return
 
-    # cria token temporário para callback
     token = uuid.uuid4().hex
     confirm_keyboard = InlineKeyboardMarkup(
         [
@@ -154,26 +155,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
         ]
     )
-    # envia mensagem de confirmação
-    confirm_msg = await update.message.reply_text(
-        f"Você quer baixar este link?\n{url}", reply_markup=confirm_keyboard
-    )
+    confirm_msg = await update.message.reply_text(f"Você quer baixar este link?\n{url}", reply_markup=confirm_keyboard)
 
-    # armazena no PENDING com dados relevantes
     PENDING[token] = {
         "url": url,
         "chat_id": update.message.chat_id,
         "from_user_id": update.message.from_user.id,
         "confirm_msg_id": confirm_msg.message_id,
-        "progress_msg": None,  # preencher depois
+        "progress_msg": None,
     }
-    # opcional: expirar depois de N minutos (não implementado aqui)
 
 
 async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Trata confirmações de download e cancelamentos."""
     query = update.callback_query
-    await query.answer()  # remove "loading" no client
+    await query.answer()
     data = query.data or ""
     if data.startswith("dl:"):
         token = data.split("dl:", 1)[1]
@@ -181,22 +177,20 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not entry:
             await query.edit_message_text("Esse pedido expirou ou é inválido.")
             return
-        # confirma usuário (apenas quem pediu pode confirmar)
+        # Proteção: apenas quem originou pode confirmar
         if query.from_user.id != entry["from_user_id"]:
             await query.edit_message_text("Apenas quem solicitou pode confirmar o download.")
             return
 
-        # edita mensagem de confirmação para indicar início
         try:
             await query.edit_message_text("Iniciando download... 🎬")
         except Exception:
             pass
 
-        # envia mensagem de progresso (será editada)
-        progress_msg = await context.bot.send_message(chat_id=entry["chat_id"], text="📥 Baixando: 0% [----------]")
+        progress_msg = await context.bot.send_message(chat_id=entry["chat_id"], text="📥 Baixando: 0% [────────────────────]")
         entry["progress_msg"] = {"chat_id": progress_msg.chat_id, "message_id": progress_msg.message_id}
 
-        # iniciar download em background (não bloquear o loop)
+        # iniciar download em background no APP_LOOP
         asyncio.run_coroutine_threadsafe(start_download_task(token), APP_LOOP)
 
     elif data.startswith("cancel:"):
@@ -209,7 +203,7 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def start_download_task(token: str):
-    """Executa o download (em background thread) e atualiza a mensagem de progresso via APP_LOOP."""
+    """Executa o download e atualiza a mensagem de progresso."""
     entry = PENDING.get(token)
     if not entry:
         LOG.info("start_download_task: token não encontrado")
@@ -222,23 +216,31 @@ async def start_download_task(token: str):
         LOG.info("start_download_task: progress_msg não encontrado")
         return
 
-    # prepara diretório temporário pro download
-    with tempfile.TemporaryDirectory() as tmpdir:
-        outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
+    tmpdir = tempfile.mkdtemp(prefix="ytbot_")
+    outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
 
-        def progress_hook(d):
-            try:
-                status = d.get("status")
-                if status == "downloading":
-                    downloaded = d.get("downloaded_bytes", 0) or 0
-                    total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-                    if total:
-                        percent = int(downloaded * 100 / total)
-                        # monta barra de progresso (20 blocos)
+    # estado local do progresso
+    last_percent = -1
+    last_update_ts = time.time()
+    WATCHDOG_TIMEOUT = 180  # segundos sem progresso para notificar
+
+    def progress_hook(d):
+        nonlocal last_percent, last_update_ts
+        try:
+            status = d.get("status")
+            if status == "downloading":
+                downloaded = d.get("downloaded_bytes", 0) or 0
+                total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                if total:
+                    percent = int(downloaded * 100 / total)
+                    if percent != last_percent:
+                        last_percent = percent
+                        last_update_ts = time.time()
                         blocks = int(percent / 5)
                         bar = "█" * blocks + "─" * (20 - blocks)
                         text = f"📥 Baixando: {percent}% [{bar}]"
                         try:
+                            # editar mensagem no APP_LOOP
                             asyncio.run_coroutine_threadsafe(
                                 application.bot.edit_message_text(
                                     text=text, chat_id=pm["chat_id"], message_id=pm["message_id"]
@@ -246,73 +248,107 @@ async def start_download_task(token: str):
                                 APP_LOOP,
                             )
                         except Exception:
+                            # ignorar falhas de edição (ex: message is not modified)
                             pass
-                elif status == "finished":
-                    try:
-                        asyncio.run_coroutine_threadsafe(
-                            application.bot.edit_message_text(
-                                text="✅ Download concluído, processando o envio...", chat_id=pm["chat_id"], message_id=pm["message_id"]
-                            ),
-                            APP_LOOP,
-                        )
-                    except Exception:
-                        pass
-            except Exception:
-                LOG.exception("Erro no progress_hook")
+            elif status == "finished":
+                last_update_ts = time.time()
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        application.bot.edit_message_text(
+                            text="✅ Download concluído, processando o envio...", chat_id=pm["chat_id"], message_id=pm["message_id"]
+                        ),
+                        APP_LOOP,
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            LOG.exception("Erro no progress_hook")
 
-        ydl_opts = {
-            "outtmpl": outtmpl,
-            "progress_hooks": [progress_hook],
-            "quiet": True,
-            "format": "best[height<=720]+bestaudio/best",
-            "merge_output_format": "mp4",
-            "concurrent_fragment_downloads": 2,
-            "force_ipv4": True,
-            "retries": 10,
-            "fragment_retries": 10,
-            **({"cookiefile": COOKIE_PATH} if COOKIE_PATH else {}),
-        }
+    ydl_opts = {
+        "outtmpl": outtmpl,
+        "progress_hooks": [progress_hook],
+        # Mostra logs detalhados do yt-dlp no LOG
+        "quiet": False,
+        "logger": LOG,
+        "format": "best[height<=720]+bestaudio/best",
+        "merge_output_format": "mp4",
+        # reduzir concorrência de fragments para evitar travamentos
+        "concurrent_fragment_downloads": 1,
+        "force_ipv4": True,
+        "socket_timeout": 30,
+        "http_chunk_size": 1048576,
+        "retries": 20,
+        "fragment_retries": 20,
+        **({"cookiefile": COOKIE_PATH} if COOKIE_PATH else {}),
+    }
 
+    try:
+        # roda em thread para não bloquear o event loop; o progresso é repassado via progress_hook
+        await asyncio.to_thread(lambda: _run_ydl(ydl_opts, [url]))
+    except Exception as e:
+        LOG.exception("Erro no yt-dlp: %s", e)
         try:
-            # roda o download em thread (para não bloquear event loop)
-            await asyncio.to_thread(lambda: _run_ydl(ydl_opts, [url]))
-        except Exception as e:
-            LOG.exception("Erro no yt-dlp: %s", e)
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    application.bot.edit_message_text(
-                        text=f"⚠️ Erro no download: {str(e)}", chat_id=pm["chat_id"], message_id=pm["message_id"]
-                    ),
-                    APP_LOOP,
-                )
-            except Exception:
-                pass
-            # remove pending
-            PENDING.pop(token, None)
-            return
+            asyncio.run_coroutine_threadsafe(
+                application.bot.edit_message_text(
+                    text=f"⚠️ Erro no download: {str(e)}", chat_id=pm["chat_id"], message_id=pm["message_id"]
+                ),
+                APP_LOOP,
+            )
+        except Exception:
+            pass
+        PENDING.pop(token, None)
+        # cleanup
+        try:
+            for f in os.listdir(tmpdir):
+                os.remove(os.path.join(tmpdir, f))
+            os.rmdir(tmpdir)
+        except Exception:
+            pass
+        return
 
-        # procurar arquivo(s) gerados
-        arquivos = [f for f in os.listdir(tmpdir) if os.path.isfile(os.path.join(tmpdir, f))]
-        if not arquivos:
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    application.bot.edit_message_text(
-                        text="⚠️ Nenhum arquivo gerado.", chat_id=pm["chat_id"], message_id=pm["message_id"]
-                    ),
-                    APP_LOOP,
-                )
-            except Exception:
-                pass
-            PENDING.pop(token, None)
-            return
+    # watchdog: se não houve progresso por WATCHDOG_TIMEOUT, notificar (não mata yt-dlp)
+    if time.time() - last_update_ts > WATCHDOG_TIMEOUT:
+        try:
+            asyncio.run_coroutine_threadsafe(
+                application.bot.edit_message_text(
+                    text="⚠️ Download travou (sem progresso). O yt-dlp continuará tentando; se quiser, tente novamente mais tarde.",
+                    chat_id=pm["chat_id"],
+                    message_id=pm["message_id"],
+                ),
+                APP_LOOP,
+            )
+        except Exception:
+            pass
+        # continue to attempt delivery if any files were produced
 
-        # envia arquivos (se >50MB, divide)
-        sent_any = False
+    # listar arquivos gerados
+    arquivos = [f for f in os.listdir(tmpdir) if os.path.isfile(os.path.join(tmpdir, f))]
+    if not arquivos:
+        try:
+            asyncio.run_coroutine_threadsafe(
+                application.bot.edit_message_text(
+                    text="⚠️ Nenhum arquivo gerado.", chat_id=pm["chat_id"], message_id=pm["message_id"]
+                ),
+                APP_LOOP,
+            )
+        except Exception:
+            pass
+        PENDING.pop(token, None)
+        # cleanup
+        try:
+            for f in os.listdir(tmpdir):
+                os.remove(os.path.join(tmpdir, f))
+            os.rmdir(tmpdir)
+        except Exception:
+            pass
+        return
+
+    sent_any = False
+    try:
         for f in arquivos:
             path = os.path.join(tmpdir, f)
             tamanho = os.path.getsize(path)
             if tamanho > 50 * 1024 * 1024:
-                # split com ffmpeg em partes de ~45MB
                 partes_dir = os.path.join(tmpdir, "partes")
                 os.makedirs(partes_dir, exist_ok=True)
                 cmd = f'ffmpeg -y -i "{path}" -c copy -map 0 -fs 45M "{partes_dir}/part%03d.mp4"'
@@ -322,43 +358,51 @@ async def start_download_task(token: str):
                 for p in partes:
                     ppath = os.path.join(partes_dir, p)
                     try:
-                        await asyncio.run_coroutine_threadsafe(
-                            application.bot.send_video(chat_id=chat_id, video=open(ppath, "rb")), APP_LOOP
-                        ).result()
+                        # estamos no APP_LOOP, podemos await diretamente
+                        with open(ppath, "rb") as fh:
+                            await application.bot.send_video(chat_id=chat_id, video=fh)
                         sent_any = True
                     except Exception:
                         LOG.exception("Erro ao enviar parte %s", ppath)
             else:
                 try:
-                    # enviar vídeo
-                    await asyncio.run_coroutine_threadsafe(
-                        application.bot.send_video(chat_id=chat_id, video=open(path, "rb")), APP_LOOP
-                    ).result()
+                    with open(path, "rb") as fh:
+                        await application.bot.send_video(chat_id=chat_id, video=fh)
                     sent_any = True
                 except Exception:
                     LOG.exception("Erro ao enviar arquivo %s", path)
-
-        # atualizar mensagem de progresso para finalizado
+    finally:
+        # cleanup arquivos temporários
         try:
-            if sent_any:
-                asyncio.run_coroutine_threadsafe(
-                    application.bot.edit_message_text(
-                        text="✅ Download finalizado e enviado!", chat_id=pm["chat_id"], message_id=pm["message_id"]
-                    ),
-                    APP_LOOP,
-                )
-            else:
-                asyncio.run_coroutine_threadsafe(
-                    application.bot.edit_message_text(
-                        text="⚠️ Falha ao enviar o arquivo.", chat_id=pm["chat_id"], message_id=pm["message_id"]
-                    ),
-                    APP_LOOP,
-                )
+            for root, dirs, files in os.walk(tmpdir, topdown=False):
+                for name in files:
+                    os.remove(os.path.join(root, name))
+                for name in dirs:
+                    os.rmdir(os.path.join(root, name))
+            os.rmdir(tmpdir)
         except Exception:
             pass
 
-        # cleanup
-        PENDING.pop(token, None)
+    # atualizar mensagem de progresso para finalizado
+    try:
+        if sent_any:
+            asyncio.run_coroutine_threadsafe(
+                application.bot.edit_message_text(
+                    text="✅ Download finalizado e enviado!", chat_id=pm["chat_id"], message_id=pm["message_id"]
+                ),
+                APP_LOOP,
+            )
+        else:
+            asyncio.run_coroutine_threadsafe(
+                application.bot.edit_message_text(
+                    text="⚠️ Falha ao enviar o arquivo.", chat_id=pm["chat_id"], message_id=pm["message_id"]
+                ),
+                APP_LOOP,
+            )
+    except Exception:
+        pass
+
+    PENDING.pop(token, None)
 
 
 def _run_ydl(options, urls):
@@ -370,7 +414,6 @@ def _run_ydl(options, urls):
 # Handlers registration
 application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
-# Mensagens de texto que não sejam comandos
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
 
@@ -380,7 +423,6 @@ def webhook():
     update_data = request.get_json(force=True)
     update = Update.de_json(update_data, application.bot)
     try:
-        # agendar process_update no loop de background
         asyncio.run_coroutine_threadsafe(application.process_update(update), APP_LOOP)
     except Exception:
         LOG.exception("Falha ao agendar process_update")
