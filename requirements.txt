@@ -1,4 +1,3 @@
-pyTelegramBotAPI
 flask
 git+https://github.com/pytube/pytube
 yt_dlp
