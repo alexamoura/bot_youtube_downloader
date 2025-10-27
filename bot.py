@@ -2,12 +2,20 @@ import os
 import tempfile
 import asyncio
 import yt_dlp
+from flask import Flask, request
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+)
 
 # =======================
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")  # Token via variável de ambiente
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # =======================
+
+app = Flask(__name__)
+application = ApplicationBuilder().token(TOKEN).build()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -57,7 +65,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'force_ipv4': True,
             'retries': 10,
             'fragment_retries': 10,
-            'cookies': 'cookies.txt',  # se necessário para vídeos restritos
+            'cookies': 'cookies.txt',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
         }
 
@@ -94,16 +102,20 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text("✅ Vídeo enviado com sucesso!")
 
-def main():
-    if not TOKEN:
-        print("❌ Variável TELEGRAM_BOT_TOKEN não definida.")
-        return
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("download", download))
 
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("download", download))
-    print("Bot rodando... ✅")
-    app.run_polling()
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update_data = request.get_json(force=True)
+    update = Update.de_json(update_data, application.bot)
+    application.update_queue.put(update)
+    return "ok"
+
+@app.route("/")
+def index():
+    return "Bot está rodando com webhook!"
 
 if __name__ == "__main__":
-    main()
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
