@@ -182,20 +182,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ]
             ]
         )
-        if chat_type in ['group', 'supergroup']:
-    try:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=f'Você quer baixar este link?
-{url}',
-            reply_markup=confirm_keyboard
-        )
-        await update.message.reply_text('✅ Link recebido! Verifique sua conversa privada comigo para confirmar o download.')
-    except Exception:
-        await update.message.reply_text('⚠️ Não consegui enviar mensagem privada. Verifique se você iniciou uma conversa comigo.')
-else:
-    confirm_msg = await update.message.reply_text(f'Você quer baixar este link?
-{url}', reply_markup=confirm_keyboard)
+        confirm_msg = await update.message.reply_text(f"Você quer baixar este link?\n{url}", reply_markup=confirm_keyboard)
         PENDING[token] = {
             "url": url,
             "chat_id": update.message.chat_id,
@@ -209,12 +196,6 @@ else:
     await update.message.reply_text("Olá! Me envie um link do YouTube (ou mencione-me com @seubot + link) e eu te pergunto se quer baixar.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if chat_type == 'private' and user_id != 6766920288:
-        return
-    if chat_type != 'private' and not is_bot_mentioned(update):
-        return
-
     """
     Detecta links na mensagem e envia confirmação com botão.
     Processa quando:
@@ -271,20 +252,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
-        if chat_type in ['group', 'supergroup']:
-    try:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=f'Você quer baixar este link?
-{url}',
-            reply_markup=confirm_keyboard
-        )
-        await update.message.reply_text('✅ Link recebido! Verifique sua conversa privada comigo para confirmar o download.')
-    except Exception:
-        await update.message.reply_text('⚠️ Não consegui enviar mensagem privada. Verifique se você iniciou uma conversa comigo.')
-else:
-    confirm_msg = await update.message.reply_text(f'Você quer baixar este link?
-{url}', reply_markup=confirm_keyboard)
+        confirm_msg = await update.message.reply_text(f"Você quer baixar este link?\n{url}", reply_markup=confirm_keyboard)
     except Exception:
         confirm_msg = await context.bot.send_message(chat_id=update.message.chat_id, text=f"Você quer baixar este link?\n{url}", reply_markup=confirm_keyboard)
 
