@@ -1,39 +1,55 @@
 #!/usr/bin/env python3
 """
 Bot Telegram + Flask webhook que usa yt-dlp para baixar vídeos do YouTube.
-Cookies do YouTube devem ser fornecidos via variável de ambiente YT_COOKIES_B64
-(com conteúdo base64 do arquivo cookies.txt no formato Netscape).
-
-Start (quando rodar via Docker/Gunicorn no Render):
-  gunicorn bot_with_cookies:app --bind 0.0.0.0:$PORT --workers 1
-
-Variáveis de ambiente obrigatórias:
-  - TELEGRAM_BOT_TOKEN : token do bot do Telegram (ex: 123456:ABC-DEF)
-  - YT_COOKIES_B64    : conteúdo do cookies.txt codificado em base64 (secret)
-Opcional:
-  - PORT (o Render fornece automaticamente)
+Valida TELEGRAM_BOT_TOKEN na inicialização e chama application.initialize()
+para evitar RuntimeError ao processar updates via webhook.
 """
 import os
+import sys
 import tempfile
 import asyncio
 import base64
 import logging
 import yt_dlp
-from flask import Flask, request, jsonify
+from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.error import InvalidToken
 
 # Logging básico
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 LOG = logging.getLogger("ytbot")
 
-# Telegram token (defina TELEGRAM_BOT_TOKEN no Render / env)
+# Verifica token antes de tentar construir a Application
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
-    LOG.warning("TELEGRAM_BOT_TOKEN não definido. O bot não funcionará sem ele.")
+    LOG.error("TELEGRAM_BOT_TOKEN não definido. Defina o secret no Render (nome exato TELEGRAM_BOT_TOKEN) e redeploy. Abortando.")
+    sys.exit(1)
+
+# Por segurança, logamos apenas o comprimento do token (não o token em si)
+try:
+    LOG.info("TELEGRAM_BOT_TOKEN presente (len=%d). Prosseguindo.", len(TOKEN))
+except Exception:
+    LOG.info("TELEGRAM_BOT_TOKEN presente. Prosseguindo.")
 
 app = Flask(__name__)
-application = ApplicationBuilder().token(TOKEN).build()
+
+# Construir a aplicação do telegram e inicializar explicitamente
+try:
+    application = ApplicationBuilder().token(TOKEN).build()
+    # Inicializa a aplicação para permitir o uso de application.process_update(...)
+    try:
+        asyncio.run(application.initialize())
+        LOG.info("Application inicializada com sucesso.")
+    except Exception:
+        LOG.exception("Falha ao inicializar a Application.")
+        sys.exit(1)
+except InvalidToken:
+    LOG.exception("Token inválido: verifique se o TELEGRAM_BOT_TOKEN foi copiado corretamente do BotFather.")
+    sys.exit(1)
+except Exception:
+    LOG.exception("Erro ao inicializar ApplicationBuilder().")
+    sys.exit(1)
 
 def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
     """Decodifica a variável base64 e grava em um arquivo temporário. Retorna caminho ou None."""
@@ -112,7 +128,6 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'force_ipv4': True,
             'retries': 10,
             'fragment_retries': 10,
-            # usa cookiefile se COOKIE_PATH estiver definido
             **({'cookiefile': COOKIE_PATH} if COOKIE_PATH else {}),
         }
 
@@ -129,7 +144,6 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ Nenhum vídeo encontrado.")
             return
 
-        # procura primeiro arquivo de vídeo
         arquivo = None
         for f in arquivos:
             if f.lower().endswith((".mp4", ".mkv", ".webm")):
@@ -140,7 +154,6 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         tamanho = os.path.getsize(arquivo)
 
-        # Se maior que 50MB, divide em partes (usa ffmpeg)
         if tamanho > 50 * 1024 * 1024:
             partes_dir = os.path.join(tmpdir, "partes")
             os.makedirs(partes_dir, exist_ok=True)
@@ -156,7 +169,6 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("✅ Todas as partes enviadas com sucesso!")
             return
 
-        # arquivo pequeno: envia direto
         with open(arquivo, "rb") as f:
             await update.message.reply_video(video=f)
 
@@ -184,5 +196,4 @@ def index():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    # Para desenvolvimento local: flask dev server
     app.run(host="0.0.0.0", port=port)
