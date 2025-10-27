@@ -1,14 +1,24 @@
-
+# Dockerfile mínimo com ffmpeg para rodar no Render
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y     ffmpeg     && apt-get clean     && rm -rf /var/lib/apt/lists/*
+# Instala dependências do sistema e ffmpeg
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-COPY . .
+# Cria diretório de trabalho
+WORKDIR /srv/app
 
-RUN pip install --upgrade pip && pip install -r requirements.txt
+# Copia requirements e instala
+COPY requirements.txt /srv/app/requirements.txt
+RUN pip install --no-cache-dir -r /srv/app/requirements.txt
 
-ENV PORT=10000
-EXPOSE 10000
+# Copia o código da aplicação
+COPY . /srv/app
 
-CMD ["python", "bot.py"]
+# Expõe a porta (Render fornece $PORT)
+ENV PORT 10000
+
+# Comando padrão para iniciar (o Render sobrescreve com seu Start Command)
+CMD ["gunicorn", "bot_with_cookies:app", "--bind", "0.0.0.0:10000", "--workers", "1"]
