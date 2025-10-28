@@ -4,7 +4,7 @@ bot_with_cookies.py
 
 Bot Telegram (webhook) com:
 - confirmação antes do download,
-- escolha de qualidade (1080/720/480/360) ou MP3 (áudio),
+- escolha de qualidade (720/480/360) ou MP3 (áudio),
 - barra de progresso atualizada no Telegram,
 - divisão automática em partes >50MB (ffmpeg),
 - suporte opcional a cookies via YT_COOKIES_B64 (Netscape -> base64).
@@ -39,7 +39,8 @@ LOG = logging.getLogger("ytbot")
 # ---------- atualiza yt-dlp (opcional, silencioso) ----------
 try:
     LOG.info("Atualizando yt-dlp...")
-    subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"], check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     LOG.info("yt-dlp atualizado.")
 except Exception:
     LOG.warning("Não foi possível atualizar yt-dlp. Continuando com a versão atual.")
@@ -117,7 +118,7 @@ def _run_ydl(options, urls):
 
 # ---------- handlers ----------
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Olá! Envie um link do YouTube (ou mencione-me em grupo) e eu pergunto se deseja baixar.")
+    await update.message.reply_text("Olá! Envie um link do YouTube ou Shopee (vídeo) e eu pergunto se deseja baixar.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not getattr(update, "message", None) or not update.message.text:
@@ -171,6 +172,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         return
 
+    # checar domínio suportado (YouTube e Shopee)
+    lower = url.lower()
+    if not ("youtube.com" in lower or "youtu.be" in lower or "shopee" in lower):
+        await update.message.reply_text("Desculpe — atualmente aceito links do YouTube e Shopee Video.")
+        return
+
     token = uuid.uuid4().hex
     keyboard = InlineKeyboardMarkup(
         [
@@ -196,7 +203,7 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data or ""
 
-    # confirmar download -> mostrar opções de qualidade + MP3
+    # confirmar download -> mostrar opções de qualidade + MP3 (720 para baixo)
     if data.startswith("dl:"):
         token = data.split("dl:", 1)[1]
         entry = PENDING.get(token)
@@ -207,10 +214,9 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("Apenas quem solicitou pode confirmar o download.")
             return
 
-        # teclado de qualidade
+        # teclado de qualidade (720 / 480 / 360) + MP3
         keyboard = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("🎬 1080p", callback_data=f"q:1080:{token}")],
                 [InlineKeyboardButton("🎬 720p", callback_data=f"q:720:{token}")],
                 [InlineKeyboardButton("🎬 480p", callback_data=f"q:480:{token}")],
                 [InlineKeyboardButton("🎬 360p", callback_data=f"q:360:{token}")],
@@ -238,9 +244,13 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not entry:
             await query.edit_message_text("Esse pedido expirou ou é inválido.")
             return
-        entry["quality"] = int(q_value)
+        # forçamos máximos entre 360-720 (segurança)
+        qv = int(q_value)
+        if qv not in (360, 480, 720):
+            qv = 720
+        entry["quality"] = qv
         try:
-            await query.edit_message_text(f"🎬 Qualidade escolhida: {q_value}p\nIniciando download...")
+            await query.edit_message_text(f"🎬 Qualidade escolhida: {qv}p\nIniciando download...")
         except Exception:
             pass
 
@@ -326,7 +336,10 @@ async def start_download_task(token: str):
         except Exception:
             LOG.exception("Erro no progress_hook")
 
-    # monta opções do yt-dlp conforme escolha
+    # Detecta Shopee
+    is_shopee = "shopee" in url.lower()
+
+    # monta opções do yt-dlp conforme escolha e domínio
     if quality == "mp3":
         ydl_opts = {
             "outtmpl": outtmpl,
@@ -341,28 +354,59 @@ async def start_download_task(token: str):
                     "preferredquality": "192",
                 }
             ],
+            # retries / timeouts
+            "retries": 8,
+            "fragment_retries": 8,
+            "socket_timeout": 30,
+            "http_chunk_size": 2 * 1024 * 1024,
             **({"cookiefile": COOKIE_PATH} if COOKIE_PATH else {}),
         }
     else:
         qv = int(quality) if isinstance(quality, int) or (isinstance(quality, str) and quality.isdigit()) else 720
-        ydl_opts = {
-            "outtmpl": outtmpl,
-            "progress_hooks": [progress_hook],
-            "quiet": True,
-            "logger": LOG,
-            "format": f"bestvideo[height<={qv}]+bestaudio/best",
-            "merge_output_format": "mp4",
-            "concurrent_fragment_downloads": 3,
-            "force_ipv4": True,
-            "socket_timeout": 30,
-            "http_chunk_size": 2 * 1024 * 1024,
-            "retries": 12,
-            "fragment_retries": 12,
-            **({"cookiefile": COOKIE_PATH} if COOKIE_PATH else {}),
-        }
+        if is_shopee:
+            # Shopee: força ext=mp4 / tentar HLS/m3u8 ou mp4 direto; user-agent + headers ajudam
+            ydl_format = "best[ext=mp4]/best"
+            ydl_opts = {
+                "outtmpl": outtmpl,
+                "progress_hooks": [progress_hook],
+                "quiet": True,
+                "logger": LOG,
+                "format": ydl_format,
+                "merge_output_format": "mp4",
+                "concurrent_fragment_downloads": 3,
+                "force_ipv4": True,
+                "socket_timeout": 30,
+                "http_chunk_size": 2 * 1024 * 1024,
+                "retries": 10,
+                "fragment_retries": 10,
+                "source_address": "0.0.0.0",
+                "noplaylist": True,
+                "geo_bypass": True,
+                "http_headers": {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36"},
+                **({"cookiefile": COOKIE_PATH} if COOKIE_PATH else {}),
+            }
+        else:
+            # YouTube / demais
+            ydl_opts = {
+                "outtmpl": outtmpl,
+                "progress_hooks": [progress_hook],
+                "quiet": True,
+                "logger": LOG,
+                "format": f"bestvideo[height<={qv}]+bestaudio/best",
+                "merge_output_format": "mp4",
+                "concurrent_fragment_downloads": 4,
+                "force_ipv4": True,
+                "socket_timeout": 30,
+                "http_chunk_size": 2 * 1024 * 1024,
+                "retries": 12,
+                "fragment_retries": 12,
+                "noplaylist": True,
+                **({"cookiefile": COOKIE_PATH} if COOKIE_PATH else {}),
+            }
 
     # executa download em thread (bloqueante do yt-dlp)
     try:
+        LOG.info("Iniciando yt-dlp: url=%s, shopee=%s, quality=%s", url, is_shopee, quality)
         await asyncio.to_thread(lambda: _run_ydl(ydl_opts, [url]))
     except Exception as e:
         LOG.exception("Erro no yt-dlp: %s", e)
@@ -421,7 +465,7 @@ async def start_download_task(token: str):
             pass
         return
 
-    # envio (faz split se >50MB)
+    # envio (faz split se >45MB por parte para sobrar margem)
     sent_any = False
     try:
         for f in arquivos:
@@ -434,26 +478,24 @@ async def start_download_task(token: str):
                 cmd = f'ffmpeg -y -i "{path}" -c copy -map 0 -fs 45M "{partes_dir}/part%03d.mp4"'
                 LOG.info("Split: %s", cmd)
                 os.system(cmd)
-                partes = sorted([p for p in os.listdir(partes_dir) if p.endswith(".mp4")])
+                partes = sorted([p for p in os.listdir(partes_dir) if p.endswith(".mp4") or p.endswith(".m4a") or p.endswith(".mp3")])
                 for p in partes:
                     ppath = os.path.join(partes_dir, p)
                     try:
-                        with open(ppath, "rb") as fh:
-                            # se for áudio mp3, enviar como audio; aqui split gera mp4 -> enviar vídeo
-                            asyncio.run_coroutine_threadsafe(
-                                application.bot.send_video(chat_id=chat_id, video=fh), APP_LOOP
-                            ).result()
+                        # enviar de forma thread-safe
+                        fut = asyncio.run_coroutine_threadsafe(application.bot.send_video(chat_id=chat_id, video=open(ppath, "rb")), APP_LOOP)
+                        fut.result(timeout=120)
                         sent_any = True
                     except Exception:
                         LOG.exception("Erro ao enviar parte %s", ppath)
             else:
                 try:
-                    with open(path, "rb") as fh:
-                        if quality == "mp3":
-                            # arquivo mp3 será gerado pelo postprocessor do yt-dlp
-                            asyncio.run_coroutine_threadsafe(application.bot.send_audio(chat_id=chat_id, audio=fh), APP_LOOP).result()
-                        else:
-                            asyncio.run_coroutine_threadsafe(application.bot.send_video(chat_id=chat_id, video=fh), APP_LOOP).result()
+                    if quality == "mp3":
+                        fut = asyncio.run_coroutine_threadsafe(application.bot.send_audio(chat_id=chat_id, audio=open(path, "rb")), APP_LOOP)
+                        fut.result(timeout=120)
+                    else:
+                        fut = asyncio.run_coroutine_threadsafe(application.bot.send_video(chat_id=chat_id, video=open(path, "rb")), APP_LOOP)
+                        fut.result(timeout=120)
                     sent_any = True
                 except Exception:
                     LOG.exception("Erro ao enviar arquivo %s", path)
