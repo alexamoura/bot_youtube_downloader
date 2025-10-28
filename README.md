@@ -1,6 +1,6 @@
 # Telegram yt-dlp bot (Render)
 
-Este repositório contém um bot Telegram que usa yt-dlp para baixar vídeos do YouTube e enviar via Telegram. Ele foi preparado para rodar no Render usando Docker (com ffmpeg incluído).
+Este repositório contém um bot Telegram que usa yt-dlp para baixar vídeos do YouTube, TIK TOK, Instagram e Twitter (X) e enviar via Telegram. Ele foi preparado para rodar no Render usando Docker (com ffmpeg incluído).
 
 ATENÇÃO: não comite cookies.txt nem tokens no repositório. Use secrets (env vars) no Render.
 
