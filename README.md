@@ -61,5 +61,3 @@ Para testar localmente sem Render:
 - O filesystem do container é efêmero — se precisar persistir vídeos, envie-os para um storage (S3/GCS).
 - Não publique cookies ou tokens. Se algum cookie/token vazar, revogue ou troque a senha imediatamente.
 - O Dockerfile já instala ffmpeg; se você optar por não usar Docker no Render, garanta que ffmpeg esteja disponível no ambiente.
-
-Se quiser, depois eu te passo o comando exato para criar o serviço no Render passo a passo (com screenshots textuais) ou um script para configurar o webhook automaticamente.  
