@@ -23,6 +23,7 @@ import uuid
 import re
 import time
 import yt_dlp
+import subprocess  # <- necessário para atualizar yt-dlp
 
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -148,7 +149,7 @@ def is_bot_mentioned(update: Update) -> bool:
                         return True
                 elif etype == "text_mention":
                     # entidade que inclui o usuário em si
-                    if getattr(ent, "user", None) and getattr(ent.user, "id", None) == bot_id:
+                    if getattr(ent.user, None) and getattr(ent.user, "id", None) == bot_id:
                         return True
 
         # fallback: checar se @username aparece no texto
@@ -159,18 +160,13 @@ def is_bot_mentioned(update: Update) -> bool:
     if getattr(msg, "entities", None):
         for ent in msg.entities:
             if getattr(ent, "type", "") == "text_mention":
-                if getattr(ent, "user", None) and getattr(ent.user, "id", None) == bot_id:
+                if getattr(ent.user, None) and getattr(ent.user, "id", None) == bot_id:
                     return True
     return False
 
 # ---------- Handlers ----------
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /start handler. Se vier com payload (deep link), tentamos iniciar o fluxo de confirmação
-    automaticamente com o link contido no payload (base64 urlsafe).
-    """
-    # trata payload (context.args) vindo do deep link /start <payload>
     if context.args:
         payload = context.args[0]
         try:
@@ -180,7 +176,6 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Payload inválido.")
             return
 
-        # cria token e fluxo de confirmação igual ao do handle_message
         token = uuid.uuid4().hex
         confirm_keyboard = InlineKeyboardMarkup(
             [
@@ -200,28 +195,18 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         return
 
-    # comportamento padrão
     await update.message.reply_text("Olá! Me envie um link do YouTube (ou mencione-me com @seubot + link) e eu te pergunto se quer baixar.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Detecta links na mensagem e envia confirmação com botão.
-    Processa quando:
-     - chat privado (qualquer link enviado por DM), ou
-     - chat de grupo quando o bot for mencionado (ex: @MeuBot <link>)
-    """
     if not getattr(update, "message", None) or not update.message.text:
         return
 
     text = update.message.text.strip()
-    chat_type = update.message.chat.type  # 'private', 'group', 'supergroup', 'channel'
+    chat_type = update.message.chat.type
 
-    # se não for privado, só processa quando o bot for mencionado
-    if chat_type != "private":
-        if not is_bot_mentioned(update):
-            return
+    if chat_type != "private" and not is_bot_mentioned(update):
+        return
 
-    # extrair URL por entidades primeiro
     url = None
     if getattr(update.message, "entities", None):
         for ent in update.message.entities:
@@ -241,7 +226,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             url = m.group(1)
 
     if not url:
-        # se mencionou o bot sem link, orientar
         if chat_type != "private" and is_bot_mentioned(update):
             try:
                 await update.message.reply_text("Envie o link do vídeo junto com a menção, por exemplo: @MeuBot https://...")
@@ -273,7 +257,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
 async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Trata confirmações de download e cancelamentos."""
     query = update.callback_query
     await query.answer()
     data = query.data or ""
@@ -283,7 +266,6 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not entry:
             await query.edit_message_text("Esse pedido expirou ou é inválido.")
             return
-        # Proteção: apenas quem originou pode confirmar
         if query.from_user.id != entry["from_user_id"]:
             await query.edit_message_text("Apenas quem solicitou pode confirmar o download.")
             return
@@ -295,8 +277,6 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         progress_msg = await context.bot.send_message(chat_id=entry["chat_id"], text="📥 Baixando: 0% [────────────────────]")
         entry["progress_msg"] = {"chat_id": progress_msg.chat_id, "message_id": progress_msg.message_id}
-
-        # iniciar download em background no APP_LOOP
         asyncio.run_coroutine_threadsafe(start_download_task(token), APP_LOOP)
 
     elif data.startswith("cancel:"):
@@ -307,10 +287,10 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await query.edit_message_text("Cancelado ✅")
 
+
 # ---------- Download task & helpers ----------
 
 async def start_download_task(token: str):
-    """Executa o download e atualiza a mensagem de progresso."""
     entry = PENDING.get(token)
     if not entry:
         LOG.info("start_download_task: token não encontrado")
@@ -326,10 +306,9 @@ async def start_download_task(token: str):
     tmpdir = tempfile.mkdtemp(prefix="ytbot_")
     outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
 
-    # estado local do progresso
     last_percent = -1
     last_update_ts = time.time()
-    WATCHDOG_TIMEOUT = 180  # segundos sem progresso para notificar
+    WATCHDOG_TIMEOUT = 180
 
     def progress_hook(d):
         nonlocal last_percent, last_update_ts
@@ -386,7 +365,6 @@ async def start_download_task(token: str):
     }
 
     try:
-        # roda em thread para não bloquear o event loop; o progresso é repassado via progress_hook
         await asyncio.to_thread(lambda: _run_ydl(ydl_opts, [url]))
     except Exception as e:
         LOG.exception("Erro no yt-dlp: %s", e)
@@ -400,7 +378,6 @@ async def start_download_task(token: str):
         except Exception:
             pass
         PENDING.pop(token, None)
-        # cleanup
         try:
             for f in os.listdir(tmpdir):
                 os.remove(os.path.join(tmpdir, f))
@@ -409,7 +386,6 @@ async def start_download_task(token: str):
             pass
         return
 
-    # watchdog: se não houve progresso por WATCHDOG_TIMEOUT, notificar
     if time.time() - last_update_ts > WATCHDOG_TIMEOUT:
         try:
             asyncio.run_coroutine_threadsafe(
@@ -423,7 +399,6 @@ async def start_download_task(token: str):
         except Exception:
             pass
 
-    # listar arquivos gerados
     arquivos = [f for f in os.listdir(tmpdir) if os.path.isfile(os.path.join(tmpdir, f))]
     if not arquivos:
         try:
@@ -436,7 +411,6 @@ async def start_download_task(token: str):
         except Exception:
             pass
         PENDING.pop(token, None)
-        # cleanup
         try:
             for f in os.listdir(tmpdir):
                 os.remove(os.path.join(tmpdir, f))
@@ -473,7 +447,6 @@ async def start_download_task(token: str):
                 except Exception:
                     LOG.exception("Erro ao enviar arquivo %s", path)
     finally:
-        # cleanup arquivos temporários
         try:
             for root, dirs, files in os.walk(tmpdir, topdown=False):
                 for name in files:
@@ -484,7 +457,6 @@ async def start_download_task(token: str):
         except Exception:
             pass
 
-    # atualizar mensagem de progresso para finalizado
     try:
         if sent_any:
             asyncio.run_coroutine_threadsafe(
@@ -507,7 +479,6 @@ async def start_download_task(token: str):
 
 
 def _run_ydl(options, urls):
-    """Função blocking que roda yt_dlp (executada via asyncio.to_thread)."""
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.download(urls)
 
@@ -518,7 +489,7 @@ application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|c
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
 
-# Webhook endpoint (Render envia POST aqui)
+# Webhook endpoint
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     update_data = request.get_json(force=True)
