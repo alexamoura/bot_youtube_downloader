@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-bot_with_cookies_updated.py
+bot_with_cookies.py
 
 Bot Telegram (webhook) com:
 - confirmação antes do download,
-- escolha de qualidade (720/480/360) ou MP3 (áudio),
+- escolha de qualidade (1080/720/480/360) ou MP3 (áudio),
 - barra de progresso atualizada no Telegram,
 - divisão automática em partes >50MB (ffmpeg),
-- suporte opcional a cookies via YT_COOKIES_B64 (Netscape -> base64),
-- suporta YouTube, Shopee, TikTok, Instagram, Facebook, Twitter.
+- suporte opcional a cookies via YT_COOKIES_B64 (Netscape -> base64).
 """
 import os
 import sys
@@ -37,11 +36,10 @@ from telegram.ext import (
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 LOG = logging.getLogger("ytbot")
 
-# ---------- atualiza yt-dlp ----------
+# ---------- atualiza yt-dlp (opcional, silencioso) ----------
 try:
     LOG.info("Atualizando yt-dlp...")
-    subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"], check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     LOG.info("yt-dlp atualizado.")
 except Exception:
     LOG.warning("Não foi possível atualizar yt-dlp. Continuando com a versão atual.")
@@ -56,7 +54,7 @@ LOG.info("Token encontrado (len=%d).", len(TOKEN))
 # ---------- Flask ----------
 app = Flask(__name__)
 
-# ---------- preparar cookies ----------
+# ---------- preparar cookies (opcional) ----------
 def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
     b64 = os.environ.get(env_var)
     if not b64:
@@ -82,14 +80,14 @@ def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
 
 COOKIE_PATH = prepare_cookies_from_env()
 
-# ---------- app Telegram ----------
+# ---------- app Telegram (inicialização no loop separado) ----------
 try:
     application = ApplicationBuilder().token(TOKEN).build()
 except Exception:
     LOG.exception("Erro ao construir ApplicationBuilder().")
     sys.exit(1)
 
-# cria loop asyncio separado
+# cria loop asyncio separado para processar tarefas do bot (usado por run_coroutine_threadsafe)
 APP_LOOP = asyncio.new_event_loop()
 
 def _start_loop(loop):
@@ -119,9 +117,7 @@ def _run_ydl(options, urls):
 
 # ---------- handlers ----------
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Olá! Envie um link do YouTube, Shopee, TikTok, Instagram, Facebook ou Twitter e eu pergunto se deseja baixar."
-    )
+    await update.message.reply_text("Olá! Envie um link do YouTube (ou mencione-me em grupo) e eu pergunto se deseja baixar.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not getattr(update, "message", None) or not update.message.text:
@@ -132,6 +128,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # aceitar mensagem se for privada ou se o bot for mencionado
     if chat_type != "private":
+        # checar se mencionou o bot
         mentioned = False
         bot_username = application.bot.username if application and application.bot else None
         if bot_username and update.message.entities:
@@ -152,33 +149,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if getattr(update.message, "entities", None):
         for ent in update.message.entities:
             if ent.type in ("url", "text_link"):
-                url = getattr(ent, "url", None) or update.message.text[ent.offset:ent.offset + ent.length]
+                if getattr(ent, "url", None):
+                    url = ent.url
+                else:
+                    try:
+                        url = update.message.text[ent.offset:ent.offset + ent.length]
+                    except Exception:
+                        url = None
                 break
+
     if not url:
         m = URL_RE.search(text)
         if m:
             url = m.group(1)
+
     if not url:
         if chat_type != "private":
             try:
-                await update.message.reply_text(
-                    "Envie o link do vídeo junto com a menção, por exemplo: @MeuBot https://..."
-                )
+                await update.message.reply_text("Envie o link do vídeo junto com a menção, por exemplo: @MeuBot https://...")
             except Exception:
                 pass
-        return
-
-    # checar domínio suportado
-    supported_domains = ["youtube.com", "youtu.be", "shopee", "tiktok.com", "instagram.com", "facebook.com", "twitter.com"]
-    if not any(d in url.lower() for d in supported_domains):
-        await update.message.reply_text(f"Desculpe — atualmente aceito links de: {', '.join(supported_domains)}")
         return
 
     token = uuid.uuid4().hex
     keyboard = InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("📥 Baixar", callback_data=f"dl:{token}"),
-             InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}")],
+            [InlineKeyboardButton("📥 Baixar", callback_data=f"dl:{token}"), InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}")],
         ]
     )
     try:
@@ -200,6 +196,7 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data or ""
 
+    # confirmar download -> mostrar opções de qualidade + MP3
     if data.startswith("dl:"):
         token = data.split("dl:", 1)[1]
         entry = PENDING.get(token)
@@ -209,8 +206,11 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.from_user.id != entry["from_user_id"]:
             await query.edit_message_text("Apenas quem solicitou pode confirmar o download.")
             return
+
+        # teclado de qualidade
         keyboard = InlineKeyboardMarkup(
             [
+                [InlineKeyboardButton("🎬 1080p", callback_data=f"q:1080:{token}")],
                 [InlineKeyboardButton("🎬 720p", callback_data=f"q:720:{token}")],
                 [InlineKeyboardButton("🎬 480p", callback_data=f"q:480:{token}")],
                 [InlineKeyboardButton("🎬 360p", callback_data=f"q:360:{token}")],
@@ -221,34 +221,37 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Escolha a qualidade ou formato:", reply_markup=keyboard)
         return
 
+    # cancelar
     if data.startswith("cancel:"):
         token = data.split("cancel:", 1)[1]
-        PENDING.pop(token, None)
+        entry = PENDING.pop(token, None)
         try:
             await query.edit_message_text("Cancelado ✅")
         except Exception:
             pass
         return
 
+    # qualidade selecionada (video)
     if data.startswith("q:"):
         _, q_value, token = data.split(":", 2)
         entry = PENDING.get(token)
         if not entry:
             await query.edit_message_text("Esse pedido expirou ou é inválido.")
             return
-        qv = int(q_value)
-        if qv not in (360, 480, 720):
-            qv = 720
-        entry["quality"] = qv
+        entry["quality"] = int(q_value)
         try:
-            await query.edit_message_text(f"🎬 Qualidade escolhida: {qv}p\nIniciando download...")
+            await query.edit_message_text(f"🎬 Qualidade escolhida: {q_value}p\nIniciando download...")
         except Exception:
             pass
+
+        # cria mensagem de progresso
         progress_msg = await context.bot.send_message(chat_id=entry["chat_id"], text="📥 Baixando: 0% [────────────────────]")
         entry["progress_msg"] = {"chat_id": progress_msg.chat_id, "message_id": progress_msg.message_id}
+        # iniciar tarefa de download no loop em background
         asyncio.run_coroutine_threadsafe(start_download_task(token), APP_LOOP)
         return
 
+    # áudio selecionado (mp3)
     if data.startswith("qa:"):
         _, fmt, token = data.split(":", 2)
         entry = PENDING.get(token)
@@ -260,6 +263,7 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("🎵 Formato escolhido: MP3\nIniciando download...")
         except Exception:
             pass
+
         progress_msg = await context.bot.send_message(chat_id=entry["chat_id"], text="📥 Baixando: 0% [────────────────────]")
         entry["progress_msg"] = {"chat_id": progress_msg.chat_id, "message_id": progress_msg.message_id}
         asyncio.run_coroutine_threadsafe(start_download_task(token), APP_LOOP)
@@ -313,8 +317,7 @@ async def start_download_task(token: str):
                 try:
                     asyncio.run_coroutine_threadsafe(
                         application.bot.edit_message_text(
-                            text="✅ Download concluído, processando o envio...",
-                            chat_id=pm["chat_id"], message_id=pm["message_id"]
+                            text="✅ Download concluído, processando o envio...", chat_id=pm["chat_id"], message_id=pm["message_id"]
                         ),
                         APP_LOOP,
                     )
@@ -323,10 +326,7 @@ async def start_download_task(token: str):
         except Exception:
             LOG.exception("Erro no progress_hook")
 
-    # Detecta Shopee
-    is_shopee = "shopee" in url.lower()
-
-    # monta opções
+    # monta opções do yt-dlp conforme escolha
     if quality == "mp3":
         ydl_opts = {
             "outtmpl": outtmpl,
@@ -334,110 +334,142 @@ async def start_download_task(token: str):
             "quiet": True,
             "logger": LOG,
             "format": "bestaudio/best",
-            "postprocessors": [{"key": "FFmpegExtractAudio","preferredcodec": "mp3","preferredquality": "192"}],
-            "retries": 8, "fragment_retries": 8, "socket_timeout": 30, "http_chunk_size": 2*1024*1024,
+            "postprocessors": [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }
+            ],
             **({"cookiefile": COOKIE_PATH} if COOKIE_PATH else {}),
         }
     else:
-        qv = int(quality)
-        if is_shopee:
-            ydl_opts = {
-                "outtmpl": outtmpl,
-                "progress_hooks": [progress_hook],
-                "quiet": True,
-                "logger": LOG,
-                "format": "bestvideo+bestaudio/best",
-                "merge_output_format": "mp4",
-                "concurrent_fragment_downloads": 3,
-                "force_ipv4": True,
-                "socket_timeout": 30,
-                "http_chunk_size": 2*1024*1024,
-                "retries": 10,
-                "fragment_retries": 10,
-                "noplaylist": True,
-                "geo_bypass": True,
-                "http_headers": {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36",
-                    "Referer": "https://shopee.com.br/",
-                },
-                **({"cookiefile": COOKIE_PATH} if COOKIE_PATH else {}),
-            }
-        else:
-            ydl_opts = {
-                "outtmpl": outtmpl,
-                "progress_hooks": [progress_hook],
-                "quiet": True,
-                "logger": LOG,
-                "format": f"bestvideo[height<={qv}]+bestaudio/best",
-                "merge_output_format": "mp4",
-                "concurrent_fragment_downloads": 4,
-                "force_ipv4": True,
-                "socket_timeout": 30,
-                "http_chunk_size": 2*1024*1024,
-                "retries": 12,
-                "fragment_retries": 12,
-                "noplaylist": True,
-                **({"cookiefile": COOKIE_PATH} if COOKIE_PATH else {}),
-            }
+        qv = int(quality) if isinstance(quality, int) or (isinstance(quality, str) and quality.isdigit()) else 720
+        ydl_opts = {
+            "outtmpl": outtmpl,
+            "progress_hooks": [progress_hook],
+            "quiet": True,
+            "logger": LOG,
+            "format": f"bestvideo[height<={qv}]+bestaudio/best",
+            "merge_output_format": "mp4",
+            "concurrent_fragment_downloads": 3,
+            "force_ipv4": True,
+            "socket_timeout": 30,
+            "http_chunk_size": 2 * 1024 * 1024,
+            "retries": 12,
+            "fragment_retries": 12,
+            **({"cookiefile": COOKIE_PATH} if COOKIE_PATH else {}),
+        }
 
-    # executa download
+    # executa download em thread (bloqueante do yt-dlp)
     try:
-        LOG.info("Iniciando yt-dlp: url=%s, shopee=%s, quality=%s", url, is_shopee, quality)
         await asyncio.to_thread(lambda: _run_ydl(ydl_opts, [url]))
     except Exception as e:
         LOG.exception("Erro no yt-dlp: %s", e)
         try:
             asyncio.run_coroutine_threadsafe(
                 application.bot.edit_message_text(
-                    text=f"⚠️ Erro no download: {str(e)}",
-                    chat_id=pm["chat_id"], message_id=pm["message_id"]
+                    text=f"⚠️ Erro no download: {str(e)}", chat_id=pm["chat_id"], message_id=pm["message_id"]
                 ),
                 APP_LOOP,
             )
         except Exception:
             pass
         PENDING.pop(token, None)
+        # cleanup
+        try:
+            for f in os.listdir(tmpdir):
+                os.remove(os.path.join(tmpdir, f))
+            os.rmdir(tmpdir)
+        except Exception:
+            pass
         return
 
-    # envio (mantém sua lógica de split e envio)
+    # watchdog
+    if time.time() - last_update_ts > WATCHDOG_TIMEOUT:
+        try:
+            asyncio.run_coroutine_threadsafe(
+                application.bot.edit_message_text(
+                    text="⚠️ Download travou (sem progresso). O yt-dlp continuará tentando; se quiser, tente novamente mais tarde.",
+                    chat_id=pm["chat_id"],
+                    message_id=pm["message_id"],
+                ),
+                APP_LOOP,
+            )
+        except Exception:
+            pass
+
+    # listar arquivos gerados
     arquivos = [f for f in os.listdir(tmpdir) if os.path.isfile(os.path.join(tmpdir, f))]
+    if not arquivos:
+        try:
+            asyncio.run_coroutine_threadsafe(
+                application.bot.edit_message_text(
+                    text="⚠️ Nenhum arquivo gerado.", chat_id=pm["chat_id"], message_id=pm["message_id"]
+                ),
+                APP_LOOP,
+            )
+        except Exception:
+            pass
+        PENDING.pop(token, None)
+        # cleanup
+        try:
+            for f in os.listdir(tmpdir):
+                os.remove(os.path.join(tmpdir, f))
+            os.rmdir(tmpdir)
+        except Exception:
+            pass
+        return
+
+    # envio (faz split se >50MB)
     sent_any = False
     try:
         for f in arquivos:
             path = os.path.join(tmpdir, f)
             tamanho = os.path.getsize(path)
-            if tamanho > 50*1024*1024:
+            if tamanho > 50 * 1024 * 1024:
+                # split por tamanho (ffmpeg -fs)
                 partes_dir = os.path.join(tmpdir, "partes")
                 os.makedirs(partes_dir, exist_ok=True)
                 cmd = f'ffmpeg -y -i "{path}" -c copy -map 0 -fs 45M "{partes_dir}/part%03d.mp4"'
+                LOG.info("Split: %s", cmd)
                 os.system(cmd)
-                partes = sorted([p for p in os.listdir(partes_dir) if p.endswith(".mp4") or p.endswith(".m4a") or p.endswith(".mp3")])
+                partes = sorted([p for p in os.listdir(partes_dir) if p.endswith(".mp4")])
                 for p in partes:
                     ppath = os.path.join(partes_dir, p)
                     try:
-                        fut = asyncio.run_coroutine_threadsafe(application.bot.send_video(chat_id=chat_id, video=open(ppath,"rb")), APP_LOOP)
-                        fut.result(timeout=120)
+                        with open(ppath, "rb") as fh:
+                            # se for áudio mp3, enviar como audio; aqui split gera mp4 -> enviar vídeo
+                            asyncio.run_coroutine_threadsafe(
+                                application.bot.send_video(chat_id=chat_id, video=fh), APP_LOOP
+                            ).result()
                         sent_any = True
                     except Exception:
                         LOG.exception("Erro ao enviar parte %s", ppath)
             else:
                 try:
-                    if quality == "mp3":
-                        fut = asyncio.run_coroutine_threadsafe(application.bot.send_audio(chat_id=chat_id, audio=open(path,"rb")), APP_LOOP)
-                        fut.result(timeout=120)
-                    else:
-                        fut = asyncio.run_coroutine_threadsafe(application.bot.send_video(chat_id=chat_id, video=open(path,"rb")), APP_LOOP)
-                        fut.result(timeout=120)
+                    with open(path, "rb") as fh:
+                        if quality == "mp3":
+                            # arquivo mp3 será gerado pelo postprocessor do yt-dlp
+                            asyncio.run_coroutine_threadsafe(application.bot.send_audio(chat_id=chat_id, audio=fh), APP_LOOP).result()
+                        else:
+                            asyncio.run_coroutine_threadsafe(application.bot.send_video(chat_id=chat_id, video=fh), APP_LOOP).result()
                     sent_any = True
                 except Exception:
                     LOG.exception("Erro ao enviar arquivo %s", path)
     finally:
         # cleanup completo
-        for root, dirs, files in os.walk(tmpdir, topdown=False):
-            for name in files: os.remove(os.path.join(root, name))
-            for name in dirs: os.rmdir(os.path.join(root, name))
-        os.rmdir(tmpdir)
+        try:
+            for root, dirs, files in os.walk(tmpdir, topdown=False):
+                for name in files:
+                    os.remove(os.path.join(root, name))
+                for name in dirs:
+                    os.rmdir(os.path.join(root, name))
+            os.rmdir(tmpdir)
+        except Exception:
+            pass
 
+    # atualizar mensagem final
     try:
         if sent_any:
             asyncio.run_coroutine_threadsafe(
@@ -481,4 +513,5 @@ def index():
 # ---------- main ----------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
+    # Nota: em production, use um WSGI server (gunicorn) para rodar Flask; aqui colocamos app.run para facilitar testes locais.
     app.run(host="0.0.0.0", port=port)
