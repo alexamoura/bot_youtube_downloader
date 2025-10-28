@@ -39,6 +39,14 @@ from telegram.ext import (
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 LOG = logging.getLogger("ytbot")
 
+# ─────────── Atualização automática do yt-dlp ───────────
+try:
+    LOG.info("Atualizando yt-dlp para a versão mais recente...")
+    subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"], check=True)
+    LOG.info("yt-dlp atualizado com sucesso.")
+except subprocess.CalledProcessError:
+    LOG.warning("Falha ao atualizar yt-dlp. Continuando com a versão atual.")
+
 # Token
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
