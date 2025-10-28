@@ -326,25 +326,52 @@ async def start_download_task(token: str):
         except Exception:
             LOG.exception("Erro no progress_hook")
 
-    # monta opções do yt-dlp conforme escolha
-    if quality == "mp3":
+    # monta opções do yt-dlp conforme escolha e domínio
+if quality == "mp3":
+    ydl_opts = {
+        "outtmpl": outtmpl,
+        "progress_hooks": [progress_hook],
+        "quiet": True,
+        "logger": LOG,
+        "format": "bestaudio/best",
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }
+        ],
+        "retries": 8,
+        "fragment_retries": 8,
+        "socket_timeout": 30,
+        "http_chunk_size": 2 * 1024 * 1024,
+        **({"cookiefile": COOKIE_PATH} if COOKIE_PATH else {}),
+    }
+else:
+    qv = int(quality) if isinstance(quality, int) or (isinstance(quality, str) and quality.isdigit()) else 720
+    if is_shopee or "instagram" in url.lower():
+        # Shopee / Instagram: ignora cache
         ydl_opts = {
             "outtmpl": outtmpl,
             "progress_hooks": [progress_hook],
             "quiet": True,
             "logger": LOG,
-            "format": "bestaudio/best",
-            "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }
-            ],
+            "format": "best[ext=mp4]/best",
+            "merge_output_format": "mp4",
+            "concurrent_fragment_downloads": 3,
+            "force_ipv4": True,
+            "socket_timeout": 30,
+            "http_chunk_size": 2 * 1024 * 1024,
+            "retries": 10,
+            "fragment_retries": 10,
+            "noplaylist": True,
+            "geo_bypass": True,
+            "http_headers": {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36"},
+            "cache_dir": False,  # <-- ignora cache apenas aqui
             **({"cookiefile": COOKIE_PATH} if COOKIE_PATH else {}),
         }
     else:
-        qv = int(quality) if isinstance(quality, int) or (isinstance(quality, str) and quality.isdigit()) else 720
+        # YouTube e outros: mantém cache normal
         ydl_opts = {
             "outtmpl": outtmpl,
             "progress_hooks": [progress_hook],
@@ -352,12 +379,13 @@ async def start_download_task(token: str):
             "logger": LOG,
             "format": f"bestvideo[height<={qv}]+bestaudio/best",
             "merge_output_format": "mp4",
-            "concurrent_fragment_downloads": 3,
+            "concurrent_fragment_downloads": 4,
             "force_ipv4": True,
             "socket_timeout": 30,
             "http_chunk_size": 2 * 1024 * 1024,
             "retries": 12,
             "fragment_retries": 12,
+            "noplaylist": True,
             **({"cookiefile": COOKIE_PATH} if COOKIE_PATH else {}),
         }
 
