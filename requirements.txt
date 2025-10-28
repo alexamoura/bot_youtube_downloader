@@ -1,4 +1,4 @@
-flask==2.3.3
-python-telegram-bot==20.7
-yt-dlp==2025.10.28
-requests==2.32.1
+Flask>=2.0
+yt-dlp>=2025.09.01
+python-telegram-bot>=20.0
+gunicorn
