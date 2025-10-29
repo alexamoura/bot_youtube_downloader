@@ -41,7 +41,7 @@ import subprocess
 import json
 from collections import OrderedDict
 from contextlib import contextmanager
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse
 import yt_dlp
 
 try:
@@ -230,8 +230,7 @@ class ShopeeExtractor:
     """Extrator customizado para vídeos da Shopee."""
     
     def __init__(self, url: str):
-        self.original_url = url
-        self.url = self._resolve_universal_link(url)
+        self.url = url
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -239,40 +238,6 @@ class ShopeeExtractor:
             'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
             'Referer': 'https://shopee.com.br/',
         })
-    
-    def _resolve_universal_link(self, url: str) -> str:
-        """Resolve universal links da Shopee para URL real."""
-        try:
-            # Verifica se é um universal link
-            if 'universal-link' in url or 'deep_and_web' in url:
-                LOG.info("ShopeeExtractor: Detectado universal link, extraindo URL real...")
-                
-                # Extrai a URL do parâmetro redir
-                from urllib.parse import parse_qs, urlparse, unquote
-                parsed = urlparse(url)
-                params = parse_qs(parsed.query)
-                
-                if 'redir' in params:
-                    real_url = unquote(params['redir'][0])
-                    LOG.info("ShopeeExtractor: URL real extraída: %s", real_url[:100])
-                    return real_url
-                
-                # Tenta seguir redirecionamentos
-                LOG.info("ShopeeExtractor: Tentando seguir redirecionamentos...")
-                response = requests.get(
-                    url, 
-                    allow_redirects=True, 
-                    timeout=10,
-                    headers={'User-Agent': 'Mozilla/5.0'}
-                )
-                final_url = response.url
-                LOG.info("ShopeeExtractor: URL final após redirecionamento: %s", final_url[:100])
-                return final_url
-            
-            return url
-        except Exception as e:
-            LOG.error("ShopeeExtractor: Erro ao resolver universal link: %s", e)
-            return url
     
     def extract_video_url(self) -> dict:
         """
@@ -282,12 +247,6 @@ class ShopeeExtractor:
         LOG.info("ShopeeExtractor: Iniciando extração de %s", self.url)
         
         try:
-            # Verifica se é Shopee Video (sv.shopee.com.br)
-            if 'sv.shopee' in self.url or 'share-video' in self.url:
-                result = self._extract_shopee_video()
-                if result['success']:
-                    return result
-            
             # Método 1: Tentar extrair do HTML
             result = self._extract_from_html()
             if result['success']:
@@ -319,88 +278,6 @@ class ShopeeExtractor:
                 'url': None,
                 'title': 'shopee_video'
             }
-    
-    def _extract_shopee_video(self) -> dict:
-        """Extrai vídeo da plataforma Shopee Video (sv.shopee)."""
-        try:
-            LOG.info("ShopeeExtractor: Detectado Shopee Video, usando método específico")
-            
-            response = self.session.get(self.url, timeout=30, allow_redirects=True)
-            response.raise_for_status()
-            
-            # Shopee Video geralmente tem a URL do vídeo em JSON na página
-            # Procura por padrões específicos
-            patterns = [
-                r'"videoUrl"\s*:\s*"([^"]+)"',
-                r'"video_url"\s*:\s*"([^"]+)"',
-                r'"url"\s*:\s*"(https://[^"]*\.mp4[^"]*)"',
-                r'"playAddr"\s*:\s*"([^"]+)"',
-                r'playAddr["\']:\s*["\']([^"\']+)',
-            ]
-            
-            for pattern in patterns:
-                matches = re.findall(pattern, response.text)
-                for match in matches:
-                    video_url = match.replace('\\/', '/')
-                    if 'mp4' in video_url or 'video' in video_url:
-                        # Decodifica se necessário
-                        if '\\u' in video_url:
-                            video_url = video_url.encode().decode('unicode_escape')
-                        
-                        LOG.info("ShopeeExtractor: Vídeo Shopee Video encontrado: %s", video_url[:100])
-                        
-                        # Tenta extrair título
-                        title_match = re.search(r'"description"\s*:\s*"([^"]+)"', response.text)
-                        title = title_match.group(1) if title_match else 'shopee_video'
-                        
-                        return {
-                            'success': True,
-                            'url': video_url,
-                            'title': self._clean_title(title),
-                            'error': None
-                        }
-            
-            # Tenta buscar no HTML também
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Procura scripts com dados JSON
-            scripts = soup.find_all('script', type='application/json')
-            for script in scripts:
-                try:
-                    data = json.loads(script.string)
-                    video_url = self._find_video_in_json(data)
-                    if video_url:
-                        LOG.info("ShopeeExtractor: Vídeo encontrado em script JSON: %s", video_url[:100])
-                        return {
-                            'success': True,
-                            'url': video_url,
-                            'title': self._find_title_in_json(data) or 'shopee_video',
-                            'error': None
-                        }
-                except:
-                    continue
-            
-            # Procura por tags video
-            video_tag = soup.find('video')
-            if video_tag:
-                video_url = video_tag.get('src') or video_tag.get('data-src')
-                if video_url:
-                    if not video_url.startswith('http'):
-                        video_url = 'https:' + video_url if video_url.startswith('//') else 'https://sv.shopee.com.br' + video_url
-                    
-                    LOG.info("ShopeeExtractor: Vídeo encontrado em tag video: %s", video_url[:100])
-                    return {
-                        'success': True,
-                        'url': video_url,
-                        'title': 'shopee_video',
-                        'error': None
-                    }
-            
-            return {'success': False, 'error': 'Vídeo não encontrado no Shopee Video', 'url': None, 'title': None}
-            
-        except Exception as e:
-            LOG.error("ShopeeExtractor: Erro no método Shopee Video: %s", e)
-            return {'success': False, 'error': str(e), 'url': None, 'title': None}
     
     def _extract_from_html(self) -> dict:
         """Extrai vídeo parseando HTML."""
