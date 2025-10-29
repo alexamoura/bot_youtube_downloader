@@ -222,13 +222,6 @@ def is_valid_url(url: str) -> bool:
     except Exception:
         return False
 
-def is_shopee_url(url: str) -> bool:
-    """Verifica se a URL é da Shopee."""
-    try:
-        return 'shopee' in url.lower()
-    except Exception:
-        return False
-
 @contextmanager
 def temp_download_dir():
     """Context manager para criar e limpar diretório temporário."""
@@ -615,10 +608,6 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         "http_chunk_size": 1048576,
         "retries": 20,
         "fragment_retries": 20,
-        # Habilita extrator genérico para sites não suportados (como Shopee)
-        "default_search": "auto",
-        "allow_unplayable_formats": False,
-        "check_formats": True,
     }
     
     if COOKIE_PATH:
