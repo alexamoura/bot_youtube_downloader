@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
 """
-bot_with_cookies.py
-
-Telegram bot (webhook) que:
-- detecta links enviados diretamente ou em grupo quando mencionado (@SeuBot + link),
-- pergunta "quer baixar?" com botão,
-- ao confirmar, inicia o download e mostra uma barra de progresso atualizada,
-- envia partes se necessário (ffmpeg) e mostra mensagem final.
-- track de usuários mensais via SQLite.
-
-Requisitos:
-- TELEGRAM_BOT_TOKEN (env)
-- YT_COOKIES_B64 (opcional; base64 do cookies.txt em formato Netscape)
+Bot Telegram com:
+- Download de vídeos via yt-dlp
+- Controle de limite de 3 downloads grátis/mês
+- Cobrança via Pix Mercado Pago (R$ 9,90) para acesso premium por 30 dias
 """
+
 import os
 import sys
 import tempfile
@@ -25,7 +18,7 @@ import re
 import time
 import sqlite3
 import yt_dlp
-
+import mercadopago
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -37,373 +30,212 @@ from telegram.ext import (
     filters,
 )
 
-# Logging
+# ------------------- Configurações -------------------
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 LOG = logging.getLogger("ytbot")
 
-# Token
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
-    LOG.error("TELEGRAM_BOT_TOKEN não definido. Defina o secret TELEGRAM_BOT_TOKEN e redeploy.")
+    LOG.error("TELEGRAM_BOT_TOKEN não definido.")
     sys.exit(1)
 
-LOG.info("TELEGRAM_BOT_TOKEN presente (len=%d).", len(TOKEN))
+MP_TOKEN = os.getenv("MERCADO_PAGO_TOKEN")
+sdk = mercadopago.SDK(MP_TOKEN)
 
-# Flask app
 app = Flask(__name__)
+application = ApplicationBuilder().token(TOKEN).build()
 
-# Construir a aplicação do telegram
-try:
-    application = ApplicationBuilder().token(TOKEN).build()
-except Exception:
-    LOG.exception("Erro ao construir ApplicationBuilder().")
-    sys.exit(1)
-
-# Cria loop asyncio persistente em background
 APP_LOOP = asyncio.new_event_loop()
-
 def _start_loop(loop):
     asyncio.set_event_loop(loop)
     loop.run_forever()
-
-LOG.info("Iniciando event loop de background...")
-loop_thread = threading.Thread(target=_start_loop, args=(APP_LOOP,), daemon=True)
-loop_thread.start()
-
-# Inicializa a application no loop de background
-try:
-    fut = asyncio.run_coroutine_threadsafe(application.initialize(), APP_LOOP)
-    fut.result(timeout=30)
-    LOG.info("Application inicializada no loop de background.")
-except Exception:
-    LOG.exception("Falha ao inicializar a Application no loop de background.")
-    sys.exit(1)
+threading.Thread(target=_start_loop, args=(APP_LOOP,), daemon=True).start()
+asyncio.run_coroutine_threadsafe(application.initialize(), APP_LOOP)
 
 URL_RE = re.compile(r"(https?://[^\s]+)")
-PENDING = {}  # token -> metadata (in-memory)
+PENDING = {}
 
-# ------------------- SQLite para usuários mensais -------------------
 DB_FILE = "users.db"
 
+# ------------------- Banco de dados -------------------
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("""
-        CREATE TABLE IF NOT EXISTS monthly_users (
-            user_id INTEGER PRIMARY KEY,
-            last_month TEXT
-        )
+    CREATE TABLE IF NOT EXISTS user_downloads (
+        user_id INTEGER PRIMARY KEY,
+        download_count INTEGER DEFAULT 0,
+        last_reset TEXT,
+        premium_until TEXT
+    )
     """)
     conn.commit()
     conn.close()
 
-def update_user(user_id):
-    """Atualiza a tabela com o usuário atual."""
+init_db()
+
+def get_download_count(user_id):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     month = time.strftime("%Y-%m")
-    c.execute("SELECT last_month FROM monthly_users WHERE user_id=?", (user_id,))
+    c.execute("SELECT download_count, last_reset FROM user_downloads WHERE user_id=?", (user_id,))
     row = c.fetchone()
     if row:
-        if row[0] != month:
-            c.execute("UPDATE monthly_users SET last_month=? WHERE user_id=?", (month, user_id))
+        count, last_reset = row
+        if last_reset != month:
+            c.execute("UPDATE user_downloads SET download_count=1, last_reset=? WHERE user_id=?", (month, user_id))
+            conn.commit()
+            conn.close()
+            return 1
+        conn.close()
+        return count
     else:
-        c.execute("INSERT INTO monthly_users (user_id, last_month) VALUES (?, ?)", (user_id, month))
+        c.execute("INSERT INTO user_downloads (user_id, download_count, last_reset) VALUES (?, ?, ?)", (user_id, 1, month))
+        conn.commit()
+        conn.close()
+        return 1
+
+def increment_download_count(user_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("UPDATE user_downloads SET download_count = download_count + 1 WHERE user_id=?", (user_id,))
     conn.commit()
     conn.close()
 
-def get_monthly_users_count():
-    month = time.strftime("%Y-%m")
+def is_premium(user_id):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM monthly_users WHERE last_month=?", (month,))
-    count = c.fetchone()[0]
+    c.execute("SELECT premium_until FROM user_downloads WHERE user_id=?", (user_id,))
+    row = c.fetchone()
     conn.close()
-    return count
-
-init_db()
-
-# ------------------- Cookies -------------------
-def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
-    b64 = os.environ.get(env_var)
-    if not b64:
-        LOG.info("Nenhuma variável %s encontrada — rodando sem cookies.", env_var)
-        return None
-    try:
-        raw = base64.b64decode(b64)
-    except Exception:
-        LOG.exception("Falha ao decodificar %s.", env_var)
-        return None
-
-    fd, path = tempfile.mkstemp(prefix="youtube_cookies_", suffix=".txt")
-    os.close(fd)
-    try:
-        with open(path, "wb") as f:
-            f.write(raw)
-    except Exception:
-        LOG.exception("Falha ao escrever cookies em %s", path)
-        return None
-
-    LOG.info("Cookies gravados em %s", path)
-    return path
-
-COOKIE_PATH = prepare_cookies_from_env()
-
-# ------------------- Helpers -------------------
-def is_bot_mentioned(update: Update) -> bool:
-    try:
-        bot_username = application.bot.username
-        bot_id = application.bot.id
-    except Exception:
-        bot_username = None
-        bot_id = None
-
-    msg = getattr(update, "message", None)
-    if not msg:
-        return False
-
-    if bot_username:
-        if getattr(msg, "entities", None):
-            for ent in msg.entities:
-                etype = getattr(ent, "type", "")
-                if etype == "mention":
-                    try:
-                        ent_text = msg.text[ent.offset : ent.offset + ent.length]
-                    except Exception:
-                        ent_text = ""
-                    if ent_text.lower() == f"@{bot_username.lower()}":
-                        return True
-                elif etype == "text_mention":
-                    if getattr(ent.user, "id", None) == bot_id:
-                        return True
-        if msg.text and f"@{bot_username}" in msg.text:
-            return True
+    if row and row[0]:
+        return time.strftime("%Y-%m-%d") <= row[0]
     return False
+
+def ativar_premium(user_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    premium_date = time.strftime("%Y-%m-%d", time.localtime(time.time() + 30*24*60*60))
+    c.execute("UPDATE user_downloads SET premium_until=? WHERE user_id=?", (premium_date, user_id))
+    conn.commit()
+    conn.close()
+
+# ------------------- Mercado Pago -------------------
+def gerar_pix_qrcode(email_usuario):
+    payment_data = {
+        "transaction_amount": 9.90,
+        "description": "Acesso premium por 30 dias",
+        "payment_method_id": "pix",
+        "payer": {
+            "email": email_usuario
+        }
+    }
+    payment = sdk.payment().create(payment_data)
+    qr_code_base64 = payment["response"]["point_of_interaction"]["transaction_data"]["qr_code_base64"]
+    payment_id = payment["response"]["id"]
+    return qr_code_base64, payment_id
+
+def verificar_pagamento(payment_id):
+    status = sdk.payment().get(payment_id)["response"]["status"]
+    return status == "approved"
 
 # ------------------- Handlers -------------------
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"Olá! Me envie um link do YouTube ou outro vídeo, e eu te pergunto se quer baixar.\n"
-        f"Usuários mensais: {get_monthly_users_count()}"
-    )
-
-async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    count = get_monthly_users_count()
-    await update.message.reply_text(f"📊 Usuários mensais: {count}")
+    await update.message.reply_text("Olá! Envie um link para baixar vídeos. Limite: 3 downloads grátis/mês. Após isso, R$ 9,90 para acesso ilimitado por 30 dias.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not getattr(update, "message", None) or not update.message.text:
         return
-
-    # Track user
-    update_user(update.message.from_user.id)
-
     text = update.message.text.strip()
-    chat_type = update.message.chat.type
-    if chat_type != "private" and not is_bot_mentioned(update):
-        return
-
-    url = None
-    if getattr(update.message, "entities", None):
-        for ent in update.message.entities:
-            if ent.type in ("url", "text_link"):
-                url = getattr(ent, "url", None) or text[ent.offset:ent.offset+ent.length]
-                break
-
-    if not url:
-        m = URL_RE.search(text)
-        if m:
-            url = m.group(1)
+    url = URL_RE.search(text)
     if not url:
         return
-
     token = uuid.uuid4().hex
-    confirm_keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("📥 Baixar", callback_data=f"dl:{token}"),
-                InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}"),
-            ]
-        ]
-    )
-
-    confirm_msg = await update.message.reply_text(f"Você quer baixar este link?\n{url}", reply_markup=confirm_keyboard)
+    confirm_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📥 Baixar", callback_data=f"dl:{token}"),
+         InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}")]
+    ])
+    confirm_msg = await update.message.reply_text(f"Você quer baixar este link?\n{url.group(1)}", reply_markup=confirm_keyboard)
     PENDING[token] = {
-        "url": url,
+        "url": url.group(1),
         "chat_id": update.message.chat_id,
         "from_user_id": update.message.from_user.id,
-        "confirm_msg_id": confirm_msg.message_id,
-        "progress_msg": None,
+        "confirm_msg_id": confirm_msg.message_id
     }
 
+# ✅ Callback atualizado
 async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data or ""
+
     if data.startswith("dl:"):
         token = data.split("dl:", 1)[1]
         entry = PENDING.get(token)
         if not entry:
-            await query.edit_message_text("Esse pedido expirou ou é inválido.")
-            return
-        if query.from_user.id != entry["from_user_id"]:
-            await query.edit_message_text("Apenas quem solicitou pode confirmar o download.")
+            await query.edit_message_text("Pedido expirado.")
             return
 
-        try:
-            await query.edit_message_text("Iniciando download... 🎬")
-        except Exception:
-            pass
+        user_id = query.from_user.id
 
-        progress_msg = await context.bot.send_message(chat_id=entry["chat_id"], text="📥 Baixando: 0% [────────────────────]")
-        entry["progress_msg"] = {"chat_id": progress_msg.chat_id, "message_id": progress_msg.message_id}
-        asyncio.run_coroutine_threadsafe(start_download_task(token), APP_LOOP)
-
-    elif data.startswith("cancel:"):
-        token = data.split("cancel:", 1)[1]
-        entry = PENDING.pop(token, None)
-        if not entry:
-            await query.edit_message_text("Cancelamento: pedido já expirou.")
+        # Verifica premium
+        if is_premium(user_id):
+            await query.edit_message_text("✅ Você é premium! Download liberado.")
+            await start_download(entry["url"], entry["chat_id"])
             return
-        await query.edit_message_text("Cancelado ✅")
 
-# ------------------- Download task -------------------
-async def start_download_task(token: str):
-    """Executa o download e envia arquivos."""
-    entry = PENDING.get(token)
-    if not entry:
-        LOG.info("Token não encontrado")
-        return
-    url = entry["url"]
-    chat_id = entry["chat_id"]
-    pm = entry["progress_msg"]
-    if not pm:
-        LOG.info("progress_msg não encontrado")
-        return
+        # Verifica limite
+        count = get_download_count(user_id)
+        if count > 3:
+            qr_code_base64, payment_id = gerar_pix_qrcode("email_do_usuario@example.com")
+            await query.edit_message_text("⚠️ Limite atingido. Pague R$ 9,90 para acesso ilimitado por 30 dias.")
+            await context.bot.send_photo(chat_id=query.message.chat_id, photo=qr_code_base64)
 
+            for _ in range(10):
+                if verificar_pagamento(payment_id):
+                    ativar_premium(user_id)
+                    await context.bot.send_message(chat_id=query.message.chat_id, text="✅ Pagamento confirmado! Você tem acesso ilimitado por 30 dias.")
+                    await start_download(entry["url"], entry["chat_id"])
+                    return
+                await asyncio.sleep(15)
+
+            await context.bot.send_message(chat_id=query.message.chat_id, text="⏳ Pagamento não confirmado. Tente novamente.")
+            return
+
+        increment_download_count(user_id)
+        await query.edit_message_text("Iniciando download...")
+        await start_download(entry["url"], entry["chat_id"])
+
+# ------------------- Função de download -------------------
+async def start_download(url, chat_id):
     tmpdir = tempfile.mkdtemp(prefix="ytbot_")
     outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
-    last_percent = -1
-    last_update_ts = time.time()
-    WATCHDOG_TIMEOUT = 180
-
-    def progress_hook(d):
-        nonlocal last_percent, last_update_ts
-        try:
-            status = d.get("status")
-            if status == "downloading":
-                downloaded = d.get("downloaded_bytes", 0) or 0
-                total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-                if total:
-                    percent = int(downloaded * 100 / total)
-                    if percent != last_percent:
-                        last_percent = percent
-                        last_update_ts = time.time()
-                        blocks = int(percent / 5)
-                        bar = "█" * blocks + "─" * (20 - blocks)
-                        text = f"📥 Baixando: {percent}% [{bar}]"
-                        try:
-                            asyncio.run_coroutine_threadsafe(
-                                application.bot.edit_message_text(
-                                    text=text, chat_id=pm["chat_id"], message_id=pm["message_id"]
-                                ),
-                                APP_LOOP,
-                            )
-                        except Exception:
-                            pass
-            elif status == "finished":
-                last_update_ts = time.time()
-                try:
-                    asyncio.run_coroutine_threadsafe(
-                        application.bot.edit_message_text(
-                            text="✅ Download concluído, processando o envio...", chat_id=pm["chat_id"], message_id=pm["message_id"]
-                        ),
-                        APP_LOOP,
-                    )
-                except Exception:
-                    pass
-        except Exception:
-            LOG.exception("Erro no progress_hook")
-
     ydl_opts = {
         "outtmpl": outtmpl,
-        "progress_hooks": [progress_hook],
-        "quiet": False,
-        "logger": LOG,
         "format": "best[height<=720]+bestaudio/best",
         "merge_output_format": "mp4",
-        "concurrent_fragment_downloads": 1,
-        "force_ipv4": True,
-        "socket_timeout": 30,
-        "http_chunk_size": 1048576,
-        "retries": 20,
-        "fragment_retries": 20,
-        **({"cookiefile": COOKIE_PATH} if COOKIE_PATH else {}),
+        "quiet": False,
+        "logger": LOG
     }
-
     try:
-        await asyncio.to_thread(lambda: _run_ydl(ydl_opts, [url]))
+        await asyncio.to_thread(lambda: yt_dlp.YoutubeDL(ydl_opts).download([url]))
+        arquivos = [os.path.join(tmpdir, f) for f in os.listdir(tmpdir) if os.path.isfile(os.path.join(tmpdir, f))]
+        for path in arquivos:
+            with open(path, "rb") as fh:
+                await application.bot.send_video(chat_id=chat_id, video=fh)
     except Exception as e:
-        LOG.exception("Erro no yt-dlp: %s", e)
-        try:
-            asyncio.run_coroutine_threadsafe(
-                application.bot.edit_message_text(
-                    text=f"⚠️ Erro no download: {str(e)}", chat_id=pm["chat_id"], message_id=pm["message_id"]
-                ),
-                APP_LOOP,
-            )
-        except Exception:
-            pass
-        PENDING.pop(token, None)
-        return
+        await application.bot.send_message(chat_id=chat_id, text=f"Erro no download: {e}")
 
-    # enviar arquivos
-    arquivos = [os.path.join(tmpdir, f) for f in os.listdir(tmpdir) if os.path.isfile(os.path.join(tmpdir, f))]
-    for path in arquivos:
-        try:
-            tamanho = os.path.getsize(path)
-            if tamanho > 50 * 1024 * 1024:
-                partes_dir = os.path.join(tmpdir, "partes")
-                os.makedirs(partes_dir, exist_ok=True)
-                os.system(f'ffmpeg -y -i "{path}" -c copy -map 0 -fs 45M "{partes_dir}/part%03d.mp4"')
-                partes = sorted(os.listdir(partes_dir))
-                for p in partes:
-                    ppath = os.path.join(partes_dir, p)
-                    with open(ppath, "rb") as fh:
-                        await application.bot.send_video(chat_id=chat_id, video=fh)
-            else:
-                with open(path, "rb") as fh:
-                    await application.bot.send_video(chat_id=chat_id, video=fh)
-        except Exception:
-            LOG.exception("Erro ao enviar arquivo %s", path)
-
-    asyncio.run_coroutine_threadsafe(
-        application.bot.edit_message_text(
-            text="✅ Download finalizado e enviado!", chat_id=pm["chat_id"], message_id=pm["message_id"]
-        ),
-        APP_LOOP,
-    )
-    PENDING.pop(token, None)
-
-def _run_ydl(options, urls):
-    with yt_dlp.YoutubeDL(options) as ydl:
-        ydl.download(urls)
-
-# ------------------- Handlers registration -------------------
+# ------------------- Registro de handlers -------------------
 application.add_handler(CommandHandler("start", start_cmd))
-application.add_handler(CommandHandler("stats", stats_cmd))
 application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
-# ------------------- Webhook -------------------
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     update_data = request.get_json(force=True)
     update = Update.de_json(update_data, application.bot)
-    try:
-        asyncio.run_coroutine_threadsafe(application.process_update(update), APP_LOOP)
-    except Exception:
-        LOG.exception("Falha ao agendar process_update")
+    asyncio.run_coroutine_threadsafe(application.process_update(update), APP_LOOP)
     return "ok"
 
 @app.route("/")
