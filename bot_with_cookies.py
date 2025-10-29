@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-bot_with_cookies.py (versão com buscador de preços)
+bot_with_cookies.py (versão com buscador de preços + comparar)
 
 Funcionalidades:
 - Download de vídeos (fluxo já existente)
 - /buscar <produto> -> busca por scraping em Shopee, Mercado Livre e Amazon
+- /comparar <produto> -> busca e indica o menor preço entre as lojas
 - fallback automático quando seletores mudam
 - comandos admin para ajustar seletores persistentes
 """
@@ -37,19 +38,17 @@ from telegram.ext import (
 import requests
 from bs4 import BeautifulSoup
 
-# Logging
+# ------------------------- Config & Logging -------------------------
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 LOG = logging.getLogger("ytbot")
 
-# Token
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     LOG.error("TELEGRAM_BOT_TOKEN não definido. Defina o secret TELEGRAM_BOT_TOKEN e redeploy.")
     sys.exit(1)
-
 LOG.info("TELEGRAM_BOT_TOKEN presente (len=%d).", len(TOKEN))
 
-# Admin (opcional) - user_id numérico do Telegram que pode usar comandos admin
+# Admin (opcional)
 ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
 if ADMIN_USER_ID:
     try:
@@ -62,14 +61,14 @@ if ADMIN_USER_ID:
 # Flask app
 app = Flask(__name__)
 
-# Construir a aplicação do telegram
+# Telegram app
 try:
     application = ApplicationBuilder().token(TOKEN).build()
 except Exception:
     LOG.exception("Erro ao construir ApplicationBuilder().")
     sys.exit(1)
 
-# Cria loop asyncio persistente em background
+# Async loop background
 APP_LOOP = asyncio.new_event_loop()
 
 
@@ -82,7 +81,6 @@ LOG.info("Iniciando event loop de background...")
 loop_thread = threading.Thread(target=_start_loop, args=(APP_LOOP,), daemon=True)
 loop_thread.start()
 
-# Inicializa a application no loop de background
 try:
     fut = asyncio.run_coroutine_threadsafe(application.initialize(), APP_LOOP)
     fut.result(timeout=30)
@@ -94,7 +92,7 @@ except Exception:
 URL_RE = re.compile(r"(https?://[^\s]+)")
 PENDING = {}  # token -> metadata (in-memory)
 
-# Cookies (opcional)
+# ------------------------- Cookies (opcional) -------------------------
 def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
     b64 = os.environ.get(env_var)
     if not b64:
@@ -121,15 +119,10 @@ def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
 
 COOKIE_PATH = prepare_cookies_from_env()
 
-# ---------- Helpers for mention detection ----------
-
+# ------------------------- Mention helper -------------------------
 def is_bot_mentioned(update: Update) -> bool:
-    """
-    Retorna True se a mensagem mencionar o bot (por @username) ou usar text_mention
-    que aponte para o próprio bot.
-    """
     try:
-        bot_username = application.bot.username  # disponível após initialize()
+        bot_username = application.bot.username
         bot_id = application.bot.id
     except Exception:
         bot_username = None
@@ -140,7 +133,6 @@ def is_bot_mentioned(update: Update) -> bool:
         return False
 
     if bot_username:
-        # verifica entidades 'mention' e 'text_mention'
         if getattr(msg, "entities", None):
             for ent in msg.entities:
                 etype = getattr(ent, "type", "")
@@ -152,15 +144,11 @@ def is_bot_mentioned(update: Update) -> bool:
                     if ent_text.lower() == f"@{bot_username.lower()}":
                         return True
                 elif etype == "text_mention":
-                    # entidade que inclui o usuário em si
                     if getattr(ent, "user", None) and getattr(ent.user, "id", None) == bot_id:
                         return True
-
-        # fallback: checar se @username aparece no texto
         if msg.text and f"@{bot_username}" in msg.text:
             return True
 
-    # também aceitar se houver text_mention direcionado ao bot sem username
     if getattr(msg, "entities", None):
         for ent in msg.entities:
             if getattr(ent, "type", "") == "text_mention":
@@ -168,8 +156,7 @@ def is_bot_mentioned(update: Update) -> bool:
                     return True
     return False
 
-# ------------------- Selectors persistence -------------------
-
+# ------------------------- Selectors persistence -------------------------
 SELECTORS_FILE = os.path.join(os.path.dirname(__file__), "selectors.json")
 DEFAULT_SELECTORS = {
     "shopee": {
@@ -183,7 +170,6 @@ DEFAULT_SELECTORS = {
         "price": "span.price-tag-fraction"
     },
     "amazon": {
-        # amazon usa layout dinâmico — seletores são heurísticos
         "product_container": "div.s-main-slot div[data-asin]",
         "name": "h2 a.a-link-normal span",
         "price": "span.a-price-whole"
@@ -214,46 +200,57 @@ def save_selectors(selectors):
 
 SELECTORS = load_selectors()
 
-# ------------------- Scraping helpers -------------------
-
+# ------------------------- Scraping helpers -------------------------
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"}
 
 def auto_detect_name_price(soup: BeautifulSoup) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Heurística simples: tenta achar tags que contenham palavras de produto e 'R$'.
-    Retorna (name_selector_tagname, price_selector_tagname) ou (None, None).
-    """
+    keywords = ["iphone", "samsung", "notebook", "celular", "fone", "smart", "tv", "geladeira", "monitor", "notebook"]
     name_tag = None
     price_tag = None
-
-    keywords = ["iphone", "samsung", "notebook", "celular", "fone", "smart", "tv", "geladeira", "notebook", "monitor"]
-    # procura por texto que pareça nome de produto
     for tag in soup.find_all(True, limit=400):
         txt = (tag.get_text(separator=" ", strip=True) or "").lower()
-        if any(k in txt for k in keywords) and 10 < len(txt) < 150:
+        if any(k in txt for k in keywords) and 10 < len(txt) < 200:
             name_tag = tag.name
             break
-
-    # procura por preço
     for tag in soup.find_all(True, limit=400):
         txt = (tag.get_text(strip=True) or "")
-        if "R$" in txt and len(txt) < 30:
+        if "R$" in txt and len(txt) < 40:
             price_tag = tag.name
             break
-
     return name_tag, price_tag
-
 
 def clean_price(text: str) -> str:
     return text.strip().replace("\n", " ").replace("\t", " ").strip()
 
+def parse_price_to_float(price_str: str) -> Optional[float]:
+    """
+    Tenta extrair valor numérico de uma string que pode conter 'R$' e formatação BR.
+    Retorna float (ex: 1234.56) ou None se não conseguiu.
+    """
+    if not price_str:
+        return None
+    # remover espaços e 'R$'
+    s = price_str.replace("R$", "").replace("r$", "").strip()
+    # extrai a primeira sequência de dígitos, pontos e vírgulas
+    m = re.search(r"[\d\.,]+", s)
+    if not m:
+        return None
+    num = m.group(0)
+    # normalizar: remover pontos de milhar, trocar vírgula por ponto
+    if num.count(",") > 0 and num.count(".") > 0:
+        # ex: '1.234,56' -> remove pontos
+        num = num.replace(".", "")
+        num = num.replace(",", ".")
+    else:
+        # se só contém virgula, troca por ponto
+        num = num.replace(",", ".")
+    try:
+        return float(num)
+    except Exception:
+        return None
 
 # ------------------- Site-specific scrapers -------------------
-
 def scrape_shopee(query: str) -> List[Tuple[str, str, str]]:
-    """
-    Retorna lista de (nome, preco, link)
-    """
     url = f"https://shopee.com.br/search?keyword={requests.utils.requote_uri(query)}"
     LOG.info("Scraping Shopee: %s", url)
     r = requests.get(url, headers=HEADERS, timeout=12)
@@ -273,7 +270,6 @@ def scrape_shopee(query: str) -> List[Tuple[str, str, str]]:
         if not name_tag:
             LOG.warning("Shopee autodetec falhou")
             return []
-        # tenta coletar por heurística
         for tag in soup.find_all(name_tag)[:6]:
             name = tag.get_text(strip=True)
             ptag = tag.find_next(price_tag) if price_tag else None
@@ -284,12 +280,10 @@ def scrape_shopee(query: str) -> List[Tuple[str, str, str]]:
     for item in items[:6]:
         nome = item.select_one(name_sel).get_text(strip=True) if item.select_one(name_sel) else "N/D"
         preco = item.select_one(price_sel).get_text(strip=True) if item.select_one(price_sel) else "N/D"
-        # link: tentar extrair link do item
         link_tag = item.select_one("a")
         link = f"https://shopee.com.br{link_tag['href']}" if link_tag and link_tag.get("href") else url
         results.append((nome, clean_price(preco), link))
     return results[:3]
-
 
 def scrape_mercadolivre(query: str) -> List[Tuple[str, str, str]]:
     url = f"https://lista.mercadolivre.com.br/{requests.utils.requote_uri(query)}"
@@ -315,7 +309,6 @@ def scrape_mercadolivre(query: str) -> List[Tuple[str, str, str]]:
             name = tag.get_text(strip=True)
             ptag = tag.find_next(price_tag) if price_tag else None
             price = ptag.get_text(strip=True) if ptag else "N/D"
-            # tentativa de link:
             a = tag.find_parent("a")
             link = a["href"] if a and a.get("href") else url
             results.append((name, clean_price(price), link))
@@ -329,9 +322,7 @@ def scrape_mercadolivre(query: str) -> List[Tuple[str, str, str]]:
         results.append((nome, clean_price(preco), link))
     return results[:3]
 
-
 def scrape_amazon(query: str) -> List[Tuple[str, str, str]]:
-    # Observação: Amazon muda com frequência; heurísticas aplicadas
     url = f"https://www.amazon.com.br/s?k={requests.utils.requote_uri(query)}"
     LOG.info("Scraping Amazon: %s", url)
     r = requests.get(url, headers=HEADERS, timeout=12)
@@ -361,21 +352,17 @@ def scrape_amazon(query: str) -> List[Tuple[str, str, str]]:
         return results[:3]
 
     for item in items[:8]:
-        # nome
         nome = "N/D"
         if item.select_one(name_sel):
             nome = item.select_one(name_sel).get_text(strip=True)
         else:
-            # tentativa alternativa
             a = item.select_one("a.a-link-normal")
             if a:
-                nome = a.get_text(strip=True) or a.select_one("span") and a.select_one("span").get_text(strip=True) or nome
-        # preco
+                nome = a.get_text(strip=True) or nome
         preco = "N/D"
         if item.select_one(price_sel):
             preco = item.select_one(price_sel).get_text(strip=True)
         else:
-            # tentativa alternativa
             p_whole = item.select_one("span.a-price-whole")
             p_frac = item.select_one("span.a-price-fraction")
             if p_whole:
@@ -385,15 +372,9 @@ def scrape_amazon(query: str) -> List[Tuple[str, str, str]]:
         results.append((nome, clean_price(preco), link))
     return results[:3]
 
-
 # ------------------- Unified search -------------------
-
 def search_all_sites(query: str) -> dict:
-    """
-    Retorna dicionário com chaves por site e lista de resultados.
-    """
     results = {}
-    # Cada scraper em sua thread para não bloquear
     try:
         results["shopee"] = scrape_shopee(query)
     except Exception:
@@ -414,9 +395,23 @@ def search_all_sites(query: str) -> dict:
 
     return results
 
+# ------------------- Comparison helper -------------------
+def find_lowest_price(search_results: dict) -> Optional[Tuple[str, str, float, str]]:
+    """
+    Recebe dict {site: [(name, price_str, link), ...], ...}
+    Retorna (site, name, price_float, link) do menor preço, ou None.
+    """
+    best = None  # tuple (site, name, price_float, link)
+    for site, items in search_results.items():
+        for name, price_str, link in items:
+            price_val = parse_price_to_float(price_str)
+            if price_val is None:
+                continue
+            if best is None or price_val < best[2]:
+                best = (site, name, price_val, link)
+    return best
 
-# ------------------- Bot Handlers -------------------
-
+# ------------------- Bot Handlers (start, messages, confirm) -------------------
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args:
         payload = context.args[0]
@@ -446,8 +441,10 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         return
 
-    await update.message.reply_text("Olá! Me envie um link do YouTube (ou mencione-me com @seubot + link) e eu te pergunto se quer baixar.\n\nUse /buscar <produto> para procurar preços nas lojas.")
-
+    await update.message.reply_text(
+        "Olá! Me envie um link do YouTube (ou mencione-me com @seubot + link) e eu te pergunto se quer baixar.\n\n"
+        "Use /buscar <produto> para procurar preços nas lojas ou /comparar <produto> para ver o menor preço."
+    )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not getattr(update, "message", None) or not update.message.text:
@@ -509,7 +506,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "progress_msg": None,
     }
 
-
 async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -542,9 +538,7 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await query.edit_message_text("Cancelado ✅")
 
-
-# ---------- Download task & helpers (mantive seu código) ----------
-
+# ------------------- Download task & helpers (mesmo comportamento) -------------------
 async def start_download_task(token: str):
     entry = PENDING.get(token)
     if not entry:
@@ -732,14 +726,11 @@ async def start_download_task(token: str):
 
     PENDING.pop(token, None)
 
-
 def _run_ydl(options, urls):
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.download(urls)
 
-
-# ------------------- Price search command -------------------
-
+# ------------------- Price commands: /buscar and /comparar -------------------
 async def buscar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Use assim: `/buscar nome do produto`", parse_mode="Markdown")
@@ -748,7 +739,6 @@ async def buscar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     produto = " ".join(context.args).strip()
     await update.message.reply_text(f"🔎 Buscando preços para: *{produto}* ...", parse_mode="Markdown")
 
-    # rodar em thread para não bloquear
     try:
         results = await asyncio.to_thread(search_all_sites, produto)
     except Exception:
@@ -756,7 +746,6 @@ async def buscar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Erro ao buscar. Tente novamente mais tarde.")
         return
 
-    # build message
     msgs = []
     for site, items in results.items():
         if not items:
@@ -770,22 +759,44 @@ async def buscar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     final_msg = "\n\n".join(msgs)
     await update.message.reply_text(final_msg, parse_mode="Markdown", disable_web_page_preview=True)
 
+async def comparar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Use assim: `/comparar nome do produto`", parse_mode="Markdown")
+        return
+
+    produto = " ".join(context.args).strip()
+    status_msg = await update.message.reply_text(f"🔎 Comparando preços para: *{produto}* ...", parse_mode="Markdown")
+
+    try:
+        results = await asyncio.to_thread(search_all_sites, produto)
+    except Exception:
+        LOG.exception("Erro ao executar busca para comparar")
+        await status_msg.edit_text("⚠️ Erro ao buscar. Tente novamente mais tarde.")
+        return
+
+    best = find_lowest_price(results)
+    if not best:
+        await status_msg.edit_text("😕 Não foi possível encontrar preços válidos para comparar.")
+        return
+
+    site, name, price_val, link = best
+    price_str = f"R$ {price_val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")  # formata BR
+    reply = (
+        f"✅ *Melhor preço encontrado:*\n\n"
+        f"🏷️ {name}\n"
+        f"🏪 *{site.title()}*\n"
+        f"💰 *{price_str}*\n"
+        f"🔗 [Ver na loja]({link})"
+    )
+    await status_msg.edit_text(reply, parse_mode="Markdown", disable_web_page_preview=True)
 
 # ------------------- Admin commands: set/test/get selectors -------------------
-
 def is_admin(user_id: int) -> bool:
     if ADMIN_USER_ID:
         return user_id == ADMIN_USER_ID
-    # fallback: permitir qualquer usuário se ADMIN_USER_ID não estiver definido
     return True
 
-
 async def setselectors_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /setselectors <site> <product_container_selector> <name_selector> <price_selector>
-    Ex:
-    /setselectors shopee div.shopee-search-item-result__item div._10Wbs- span._29R_un
-    """
     user = update.effective_user
     if not is_admin(user.id):
         await update.message.reply_text("Apenas administradores podem usar este comando.")
@@ -807,11 +818,7 @@ async def setselectors_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_selectors(SELECTORS)
     await update.message.reply_text(f"Selectors atualizados para *{site}*.", parse_mode="Markdown")
 
-
 async def testselectors_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /testselectors <site> <termo>
-    """
     user = update.effective_user
     if not is_admin(user.id):
         await update.message.reply_text("Apenas administradores podem usar este comando.")
@@ -851,7 +858,6 @@ async def testselectors_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"• {nome}\n  💰 {preco}\n  🔗 {link}\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-
 async def getselectors_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not is_admin(user.id):
@@ -871,20 +877,18 @@ async def getselectors_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pretty = json.dumps(s, ensure_ascii=False, indent=2)
     await update.message.reply_text(f"Selectors para *{site}*:\n<pre>{pretty}</pre>", parse_mode="HTML")
 
-
-# Handlers registration (mantive os handlers originais e adicionei novos)
+# ------------------- Handlers registration -------------------
 application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
-# novos handlers
 application.add_handler(CommandHandler("buscar", buscar_cmd))
+application.add_handler(CommandHandler("comparar", comparar_cmd))
 application.add_handler(CommandHandler("setselectors", setselectors_cmd))
 application.add_handler(CommandHandler("testselectors", testselectors_cmd))
 application.add_handler(CommandHandler("getselectors", getselectors_cmd))
 
-
-# Webhook endpoint (Render envia POST aqui)
+# ------------------- Webhook endpoint -------------------
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     update_data = request.get_json(force=True)
@@ -895,10 +899,9 @@ def webhook():
         LOG.exception("Falha ao agendar process_update")
     return "ok"
 
-
 @app.route("/")
 def index():
-    return "Bot rodando (com buscador de preços)"
+    return "Bot rodando (com buscador e comparar)"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
