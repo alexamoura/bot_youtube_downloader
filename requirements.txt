@@ -1,4 +1,11 @@
-Flask>=2.0
-yt-dlp>=2025.09.01
-python-telegram-bot>=20.0
-gunicorn
+# Core dependencies
+Flask==3.0.0
+python-telegram-bot==21.0
+yt-dlp==2024.12.23
+
+# Shopee Video extractor (necessário para suporte completo)
+requests==2.31.0
+beautifulsoup4==4.12.3
+
+# Optional but recommended
+lxml==5.1.0
