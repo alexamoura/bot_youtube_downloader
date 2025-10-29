@@ -1,7 +1,7 @@
-Flask==3.0.0
-python-telegram-bot==21.0
-yt-dlp==2024.12.23
-requests==2.31.0         # ← Para Shopee
-beautifulsoup4==4.12.3   # ← Para Shopee
-lxml==5.1.0
+Flask>=3.0.0
+python-telegram-bot>=21.0
+yt-dlp>=2024.12.23
+requests>=2.31.0         # ← Para Shopee
+beautifulsoup4>=4.12.3   # ← Para Shopee
+lxml>=5.1.0
 gunicorn
