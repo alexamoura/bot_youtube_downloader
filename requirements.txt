@@ -3,3 +3,4 @@ yt-dlp>=2025.09.01
 python-telegram-bot>=20.0
 gunicorn
 requests
+beautifulsoup4
