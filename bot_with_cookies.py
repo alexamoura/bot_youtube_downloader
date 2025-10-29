@@ -613,13 +613,37 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
     if COOKIE_PATH:
         ydl_opts["cookiefile"] = COOKIE_PATH
 
-    # Download
+    def _run_ydl_resilient(options, urls):
+    """Executa yt-dlp de forma síncrona com fallback automático."""
+    base_opts = options.copy()
+
+    # Primeiro tentativa: até 720p
+    opts_primary = {**base_opts, "format": "bestvideo[height<=720]+bestaudio/best/best"}
+
     try:
-        await asyncio.to_thread(lambda: _run_ydl(ydl_opts, [url]))
+        with yt_dlp.YoutubeDL(opts_primary) as ydl:
+            ydl.download(urls)
+    except yt_dlp.utils.DownloadError as e:
+        LOG.warning(f"❗ Formato não disponível (720p) para {urls}. Tentando fallback: {e}")
+        # Fallback: melhor formato disponível
+        opts_fallback = {**base_opts, "format": "best"}
+        try:
+            with yt_dlp.YoutubeDL(opts_fallback) as ydl:
+                ydl.download(urls)
+        except Exception as e2:
+            LOG.error(f"🚨 Falha no fallback do download: {e2}")
+            raise e2
     except Exception as e:
-        LOG.exception("Erro no yt-dlp: %s", e)
-        await _notify_error(pm, "network_error")
-        return
+        LOG.error(f"⚠️ Erro inesperado no yt-dlp: {e}")
+        raise e
+
+# Download
+try:
+    await asyncio.to_thread(lambda: _run_ydl_resilient(ydl_opts, [url]))
+except Exception as e:
+    LOG.exception("Erro final no yt-dlp: %s", e)
+    await _notify_error(pm, "network_error")
+    return
 
     # Enviar arquivos
     arquivos = [
