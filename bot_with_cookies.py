@@ -269,12 +269,14 @@ def split_video_file(input_path: str, output_dir: str) -> list:
     output_pattern = os.path.join(output_dir, "part%03d.mp4")
     
     cmd = [
-        "ffmpeg", "-y", "-i", input_path,
-        "-c", "copy", "-map", "0",
-        "-fs", f"{SPLIT_SIZE}",
-        output_pattern
-    ]
-    
+    "ffmpeg", "-y", "-i", input_path,
+    "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+    "-c:v", "libx264", "-preset", "fast",
+    "-c:a", "aac", "-b:a", "128k",
+    "-fs", f"{SPLIT_SIZE}",
+    output_pattern
+]
+      
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, check=True)
         LOG.info("ffmpeg concluído com sucesso.")
