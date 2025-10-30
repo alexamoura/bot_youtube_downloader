@@ -59,8 +59,11 @@ MAX_FILE_SIZE = 50 * 1024 * 1024
 SPLIT_SIZE = 45 * 1024 * 1024
 
 # NOVO: Controle de concorrência
-MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "5"))  # Máximo de downloads simultâneos
+MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "2"))  # Padrão 2 para servidores básicos
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+
+# NOVO: Modo de economia de CPU - evita reprocessamento quando possível
+LOW_CPU_MODE = os.getenv("LOW_CPU_MODE", "true").lower() == "true"
 
 # Estruturas thread-safe
 PENDING = OrderedDict()
@@ -705,17 +708,26 @@ async def _download_ytdlp(url: str, tmpdir: str, chat_id: int, pm: dict, token: 
             "no_warnings": True,
             "format": format_str,
             "merge_output_format": "mp4",
-            # Preserva aspect ratio original
-            "postprocessor_args": {
+            "progress_hooks": [lambda d: _progress_hook(d, token, pm)],
+        }
+        
+        # MODO LOW CPU: Evita recodificação quando possível
+        if LOW_CPU_MODE:
+            LOG.info("Modo LOW_CPU ativado - evitando recodificação")
+            # Apenas mescla streams sem recodificar
+            ydl_opts["postprocessor_args"] = {
+                "ffmpeg": ["-c", "copy"]  # Copia streams sem recodificar
+            }
+        else:
+            # Modo normal: recodifica para garantir qualidade
+            ydl_opts["postprocessor_args"] = {
                 "ffmpeg": [
                     "-vf", "scale='min(iw,1920)':'min(ih,1080)':force_original_aspect_ratio=decrease",
                     "-c:v", "libx264",
-                    "-preset", "fast",
-                    "-crf", "23"
+                    "-preset", "ultrafast",  # Menos CPU, arquivo maior
+                    "-crf", "28"  # Compressão mais rápida
                 ]
-            },
-            "progress_hooks": [lambda d: _progress_hook(d, token, pm)],
-        }
+            }
         
         cookie = get_cookie_for_url(url)
         if cookie:
@@ -853,6 +865,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     LOG.info("🚀 Iniciando bot na porta %d", port)
     LOG.info("⚡ Máximo de downloads simultâneos: %d", MAX_CONCURRENT_DOWNLOADS)
+    LOG.info("💻 Modo LOW_CPU: %s", "ATIVADO" if LOW_CPU_MODE else "DESATIVADO")
     
     # IMPORTANTE: threaded=True para suportar múltiplas requisições
     app.run(host="0.0.0.0", port=port, threaded=True)
