@@ -187,7 +187,7 @@ init_db()
 # ==================== COOKIES ====================
 
 def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
-    """Prepara arquivo de cookies a partir de variável de ambiente."""
+    """Prepara arquivo de cookies a partir de variável de ambiente (base64)."""
     b64 = os.environ.get(env_var)
     if not b64:
         LOG.info("Nenhuma variável %s encontrada – rodando sem cookies.", env_var)
@@ -200,17 +200,20 @@ def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
         return None
 
     try:
-        fd, path = tempfile.mkstemp(prefix="youtube_cookies_", suffix=".txt")
+        fd, path = tempfile.mkstemp(prefix=f"{env_var.lower()}_", suffix=".txt")
         os.close(fd)
         with open(path, "wb") as f:
             f.write(raw)
         LOG.info("Cookies gravados em %s", path)
         return path
     except Exception as e:
-        LOG.error("Falha ao escrever cookies: %s", e)
+        LOG.error("Falha ao escrever cookies (%s): %s", env_var, e)
         return None
 
-COOKIE_PATH = prepare_cookies_from_env()
+# Cria cookies individuais para cada site
+COOKIE_YT = prepare_cookies_from_env("YT_COOKIES_B64")
+COOKIE_SHOPEE = prepare_cookies_from_env("SHOPEE_COOKIES_B64")
+COOKIE_IG = prepare_cookies_from_env("IG_COOKIES_B64")
 
 # ==================== UTILITIES ====================
 
