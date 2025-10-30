@@ -552,6 +552,91 @@ async def _notify_error(pm: dict, error_type: str):
     except Exception as e:
         LOG.error("Erro ao notificar erro: %s", e)
 
+async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
+    """Download especial para Shopee Video sem usar yt-dlp."""
+    try:
+        # Atualiza mensagem
+        await application.bot.edit_message_text(
+            text="🛍️ Processando vídeo da Shopee...",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+        
+        # Tenta usar yt-dlp com configurações especiais para Shopee
+        outtmpl = os.path.join(tmpdir, "shopee_video.%(ext)s")
+        
+        ydl_opts = {
+            "outtmpl": outtmpl,
+            "quiet": False,
+            "logger": LOG,
+            "format": "best",
+            "nocheckcertificate": True,
+            "no_warnings": False,
+            # Força extratores genéricos
+            "default_search": "auto",
+            "extractor_args": {"generic": {"allowed_extractors": ["generic", "html5"]}},
+            # Headers personalizados
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": "https://shopee.com.br/",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            },
+        }
+        
+        # Adiciona cookies se disponível
+        cookie_file = get_cookie_for_url(url)
+        if cookie_file:
+            ydl_opts["cookiefile"] = cookie_file
+        
+        LOG.info("Tentando download da Shopee com configurações especiais...")
+        
+        try:
+            await asyncio.to_thread(lambda: _run_ydl(ydl_opts, [url]))
+            
+            # Verifica se arquivo foi baixado
+            arquivos = [
+                os.path.join(tmpdir, f) 
+                for f in os.listdir(tmpdir) 
+                if os.path.isfile(os.path.join(tmpdir, f))
+            ]
+            
+            if arquivos:
+                LOG.info("Shopee Video baixado com sucesso!")
+                await application.bot.edit_message_text(
+                    text="✅ Download concluído, enviando...",
+                    chat_id=pm["chat_id"],
+                    message_id=pm["message_id"]
+                )
+                
+                # Envia o vídeo
+                for path in arquivos:
+                    with open(path, "rb") as fh:
+                        await application.bot.send_video(chat_id=chat_id, video=fh)
+                
+                await application.bot.edit_message_text(
+                    text="✅ Vídeo da Shopee enviado!",
+                    chat_id=pm["chat_id"],
+                    message_id=pm["message_id"]
+                )
+                return
+            
+        except Exception as e:
+            LOG.warning("Método yt-dlp falhou para Shopee: %s", e)
+        
+        # Se yt-dlp falhou, informa o usuário
+        await application.bot.edit_message_text(
+            text="⚠️ Desculpe, não consegui baixar este vídeo da Shopee.\n\n"
+                 "A Shopee pode ter proteções que impedem o download automático. "
+                 "Tente baixar diretamente pelo app da Shopee.",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+        
+    except Exception as e:
+        LOG.exception("Erro no download Shopee: %s", e)
+        await _notify_error(pm, "unknown")
+
 async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict):
     outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
     last_percent = -1
@@ -560,6 +645,12 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
     if 'shopee' in url.lower() and 'universal-link' in url:
         url = resolve_shopee_universal_link(url)
         LOG.info("Usando URL resolvida para download: %s", url[:100])
+    
+    # Verifica se é Shopee Video - precisa tratamento especial
+    if 'sv.shopee' in url.lower() or 'share-video' in url.lower():
+        LOG.info("Detectado Shopee Video, usando método alternativo")
+        await _download_shopee_video(url, tmpdir, chat_id, pm)
+        return
 
     def progress_hook(d):
         nonlocal last_percent
