@@ -561,7 +561,7 @@ async def _notify_error(pm: dict, error_type: str):
         LOG.error("Erro ao notificar erro: %s", e)
 
 async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
-    """Download especial para Shopee Video usando web scraping."""
+    """Download especial para Shopee Video usando SVXtract."""
     if not REQUESTS_AVAILABLE:
         await application.bot.edit_message_text(
             text="⚠️ Extrator Shopee não disponível (faltam dependências).",
@@ -573,11 +573,200 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
     try:
         # Atualiza mensagem
         await application.bot.edit_message_text(
-            text="🛍️ Extraindo vídeo da Shopee...",
+            text="🛍️ Extraindo vídeo da Shopee (sem marca d'água)...",
             chat_id=pm["chat_id"],
             message_id=pm["message_id"]
         )
         
+        LOG.info("Usando SVXtract para extrair vídeo da Shopee: %s", url)
+        
+        # Passo 1: Buscar CSRF token e preparar requisição
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://svxtract.com/",
+        }
+        
+        # Passo 2: Fazer requisição ao SVXtract
+        from urllib.parse import quote
+        encoded_url = quote(url, safe='')
+        
+        # Tenta primeiro buscar a página principal para pegar o csrf_token
+        try:
+            main_page = await asyncio.to_thread(
+                lambda: requests.get("https://svxtract.com/", headers=headers, timeout=10)
+            )
+            
+            # Extrai csrf_token do HTML
+            csrf_match = re.search(r'csrf_token["\']?\s*[:=]\s*["\']([a-f0-9]+)["\']', main_page.text)
+            csrf_token = csrf_match.group(1) if csrf_match else None
+            
+            if csrf_token:
+                LOG.info("CSRF token encontrado: %s", csrf_token[:20])
+            else:
+                LOG.warning("CSRF token não encontrado, tentando sem ele")
+                csrf_token = ""
+        except Exception as e:
+            LOG.warning("Erro ao buscar CSRF token: %s", e)
+            csrf_token = ""
+        
+        # Passo 3: Fazer requisição ao downloader
+        download_url = f"https://svxtract.com/function/download/downloader.php?url={encoded_url}"
+        if csrf_token:
+            download_url += f"&csrf_token={csrf_token}"
+        
+        LOG.info("Requisitando SVXtract: %s", download_url[:100])
+        
+        response = await asyncio.to_thread(
+            lambda: requests.get(download_url, headers=headers, timeout=30)
+        )
+        response.raise_for_status()
+        
+        LOG.info("Resposta SVXtract recebida, analisando...")
+        
+        # Passo 4: Extrair URL do vídeo da resposta
+        video_url = None
+        
+        # O SVXtract pode retornar JSON ou HTML
+        try:
+            data = response.json()
+            # Procura pela URL do vídeo no JSON
+            if 'url' in data:
+                video_url = data['url']
+            elif 'download_url' in data:
+                video_url = data['download_url']
+            elif 'video_url' in data:
+                video_url = data['video_url']
+            LOG.info("JSON recebido: %s", str(data)[:200])
+        except:
+            # Se não for JSON, busca no HTML
+            patterns = [
+                r'"url"\s*:\s*"([^"]+)"',
+                r'"download_url"\s*:\s*"([^"]+)"',
+                r'"video_url"\s*:\s*"([^"]+)"',
+                r'href="([^"]*\.mp4[^"]*)"',
+                r'<a[^>]*href="([^"]+download[^"]+)"',
+                r'(https://[^"\s]*\.mp4[^"\s]*)',
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, response.text)
+                for match in matches:
+                    clean_url = match.replace('\\/', '/')
+                    if 'http' in clean_url and '.mp4' in clean_url:
+                        video_url = clean_url
+                        LOG.info("URL encontrada no HTML via regex")
+                        break
+                if video_url:
+                    break
+        
+        # Se não encontrou URL direta, tenta método original (scraping direto)
+        if not video_url:
+            LOG.warning("SVXtract não retornou URL, tentando método direto...")
+            await _download_shopee_direct(url, tmpdir, chat_id, pm)
+            return
+        
+        LOG.info("URL do vídeo extraída: %s", video_url[:100])
+        
+        # Atualiza mensagem
+        await application.bot.edit_message_text(
+            text="📥 Baixando vídeo sem marca d'água...",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+        
+        # Passo 5: Baixar o vídeo
+        output_path = os.path.join(tmpdir, "shopee_video_no_watermark.mp4")
+        
+        video_response = await asyncio.to_thread(
+            lambda: requests.get(video_url, headers=headers, stream=True, timeout=120)
+        )
+        video_response.raise_for_status()
+        
+        total_size = int(video_response.headers.get('content-length', 0))
+        downloaded = 0
+        last_percent = -1
+        
+        with open(output_path, 'wb') as f:
+            for chunk in video_response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    
+                    if total_size:
+                        percent = int(downloaded * 100 / total_size)
+                        if percent != last_percent and percent % 10 == 0:
+                            last_percent = percent
+                            blocks = int(percent / 5)
+                            bar = "█" * blocks + "─" * (20 - blocks)
+                            try:
+                                await application.bot.edit_message_text(
+                                    text=f"🛍️ Baixando: {percent}% [{bar}]\n✨ Sem marca d'água",
+                                    chat_id=pm["chat_id"],
+                                    message_id=pm["message_id"]
+                                )
+                            except:
+                                pass
+        
+        LOG.info("Vídeo da Shopee baixado com sucesso (sem marca d'água): %s", output_path)
+        
+        # Verifica se arquivo foi criado
+        if not os.path.exists(output_path) or os.path.getsize(output_path) < 1000:
+            raise Exception("Arquivo baixado está vazio ou corrompido")
+        
+        # Envia o vídeo
+        await application.bot.edit_message_text(
+            text="✅ Download concluído, enviando...",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+        
+        with open(output_path, "rb") as fh:
+            await application.bot.send_video(
+                chat_id=chat_id, 
+                video=fh, 
+                caption="🛍️ Shopee Video ✨ (Sem marca d'água - via SVXtract)"
+            )
+        
+        await application.bot.edit_message_text(
+            text="✅ Vídeo da Shopee enviado sem marca d'água!",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+        
+    except requests.exceptions.RequestException as e:
+        LOG.exception("Erro de rede ao usar SVXtract: %s", e)
+        # Fallback para método direto
+        LOG.info("Tentando método direto como fallback...")
+        try:
+            await _download_shopee_direct(url, tmpdir, chat_id, pm)
+        except:
+            await application.bot.edit_message_text(
+                text="🌐 Erro ao baixar da Shopee. Tente novamente em alguns minutos.",
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"]
+            )
+    except Exception as e:
+        LOG.exception("Erro no download Shopee via SVXtract: %s", e)
+        # Fallback para método direto
+        LOG.info("Tentando método direto como fallback...")
+        try:
+            await _download_shopee_direct(url, tmpdir, chat_id, pm)
+        except:
+            await application.bot.edit_message_text(
+                text="⚠️ Não consegui baixar este vídeo da Shopee.\n\n"
+                     "Tente novamente ou use o app oficial.",
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"]
+            )
+
+async def _download_shopee_direct(url: str, tmpdir: str, chat_id: int, pm: dict):
+    """Método direto de scraping da Shopee (fallback)."""
+    if not REQUESTS_AVAILABLE:
+        raise Exception("requests/beautifulsoup4 não disponível")
+    
+    try:
         LOG.info("Iniciando extração customizada da Shopee: %s", url)
         
         # Faz requisição à página
