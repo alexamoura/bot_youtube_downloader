@@ -609,18 +609,39 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         
         LOG.info("Página da Shopee carregada, analisando...")
         
+        # DEBUG: Salva HTML para análise
+        debug_html_path = os.path.join(tmpdir, "shopee_debug.html")
+        with open(debug_html_path, 'w', encoding='utf-8') as f:
+            f.write(response.text)
+        LOG.info("HTML salvo em: %s (primeiros 2000 chars)", debug_html_path)
+        LOG.info("HTML preview: %s", response.text[:2000])
+        
         # Busca URL do vídeo no HTML/JavaScript
         video_url = None
         
         # Padrão 1: Busca em tags <script> com JSON
         import json
         patterns = [
+            # Padrões originais
             r'"videoUrl"\s*:\s*"([^"]+)"',
             r'"video_url"\s*:\s*"([^"]+)"',
             r'"playAddr"\s*:\s*"([^"]+)"',
             r'"url"\s*:\s*"(https://[^"]*\.mp4[^"]*)"',
             r'playAddr["\']:\s*["\']([^"\']+)',
             r'"playUrl"\s*:\s*"([^"]+)"',
+            # Novos padrões para Shopee
+            r'"video"\s*:\s*{\s*"url"\s*:\s*"([^"]+)"',
+            r'"stream"\s*:\s*"([^"]+)"',
+            r'"source"\s*:\s*"([^"]+)"',
+            r'videoUrl:\s*["\']([^"\']+)',
+            r'src:\s*["\']([^"\']+\.mp4[^"\']*)',
+            # Padrões para dados em window/global
+            r'window\.__INITIAL_STATE__.*?"video".*?"url"\s*:\s*"([^"]+)"',
+            r'window\.videoData.*?"url"\s*:\s*"([^"]+)"',
+            # Padrões para URLs diretas de CDN
+            r'(https://[^"\s]*shopee[^"\s]*\.mp4[^"\s]*)',
+            r'(https://[^"\s]*vod[^"\s]*\.mp4[^"\s]*)',
+            r'(https://[^"\s]*video[^"\s]*\.mp4[^"\s]*)',
         ]
         
         for pattern in patterns:
@@ -638,18 +659,54 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         # Padrão 2: Busca em meta tags
         if not video_url:
             soup = BeautifulSoup(response.content, 'html.parser')
-            meta_tags = [
-                soup.find('meta', property='og:video'),
-                soup.find('meta', property='og:video:url'),
-                soup.find('meta', property='og:video:secure_url'),
-                soup.find('meta', attrs={'name': 'twitter:player:stream'}),
-            ]
             
-            for tag in meta_tags:
-                if tag and tag.get('content'):
-                    video_url = tag.get('content')
-                    LOG.info("URL de vídeo encontrada via meta tag: %s", video_url[:100])
-                    break
+            # Busca em scripts tipo application/json ou application/ld+json
+            scripts = soup.find_all('script', type=['application/json', 'application/ld+json'])
+            for script in scripts:
+                if script.string:
+                    try:
+                        data = json.loads(script.string)
+                        # Busca recursivamente no JSON
+                        def find_video_url_in_dict(obj, depth=0):
+                            if depth > 10:
+                                return None
+                            if isinstance(obj, dict):
+                                for key, value in obj.items():
+                                    if key in ['videoUrl', 'video_url', 'playAddr', 'playUrl', 'url', 'src', 'source']:
+                                        if isinstance(value, str) and ('http' in value or value.endswith('.mp4')):
+                                            return value
+                                    result = find_video_url_in_dict(value, depth + 1)
+                                    if result:
+                                        return result
+                            elif isinstance(obj, list):
+                                for item in obj:
+                                    result = find_video_url_in_dict(item, depth + 1)
+                                    if result:
+                                        return result
+                            return None
+                        
+                        found_url = find_video_url_in_dict(data)
+                        if found_url:
+                            video_url = found_url
+                            LOG.info("URL encontrada em script JSON: %s", video_url[:100])
+                            break
+                    except:
+                        pass
+            
+            # Meta tags
+            if not video_url:
+                meta_tags = [
+                    soup.find('meta', property='og:video'),
+                    soup.find('meta', property='og:video:url'),
+                    soup.find('meta', property='og:video:secure_url'),
+                    soup.find('meta', attrs={'name': 'twitter:player:stream'}),
+                ]
+                
+                for tag in meta_tags:
+                    if tag and tag.get('content'):
+                        video_url = tag.get('content')
+                        LOG.info("URL de vídeo encontrada via meta tag: %s", video_url[:100])
+                        break
         
         # Padrão 3: Busca em tags <video> ou <source>
         if not video_url:
