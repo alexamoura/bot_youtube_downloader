@@ -211,17 +211,35 @@ def get_cookie_for_url(url: str):
     return COOKIE_YT or COOKIE_SHOPEE or COOKIE_IG
 
 def resolve_shopee_link(url: str) -> str:
+    """Resolve links universais e de redirecionamento da Shopee"""
     try:
+        # Tipo 1: Link universal com parâmetro redir
         if 'universal-link' in url and 'redir=' in url:
+            # Extrai o parâmetro redir
             if '?' in url:
                 query = url.split('?', 1)[1]
                 params = parse_qs(query)
                 if 'redir' in params:
                     real_url = unquote(params['redir'][0])
-                    LOG.info("URL Shopee resolvida: %s", real_url[:80])
+                    LOG.info("URL Shopee resolvida (universal-link): %s", real_url[:80])
                     return real_url
+        
+        # Tipo 2: Link encurtado shp.ee
+        if 'shp.ee' in url or 'shopee.link' in url:
+            LOG.info("Link encurtado Shopee detectado: %s", url[:50])
+            # Tenta seguir o redirect
+            try:
+                import requests
+                response = requests.head(url, allow_redirects=True, timeout=5)
+                if response.url:
+                    LOG.info("Redirect resolvido para: %s", response.url[:80])
+                    return response.url
+            except:
+                pass
+        
         return url
-    except:
+    except Exception as e:
+        LOG.warning("Erro ao resolver link Shopee: %s", e)
         return url
 
 @contextmanager
@@ -256,6 +274,32 @@ def is_youtube_url(url: str) -> bool:
     """Verifica se a URL é do YouTube"""
     url_lower = url.lower()
     return 'youtube.com' in url_lower or 'youtu.be' in url_lower
+
+def is_shopee_url(url: str) -> bool:
+    """Verifica se a URL é da Shopee (incluindo links universais)"""
+    url_lower = url.lower()
+    
+    # Links diretos da Shopee
+    if 'shopee.' in url_lower:
+        return True
+    
+    # Links de vídeo específicos
+    if 'sv.shopee' in url_lower or 'share-video' in url_lower:
+        return True
+    
+    # Links universais com redirect para Shopee (URL encoded)
+    if 'shopee' in url_lower and ('redir=' in url_lower or 'universal-link' in url_lower):
+        return True
+    
+    # Decodifica URL para verificar conteúdo
+    try:
+        decoded = unquote(url_lower)
+        if 'shopee' in decoded or 'sv.shopee' in decoded:
+            return True
+    except:
+        pass
+    
+    return False
 
 def get_active_downloads_count() -> int:
     """Retorna número de downloads ativos"""
@@ -534,10 +578,13 @@ async def start_download_task(token: str, quality: str = None):
                     with temp_download_dir() as tmpdir:
                         url = resolve_shopee_link(url)
                         
-                        # Shopee Video - método especial
-                        if 'sv.shopee' in url.lower() or 'share-video' in url.lower():
+                        # Detecta tipo de site e usa método apropriado
+                        if is_shopee_url(url):
+                            LOG.info("Detectado como Shopee: %s", url[:80])
+                            # Shopee Video - método especial
                             await _download_shopee(url, tmpdir, chat_id, pm)
                         else:
+                            LOG.info("Detectado como outro site (yt-dlp): %s", url[:80])
                             # Outros sites - yt-dlp
                             await _download_ytdlp(url, tmpdir, chat_id, pm, token, quality)
             except asyncio.TimeoutError:
@@ -949,11 +996,26 @@ async def _download_ytdlp(url: str, tmpdir: str, chat_id: int, pm: dict, token: 
         )
     except Exception as e:
         LOG.exception("Erro yt-dlp: %s", e)
-        await application.bot.edit_message_text(
-            text=ERROR_MESSAGES["network_error"],
-            chat_id=pm["chat_id"],
-            message_id=pm["message_id"]
-        )
+        
+        # Mensagem específica se for URL não suportada
+        error_message = str(e)
+        if 'Unsupported URL' in error_message or 'unsupported' in error_message.lower():
+            await application.bot.edit_message_text(
+                text="⚠️ Este site não é suportado.\n\n"
+                     "Sites suportados:\n"
+                     "🎬 YouTube\n"
+                     "🛍️ Shopee\n"
+                     "📸 Instagram\n"
+                     "📺 E muitos outros via yt-dlp",
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"]
+            )
+        else:
+            await application.bot.edit_message_text(
+                text=ERROR_MESSAGES["network_error"],
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"]
+            )
 
 def _progress_hook(d, token, pm):
     """Hook de progresso para yt-dlp com rate limiting"""
