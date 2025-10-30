@@ -656,11 +656,11 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         all_video_urls = list(set(all_video_urls))
         LOG.info("Total de URLs encontradas: %d", len(all_video_urls))
         
-        # PRIORIDADE 1: URLs com .mp4
+        # PRIORIDADE 1: URLs com .mp4 (SEM marca d'água)
         mp4_urls = [url for url in all_video_urls if '.mp4' in url.lower()]
         if mp4_urls:
             video_url = mp4_urls[0]
-            LOG.info("✅ URL .mp4 encontrada): %s", video_url[:100])
+            LOG.info("✅ URL .mp4 encontrada (SEM marca d'água): %s", video_url[:100])
         
         # PRIORIDADE 2: URLs com 'video' no nome
         if not video_url:
