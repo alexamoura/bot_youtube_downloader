@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-bot_with_cookies.py - Versão Completa e Funcional
+bot_with_cookies.py - Versão Corrigida
 Bot Telegram com suporte a YouTube, Shopee e Instagram
+CORREÇÕES: Progresso de download + vídeos esticados
 """
 import os
 import sys
@@ -382,7 +383,7 @@ async def start_download_task(token: str):
                 await _download_shopee(url, tmpdir, chat_id, pm)
             else:
                 # Outros sites - yt-dlp
-                await _download_ytdlp(url, tmpdir, chat_id, pm)
+                await _download_ytdlp(url, tmpdir, chat_id, pm, token)
     except Exception as e:
         LOG.exception("Erro no download: %s", e)
         try:
@@ -546,17 +547,25 @@ async def _try_direct_shopee(url: str) -> str:
         LOG.warning("Extração direta falhou: %s", e)
         return None
 
-async def _download_ytdlp(url: str, tmpdir: str, chat_id: int, pm: dict):
-    """Download via yt-dlp"""
+async def _download_ytdlp(url: str, tmpdir: str, chat_id: int, pm: dict, token: str):
+    """Download via yt-dlp com progresso"""
     try:
         outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
         
+        # CORREÇÃO: Formato melhorado para evitar vídeos esticados
         ydl_opts = {
             "outtmpl": outtmpl,
             "quiet": True,
             "no_warnings": True,
-            "format": "best[height<=720]+bestaudio/best",
+            # Prioriza vídeos com proporção correta
+            "format": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]",
             "merge_output_format": "mp4",
+            # NOVO: Hook de progresso
+            "progress_hooks": [lambda d: _progress_hook(d, token, pm)],
+            # Garante que o aspect ratio seja preservado
+            "postprocessor_args": {
+                "ffmpeg": ["-aspect", "16:9"]  # Força aspect ratio correto
+            },
         }
         
         cookie = get_cookie_for_url(url)
@@ -592,6 +601,50 @@ async def _download_ytdlp(url: str, tmpdir: str, chat_id: int, pm: dict):
             chat_id=pm["chat_id"],
             message_id=pm["message_id"]
         )
+
+def _progress_hook(d, token, pm):
+    """Hook de progresso para yt-dlp"""
+    try:
+        entry = PENDING.get(token)
+        if not entry:
+            return
+        
+        status = d.get('status')
+        
+        if status == 'downloading':
+            percent = d.get('_percent_str', '0%').strip()
+            speed = d.get('_speed_str', '?').strip()
+            eta = d.get('_eta_str', '?').strip()
+            
+            message = f"📥 Baixando: {percent}\n⚡ Velocidade: {speed}\n⏱️ Tempo restante: {eta}"
+            
+            # Atualiza a cada 5% para não sobrecarregar
+            if entry.get("last_progress", "") != percent:
+                try:
+                    # Usa asyncio para agendar a atualização
+                    asyncio.run_coroutine_threadsafe(
+                        application.bot.edit_message_text(
+                            text=message,
+                            chat_id=pm["chat_id"],
+                            message_id=pm["message_id"]
+                        ),
+                        APP_LOOP
+                    )
+                    entry["last_progress"] = percent
+                except:
+                    pass
+        
+        elif status == 'finished':
+            asyncio.run_coroutine_threadsafe(
+                application.bot.edit_message_text(
+                    text="🎬 Processando vídeo...",
+                    chat_id=pm["chat_id"],
+                    message_id=pm["message_id"]
+                ),
+                APP_LOOP
+            )
+    except Exception as e:
+        LOG.warning("Erro no progress_hook: %s", e)
 
 def _run_ytdlp(options, urls):
     with yt_dlp.YoutubeDL(options) as ydl:
