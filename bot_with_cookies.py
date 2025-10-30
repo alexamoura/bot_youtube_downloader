@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-bot_with_cookies.py - Versão Corrigida
-Bot Telegram com suporte a YouTube, Shopee e Instagram
-CORREÇÕES: Progresso de download + vídeos esticados
+bot_with_cookies.py - Versão com Seleção de Qualidade
+NOVIDADES: Botões para escolher qualidade + Corrige vídeos esticados
 """
 import os
 import sys
@@ -61,6 +60,14 @@ SPLIT_SIZE = 45 * 1024 * 1024
 
 PENDING = OrderedDict()
 DB_LOCK = threading.Lock()
+
+# Qualidades disponíveis
+QUALITY_OPTIONS = {
+    "360p": {"height": 360, "label": "360p (Rápido)"},
+    "480p": {"height": 480, "label": "480p (Bom)"},
+    "720p": {"height": 720, "label": "720p HD"},
+    "1080p": {"height": 1080, "label": "1080p Full HD"},
+}
 
 ERROR_MESSAGES = {
     "timeout": "⏱️ O download demorou muito e foi cancelado.",
@@ -229,6 +236,11 @@ def is_bot_mentioned(update: Update) -> bool:
     except:
         return False
 
+def is_youtube_url(url: str) -> bool:
+    """Verifica se a URL é do YouTube"""
+    url_lower = url.lower()
+    return 'youtube.com' in url_lower or 'youtu.be' in url_lower
+
 # Pending Management
 def add_pending(token: str, data: dict):
     if len(PENDING) >= PENDING_MAX_SIZE:
@@ -257,7 +269,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(
             f"Olá! 👋\n\n"
-            f"Me envie um link de vídeo.\n\n"
+            f"Me envie um link de vídeo do YouTube, Shopee ou Instagram.\n\n"
+            f"🎬 Para YouTube, você poderá escolher a qualidade!\n\n"
             f"📊 Usuários: {count}\n"
             f"🍪 Cookies: {cookie_text}"
         )
@@ -342,18 +355,69 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if query.from_user.id != entry["from_user_id"]:
                 return
 
-            await query.edit_message_text("Iniciando... 🎬")
+            url = entry["url"]
+            
+            # Se for YouTube, mostra opções de qualidade
+            if is_youtube_url(url):
+                keyboard = [
+                    [
+                        InlineKeyboardButton("360p 📱", callback_data=f"q:{token}:360p"),
+                        InlineKeyboardButton("480p 📺", callback_data=f"q:{token}:480p"),
+                    ],
+                    [
+                        InlineKeyboardButton("720p HD 🎬", callback_data=f"q:{token}:720p"),
+                        InlineKeyboardButton("1080p Full HD ⭐", callback_data=f"q:{token}:1080p"),
+                    ],
+                    [
+                        InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}"),
+                    ]
+                ]
+                await query.edit_message_text(
+                    "🎬 Escolha a qualidade do vídeo:",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            else:
+                # Para outros sites, baixa direto
+                await query.edit_message_text("Iniciando... 🎬")
+                
+                progress_msg = await context.bot.send_message(
+                    chat_id=entry["chat_id"],
+                    text="📥 Preparando..."
+                )
+                entry["progress_msg"] = {
+                    "chat_id": progress_msg.chat_id,
+                    "message_id": progress_msg.message_id
+                }
+                
+                asyncio.run_coroutine_threadsafe(start_download_task(token, None), APP_LOOP)
+
+        elif data.startswith("q:"):
+            # Callback de qualidade: q:token:quality
+            parts = data.split(":", 2)
+            token = parts[1]
+            quality = parts[2]
+            
+            entry = PENDING.get(token)
+            if not entry:
+                await query.edit_message_text(ERROR_MESSAGES["expired"])
+                return
+            
+            if query.from_user.id != entry["from_user_id"]:
+                return
+            
+            quality_label = QUALITY_OPTIONS.get(quality, {}).get("label", quality)
+            await query.edit_message_text(f"Iniciando download em {quality_label}... 🎬")
             
             progress_msg = await context.bot.send_message(
                 chat_id=entry["chat_id"],
-                text="📥 Preparando..."
+                text=f"📥 Preparando ({quality_label})..."
             )
             entry["progress_msg"] = {
                 "chat_id": progress_msg.chat_id,
                 "message_id": progress_msg.message_id
             }
             
-            asyncio.run_coroutine_threadsafe(start_download_task(token), APP_LOOP)
+            asyncio.run_coroutine_threadsafe(start_download_task(token, quality), APP_LOOP)
 
         elif data.startswith("cancel:"):
             token = data.split(":", 1)[1]
@@ -363,7 +427,7 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         LOG.exception("Erro em callback: %s", e)
 
 # Download Task
-async def start_download_task(token: str):
+async def start_download_task(token: str, quality: str = None):
     entry = PENDING.get(token)
     if not entry:
         return
@@ -383,7 +447,7 @@ async def start_download_task(token: str):
                 await _download_shopee(url, tmpdir, chat_id, pm)
             else:
                 # Outros sites - yt-dlp
-                await _download_ytdlp(url, tmpdir, chat_id, pm, token)
+                await _download_ytdlp(url, tmpdir, chat_id, pm, token, quality)
     except Exception as e:
         LOG.exception("Erro no download: %s", e)
         try:
@@ -547,25 +611,37 @@ async def _try_direct_shopee(url: str) -> str:
         LOG.warning("Extração direta falhou: %s", e)
         return None
 
-async def _download_ytdlp(url: str, tmpdir: str, chat_id: int, pm: dict, token: str):
-    """Download via yt-dlp com progresso"""
+async def _download_ytdlp(url: str, tmpdir: str, chat_id: int, pm: dict, token: str, quality: str = None):
+    """Download via yt-dlp com progresso e qualidade específica"""
     try:
         outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
         
-        # CORREÇÃO: Formato melhorado para evitar vídeos esticados
+        # Define formato baseado na qualidade escolhida
+        if quality and quality in QUALITY_OPTIONS:
+            height = QUALITY_OPTIONS[quality]["height"]
+            # FORMATO ESPECÍFICO PARA EVITAR VÍDEOS ESTICADOS
+            # Baixa vídeo e áudio separados e mescla corretamente
+            format_str = f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}]"
+        else:
+            # Formato padrão (720p)
+            format_str = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]"
+        
         ydl_opts = {
             "outtmpl": outtmpl,
             "quiet": True,
             "no_warnings": True,
-            # Prioriza vídeos com proporção correta
-            "format": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]",
+            "format": format_str,
             "merge_output_format": "mp4",
-            # NOVO: Hook de progresso
-            "progress_hooks": [lambda d: _progress_hook(d, token, pm)],
-            # Garante que o aspect ratio seja preservado
+            # CRÍTICO: Usa scale para preservar aspect ratio
             "postprocessor_args": {
-                "ffmpeg": ["-aspect", "16:9"]  # Força aspect ratio correto
+                "ffmpeg": [
+                    "-vf", "scale='min(iw,1920)':'min(ih,1080)':force_original_aspect_ratio=decrease",
+                    "-c:v", "libx264",
+                    "-preset", "fast",
+                    "-crf", "23"
+                ]
             },
+            "progress_hooks": [lambda d: _progress_hook(d, token, pm)],
         }
         
         cookie = get_cookie_for_url(url)
@@ -585,9 +661,15 @@ async def _download_ytdlp(url: str, tmpdir: str, chat_id: int, pm: dict, token: 
             message_id=pm["message_id"]
         )
         
+        quality_label = QUALITY_OPTIONS.get(quality, {}).get("label", "HD") if quality else "HD"
+        
         for path in files:
             with open(path, "rb") as fh:
-                await application.bot.send_video(chat_id=chat_id, video=fh)
+                await application.bot.send_video(
+                    chat_id=chat_id,
+                    video=fh,
+                    caption=f"🎬 {quality_label}"
+                )
         
         await application.bot.edit_message_text(
             text="✅ Enviado!",
@@ -618,10 +700,9 @@ def _progress_hook(d, token, pm):
             
             message = f"📥 Baixando: {percent}\n⚡ Velocidade: {speed}\n⏱️ Tempo restante: {eta}"
             
-            # Atualiza a cada 5% para não sobrecarregar
+            # Atualiza a cada mudança de porcentagem
             if entry.get("last_progress", "") != percent:
                 try:
-                    # Usa asyncio para agendar a atualização
                     asyncio.run_coroutine_threadsafe(
                         application.bot.edit_message_text(
                             text=message,
