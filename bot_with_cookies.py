@@ -1,4 +1,12 @@
-#!/usr/bin/env python3
+async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler do comando /start."""
+    try:
+        count = get_monthly_users_count()
+        
+        # Verifica quais cookies estão disponíveis
+        cookies_status = []
+        if COOKIE_YT:
+            cookies_status.#!/usr/bin/env python3
 """
 bot_with_cookies.py - Versão Melhorada
 
@@ -200,14 +208,14 @@ def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
         return None
 
     try:
-        fd, path = tempfile.mkstemp(prefix=f"{env_var.lower()}_", suffix=".txt")
+        fd, path = tempfile.mkstemp(prefix="youtube_cookies_", suffix=".txt")
         os.close(fd)
         with open(path, "wb") as f:
             f.write(raw)
         LOG.info("Cookies gravados em %s", path)
         return path
     except Exception as e:
-        LOG.error("Falha ao escrever cookies (%s): %s", env_var, e)
+        LOG.error("Falha ao escrever cookies: %s", e)
         return None
 
 # Cria cookies individuais para cada site
@@ -224,6 +232,37 @@ def is_valid_url(url: str) -> bool:
         return all([result.scheme in ('http', 'https'), result.netloc])
     except Exception:
         return False
+
+def get_cookie_for_url(url: str):
+    """Retorna o arquivo de cookie apropriado baseado na URL."""
+    url_lower = url.lower()
+    
+    if 'shopee' in url_lower:
+        if COOKIE_SHOPEE:
+            LOG.info("Usando cookies da Shopee")
+            return COOKIE_SHOPEE
+    elif 'instagram' in url_lower or 'insta' in url_lower:
+        if COOKIE_IG:
+            LOG.info("Usando cookies do Instagram")
+            return COOKIE_IG
+    elif 'youtube' in url_lower or 'youtu.be' in url_lower:
+        if COOKIE_YT:
+            LOG.info("Usando cookies do YouTube")
+            return COOKIE_YT
+    
+    # Fallback: tenta YouTube primeiro, depois os outros
+    if COOKIE_YT:
+        LOG.info("Usando cookies do YouTube (fallback)")
+        return COOKIE_YT
+    elif COOKIE_SHOPEE:
+        LOG.info("Usando cookies da Shopee (fallback)")
+        return COOKIE_SHOPEE
+    elif COOKIE_IG:
+        LOG.info("Usando cookies do Instagram (fallback)")
+        return COOKIE_IG
+    
+    LOG.info("Nenhum cookie disponível")
+    return None
 
 @contextmanager
 def temp_download_dir():
@@ -613,8 +652,10 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         "fragment_retries": 20,
     }
     
-    if COOKIE_PATH:
-        ydl_opts["cookiefile"] = COOKIE_PATH
+    # CORREÇÃO: Usa o cookie apropriado baseado na URL
+    cookie_file = get_cookie_for_url(url)
+    if cookie_file:
+        ydl_opts["cookiefile"] = cookie_file
 
     # Download
     try:
