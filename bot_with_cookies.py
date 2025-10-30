@@ -264,14 +264,10 @@ def temp_download_dir():
         except Exception as e:
             LOG.error("Falha no cleanup de %s: %s", tmpdir, e)
 
-def split_video_file(input_path: str, output_dir: str) -> list:
-    os.makedirs(output_dir, exist_ok=True)
-    output_pattern = os.path.join(output_dir, "part%03d.mp4")
-    
-    cmd = [
+cmd = [
     "ffmpeg", "-y", "-i", input_path,
     "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-    "-c:v", "libx264", "-preset", "fast",
+    "-c:v", "libx264", "-preset", "fast", "-crf", "28",
     "-c:a", "aac", "-b:a", "128k",
     "-fs", f"{SPLIT_SIZE}",
     output_pattern
