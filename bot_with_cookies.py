@@ -19,7 +19,7 @@ import shutil
 import subprocess
 from collections import OrderedDict
 from contextlib import contextmanager
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, unquote
 import yt_dlp
 
 from flask import Flask, request
@@ -217,6 +217,31 @@ def get_cookie_for_url(url: str):
     
     LOG.info("Nenhum cookie disponível")
     return None
+
+def resolve_shopee_universal_link(url: str) -> str:
+    """Resolve universal links da Shopee para URL real."""
+    try:
+        # Verifica se é um universal link
+        if 'universal-link' in url and 'redir=' in url:
+            LOG.info("Detectado universal link da Shopee, extraindo URL real...")
+            
+            # Extrai o parâmetro 'redir'
+            from urllib.parse import parse_qs, unquote
+            
+            # Pega a parte após '?'
+            if '?' in url:
+                query_string = url.split('?', 1)[1]
+                params = parse_qs(query_string)
+                
+                if 'redir' in params:
+                    real_url = unquote(params['redir'][0])
+                    LOG.info("URL real da Shopee extraída: %s", real_url[:100])
+                    return real_url
+        
+        return url
+    except Exception as e:
+        LOG.error("Erro ao resolver universal link: %s", e)
+        return url
 
 @contextmanager
 def temp_download_dir():
@@ -530,6 +555,11 @@ async def _notify_error(pm: dict, error_type: str):
 async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict):
     outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
     last_percent = -1
+    
+    # Resolve universal links da Shopee
+    if 'shopee' in url.lower() and 'universal-link' in url:
+        url = resolve_shopee_universal_link(url)
+        LOG.info("Usando URL resolvida para download: %s", url[:100])
 
     def progress_hook(d):
         nonlocal last_percent
