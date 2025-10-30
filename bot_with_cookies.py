@@ -479,12 +479,12 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🎬 **Bem-vindo ao Video Downloader Pro**\n\n"
             f"Olá! Sou seu assistente especializado em downloads de vídeos.\n"
             f"Envie-me um link e farei o resto! ⚡\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"━━━━━━━━━━━━━━\n"
             f"📱 **Plataformas Suportadas:**\n"
             f"   • YouTube (com seleção de qualidade)\n"
             f"   • Shopee Videos\n"
             f"   • Instagram\n"
-            f"   • E muitas outras via yt-dlp\n\n"
+            f"   • E muitas outras...\n\n"
             f"⚙️ **Especificações Técnicas:**\n"
             f"   • Limite por vídeo: {MAX_VIDEO_SIZE_MB}MB\n"
             f"   • Slots disponíveis: {MAX_CONCURRENT_DOWNLOADS - active}/{MAX_CONCURRENT_DOWNLOADS}\n"
@@ -493,7 +493,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"   • Usuários ativos: {count}\n"
             f"   • Conexões: {cookie_text}\n"
             f"   • Downloads em fila: {active}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"━━━━━━━━━━━━━━\n\n"
             f"💡 **Dica:** Para YouTube, você poderá escolher entre 360p, 480p, 720p HD ou 1080p Full HD!",
             parse_mode="Markdown"
         )
@@ -515,7 +515,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(
             f"📊 **Painel de Controle do Sistema**\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"━━━━━━━━━━━━\n"
             f"👥 **Estatísticas de Uso:**\n"
             f"   • Usuários mensais: {count}\n"
             f"   • Requisições pendentes: {pending_count}\n"
@@ -529,7 +529,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"   • YouTube: {'✅' if COOKIE_YT else '⚪'}\n"
             f"   • Shopee: {'✅' if COOKIE_SHOPEE else '⚪'}\n"
             f"   • Instagram: {'✅' if COOKIE_IG else '⚪'}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"━━━━━━━━━━━━\n\n"
             f"⏱️ Atualizado agora mesmo",
             parse_mode="Markdown"
         )
@@ -575,7 +575,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🎯 **Solicitação de Download Recebida**\n\n"
             f"**Plataforma:** {platform}\n"
             f"**URL:** `{url[:50]}...`\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"━━━━━━━━━━━━━━\n"
             f"Deseja prosseguir com o download?",
             reply_markup=keyboard,
             parse_mode="Markdown"
@@ -630,7 +630,7 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(
                     "🎯 **Seleção de Qualidade**\n\n"
                     "Por favor, escolha a resolução desejada:\n\n"
-                    "━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "━━━━━━━━━━━━━━\n"
                     "**Dica:** Qualidades menores são mais rápidas\n"
                     "e consomem menos dados.",
                     reply_markup=InlineKeyboardMarkup(keyboard),
@@ -730,7 +730,7 @@ async def start_download_task(token: str, quality: str = None):
                     text="⏳ **Processamento em Andamento**\n\n"
                          "Este download pode levar até 10 minutos,\n"
                          "dependendo do tamanho e da conexão.\n\n"
-                         "━━━━━━━━━━━━━━━━━━━━━━\n"
+                         "━━━━━━━━━━━━━━\n"
                          "💡 **Você pode:**\n"
                          "• Continuar usando o bot normalmente\n"
                          "• Enviar outros links simultaneamente\n"
