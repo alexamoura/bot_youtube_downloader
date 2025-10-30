@@ -41,7 +41,7 @@ from telegram.ext import (
     filters,
 )
 
-# Logging
+# Configuração do sistema de logging para depuração
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 LOG = logging.getLogger("ytbot")
 
@@ -62,7 +62,7 @@ WATCHDOG_TIMEOUT = 180
 MAX_FILE_SIZE = 50 * 1024 * 1024
 SPLIT_SIZE = 45 * 1024 * 1024
 
-# Estado global
+# Estruturas globais para controle de estado e concorrência
 PENDING = OrderedDict()
 DB_LOCK = threading.Lock()
 
@@ -80,7 +80,7 @@ ERROR_MESSAGES = {
 
 app = Flask(__name__)
 
-# Telegram Application
+# Inicialização da aplicação Telegram via ApplicationBuilder
 try:
     application = ApplicationBuilder().token(TOKEN).build()
     LOG.info("ApplicationBuilder criado com sucesso.")
@@ -88,7 +88,7 @@ except Exception as e:
     LOG.exception("Erro ao construir ApplicationBuilder")
     sys.exit(1)
 
-# Loop asyncio
+# Criação do event loop assíncrono em thread dedicada
 APP_LOOP = asyncio.new_event_loop()
 
 def _start_loop(loop):
@@ -107,7 +107,7 @@ except Exception as e:
     LOG.exception("Falha ao inicializar Application")
     sys.exit(1)
 
-# Database
+# Funções auxiliares para manipulação do banco de dados SQLite
 def init_db():
     with DB_LOCK:
         try:
@@ -158,7 +158,7 @@ def get_monthly_users_count() -> int:
 
 init_db()
 
-# Cookies
+# Inicialização dos cookies a partir de variáveis de ambiente codificadas
 def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
     b64 = os.environ.get(env_var)
     if not b64:
@@ -182,12 +182,12 @@ def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
         LOG.error("Falha ao escrever cookies %s: %s", env_var, e)
         return None
 
-# Carrega cookies de diferentes plataformas
+# Carregamento dos cookies por plataforma (YouTube, Shopee, Instagram)
 COOKIE_YT = prepare_cookies_from_env("YT_COOKIES_B64")
 COOKIE_SHOPEE = prepare_cookies_from_env("SHOPEE_COOKIES_B64")
 COOKIE_IG = prepare_cookies_from_env("IG_COOKIES_B64")
 
-# Utilities
+# Funções utilitárias para validação e seleção de cookies
 def is_valid_url(url: str) -> bool:
     try:
         result = urlparse(url)
@@ -351,7 +351,7 @@ async def _expire_pending(token: str):
         except Exception:
             pass
 
-# Telegram Handlers
+# Handlers de comandos e mensagens do Telegram
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         count = get_monthly_users_count()
@@ -511,7 +511,7 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-# Download Task
+# Execução da tarefa de download com controle de progresso
 async def start_download_task(token: str):
     entry = PENDING.get(token)
     if not entry:
@@ -994,13 +994,13 @@ def _run_ydl(options, urls):
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.download(urls)
 
-# Handlers Registration
+# Registro dos handlers na aplicação Telegram
 application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("stats", stats_cmd))
 application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
-# Flask Routes
+# Rotas HTTP para integração com o Telegram e verificação de status
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     try:
@@ -1048,7 +1048,7 @@ def health():
     status = 200 if checks["bot"] == "ok" and checks["db"] == "ok" else 503
     return checks, status
 
-# Main
+# Ponto de entrada principal da aplicação
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     LOG.info("Iniciando servidor Flask na porta %d", port)
