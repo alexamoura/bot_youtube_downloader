@@ -22,6 +22,14 @@ from contextlib import contextmanager
 from urllib.parse import urlparse, parse_qs, unquote
 import yt_dlp
 
+try:
+    import requests
+    from bs4 import BeautifulSoup
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+    LOG.warning("requests/beautifulsoup4 não disponível - extrator Shopee customizado desabilitado")
+
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -553,89 +561,209 @@ async def _notify_error(pm: dict, error_type: str):
         LOG.error("Erro ao notificar erro: %s", e)
 
 async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
-    """Download especial para Shopee Video sem usar yt-dlp."""
+    """Download especial para Shopee Video usando web scraping."""
+    if not REQUESTS_AVAILABLE:
+        await application.bot.edit_message_text(
+            text="⚠️ Extrator Shopee não disponível (faltam dependências).",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+        return
+    
     try:
         # Atualiza mensagem
         await application.bot.edit_message_text(
-            text="🛍️ Processando vídeo da Shopee...",
+            text="🛍️ Extraindo vídeo da Shopee...",
             chat_id=pm["chat_id"],
             message_id=pm["message_id"]
         )
         
-        # Tenta usar yt-dlp com configurações especiais para Shopee
-        outtmpl = os.path.join(tmpdir, "shopee_video.%(ext)s")
+        LOG.info("Iniciando extração customizada da Shopee: %s", url)
         
-        ydl_opts = {
-            "outtmpl": outtmpl,
-            "quiet": False,
-            "logger": LOG,
-            "format": "best",
-            "nocheckcertificate": True,
-            "no_warnings": False,
-            # Força extratores genéricos
-            "default_search": "auto",
-            "extractor_args": {"generic": {"allowed_extractors": ["generic", "html5"]}},
-            # Headers personalizados
-            "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer": "https://shopee.com.br/",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-            },
+        # Faz requisição à página
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://shopee.com.br/",
         }
         
-        # Adiciona cookies se disponível
-        cookie_file = get_cookie_for_url(url)
-        if cookie_file:
-            ydl_opts["cookiefile"] = cookie_file
+        # Carrega cookies se disponível
+        cookies_dict = {}
+        if COOKIE_SHOPEE:
+            try:
+                with open(COOKIE_SHOPEE, 'r') as f:
+                    for line in f:
+                        if not line.startswith('#') and line.strip():
+                            parts = line.strip().split('\t')
+                            if len(parts) >= 7:
+                                cookies_dict[parts[5]] = parts[6]
+                LOG.info("Cookies da Shopee carregados: %d cookies", len(cookies_dict))
+            except Exception as e:
+                LOG.warning("Erro ao carregar cookies: %s", e)
         
-        LOG.info("Tentando download da Shopee com configurações especiais...")
+        response = await asyncio.to_thread(
+            lambda: requests.get(url, headers=headers, cookies=cookies_dict, timeout=30)
+        )
+        response.raise_for_status()
         
-        try:
-            await asyncio.to_thread(lambda: _run_ydl(ydl_opts, [url]))
-            
-            # Verifica se arquivo foi baixado
-            arquivos = [
-                os.path.join(tmpdir, f) 
-                for f in os.listdir(tmpdir) 
-                if os.path.isfile(os.path.join(tmpdir, f))
+        LOG.info("Página da Shopee carregada, analisando...")
+        
+        # Busca URL do vídeo no HTML/JavaScript
+        video_url = None
+        
+        # Padrão 1: Busca em tags <script> com JSON
+        import json
+        patterns = [
+            r'"videoUrl"\s*:\s*"([^"]+)"',
+            r'"video_url"\s*:\s*"([^"]+)"',
+            r'"playAddr"\s*:\s*"([^"]+)"',
+            r'"url"\s*:\s*"(https://[^"]*\.mp4[^"]*)"',
+            r'playAddr["\']:\s*["\']([^"\']+)',
+            r'"playUrl"\s*:\s*"([^"]+)"',
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, response.text)
+            for match in matches:
+                # Limpa a URL
+                clean_url = match.replace('\\/', '/').replace('\\', '')
+                if 'http' in clean_url and ('mp4' in clean_url.lower() or 'video' in clean_url.lower()):
+                    video_url = clean_url
+                    LOG.info("URL de vídeo encontrada via regex: %s", video_url[:100])
+                    break
+            if video_url:
+                break
+        
+        # Padrão 2: Busca em meta tags
+        if not video_url:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            meta_tags = [
+                soup.find('meta', property='og:video'),
+                soup.find('meta', property='og:video:url'),
+                soup.find('meta', property='og:video:secure_url'),
+                soup.find('meta', attrs={'name': 'twitter:player:stream'}),
             ]
             
-            if arquivos:
-                LOG.info("Shopee Video baixado com sucesso!")
-                await application.bot.edit_message_text(
-                    text="✅ Download concluído, enviando...",
-                    chat_id=pm["chat_id"],
-                    message_id=pm["message_id"]
-                )
-                
-                # Envia o vídeo
-                for path in arquivos:
-                    with open(path, "rb") as fh:
-                        await application.bot.send_video(chat_id=chat_id, video=fh)
-                
-                await application.bot.edit_message_text(
-                    text="✅ Vídeo da Shopee enviado!",
-                    chat_id=pm["chat_id"],
-                    message_id=pm["message_id"]
-                )
-                return
-            
-        except Exception as e:
-            LOG.warning("Método yt-dlp falhou para Shopee: %s", e)
+            for tag in meta_tags:
+                if tag and tag.get('content'):
+                    video_url = tag.get('content')
+                    LOG.info("URL de vídeo encontrada via meta tag: %s", video_url[:100])
+                    break
         
-        # Se yt-dlp falhou, informa o usuário
+        # Padrão 3: Busca em tags <video> ou <source>
+        if not video_url:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            video_tag = soup.find('video')
+            if video_tag:
+                video_url = video_tag.get('src') or video_tag.get('data-src')
+            
+            if not video_url:
+                source_tags = soup.find_all('source')
+                for source in source_tags:
+                    src = source.get('src') or source.get('data-src')
+                    if src and ('mp4' in src.lower() or 'video' in src.lower()):
+                        video_url = src
+                        break
+        
+        if not video_url:
+            LOG.error("Nenhuma URL de vídeo encontrada na página da Shopee")
+            await application.bot.edit_message_text(
+                text="⚠️ Não consegui encontrar o vídeo nesta página da Shopee.\n\n"
+                     "Possíveis causas:\n"
+                     "• O link pode estar incorreto\n"
+                     "• O vídeo pode ter sido removido\n"
+                     "• A Shopee mudou a estrutura do site\n\n"
+                     "Tente baixar pelo app oficial da Shopee.",
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"]
+            )
+            return
+        
+        # Ajusta URL se necessário
+        if not video_url.startswith('http'):
+            video_url = 'https:' + video_url if video_url.startswith('//') else 'https://sv.shopee.com.br' + video_url
+        
+        LOG.info("Baixando vídeo da URL: %s", video_url[:100])
+        
+        # Atualiza mensagem
         await application.bot.edit_message_text(
-            text="⚠️ Desculpe, não consegui baixar este vídeo da Shopee.\n\n"
-                 "A Shopee pode ter proteções que impedem o download automático. "
-                 "Tente baixar diretamente pelo app da Shopee.",
+            text="📥 Baixando vídeo da Shopee...",
             chat_id=pm["chat_id"],
             message_id=pm["message_id"]
         )
         
+        # Baixa o vídeo
+        output_path = os.path.join(tmpdir, "shopee_video.mp4")
+        
+        video_response = await asyncio.to_thread(
+            lambda: requests.get(video_url, headers=headers, cookies=cookies_dict, stream=True, timeout=120)
+        )
+        video_response.raise_for_status()
+        
+        total_size = int(video_response.headers.get('content-length', 0))
+        downloaded = 0
+        last_percent = -1
+        
+        with open(output_path, 'wb') as f:
+            for chunk in video_response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    
+                    if total_size:
+                        percent = int(downloaded * 100 / total_size)
+                        if percent != last_percent and percent % 10 == 0:
+                            last_percent = percent
+                            blocks = int(percent / 5)
+                            bar = "█" * blocks + "─" * (20 - blocks)
+                            try:
+                                await application.bot.edit_message_text(
+                                    text=f"🛍️ Baixando: {percent}% [{bar}]",
+                                    chat_id=pm["chat_id"],
+                                    message_id=pm["message_id"]
+                                )
+                            except:
+                                pass
+        
+        LOG.info("Vídeo da Shopee baixado com sucesso: %s", output_path)
+        
+        # Verifica se arquivo foi criado
+        if not os.path.exists(output_path) or os.path.getsize(output_path) < 1000:
+            raise Exception("Arquivo baixado está vazio ou corrompido")
+        
+        # Envia o vídeo
+        await application.bot.edit_message_text(
+            text="✅ Download concluído, enviando...",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+        
+        with open(output_path, "rb") as fh:
+            await application.bot.send_video(chat_id=chat_id, video=fh, caption="🛍️ Shopee Video")
+        
+        await application.bot.edit_message_text(
+            text="✅ Vídeo da Shopee enviado!",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+        
+    except requests.exceptions.RequestException as e:
+        LOG.exception("Erro de rede ao baixar da Shopee: %s", e)
+        await application.bot.edit_message_text(
+            text="🌐 Erro de conexão com a Shopee. Tente novamente em alguns minutos.",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
     except Exception as e:
-        LOG.exception("Erro no download Shopee: %s", e)
-        await _notify_error(pm, "unknown")
+        LOG.exception("Erro no download Shopee customizado: %s", e)
+        await application.bot.edit_message_text(
+            text="⚠️ Não consegui baixar este vídeo da Shopee.\n\n"
+                 "A Shopee pode ter proteções especiais neste vídeo. "
+                 "Tente baixar pelo app oficial.",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
 
 async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict):
     outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
