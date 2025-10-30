@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-bot_with_cookies.py - Versão com Seleção de Qualidade
-NOVIDADES: Botões para escolher qualidade + Corrige vídeos esticados
+bot_with_cookies.py - Versão Multi-Usuário Otimizada
+OTIMIZAÇÕES: Suporte a múltiplos downloads simultâneos + Rate limiting + Qualidade
 """
 import os
 import sys
@@ -54,12 +54,20 @@ URL_RE = re.compile(r"(https?://[^\s]+)")
 DB_FILE = "users.db"
 PENDING_MAX_SIZE = 1000
 PENDING_EXPIRE_SECONDS = 600
-WATCHDOG_TIMEOUT = 180
+WATCHDOG_TIMEOUT = 300  # 5 minutos timeout por download
 MAX_FILE_SIZE = 50 * 1024 * 1024
 SPLIT_SIZE = 45 * 1024 * 1024
 
+# NOVO: Controle de concorrência
+MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "5"))  # Máximo de downloads simultâneos
+DOWNLOAD_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+
+# Estruturas thread-safe
 PENDING = OrderedDict()
+PENDING_LOCK = threading.Lock()  # NOVO: Lock para PENDING dict
 DB_LOCK = threading.Lock()
+ACTIVE_DOWNLOADS = {}  # NOVO: Rastreamento de downloads ativos
+ACTIVE_DOWNLOADS_LOCK = threading.Lock()
 
 # Qualidades disponíveis
 QUALITY_OPTIONS = {
@@ -77,6 +85,7 @@ ERROR_MESSAGES = {
     "upload_error": "📤 Erro ao enviar o arquivo.",
     "unknown": "❌ Ocorreu um erro inesperado. Tente novamente.",
     "expired": "⏰ Este pedido expirou. Envie o link novamente.",
+    "queue_full": "⏳ Muitos downloads em andamento. Tente novamente em alguns segundos.",
 }
 
 app = Flask(__name__)
@@ -211,14 +220,15 @@ def resolve_shopee_link(url: str) -> str:
 
 @contextmanager
 def temp_download_dir():
+    """Cria diretório temporário único para cada download"""
     tmpdir = tempfile.mkdtemp(prefix="ytbot_")
     try:
         yield tmpdir
     finally:
         try:
             shutil.rmtree(tmpdir)
-        except:
-            pass
+        except Exception as e:
+            LOG.warning("Erro ao limpar %s: %s", tmpdir, e)
 
 def is_bot_mentioned(update: Update) -> bool:
     try:
@@ -241,23 +251,51 @@ def is_youtube_url(url: str) -> bool:
     url_lower = url.lower()
     return 'youtube.com' in url_lower or 'youtu.be' in url_lower
 
-# Pending Management
+def get_active_downloads_count() -> int:
+    """Retorna número de downloads ativos"""
+    with ACTIVE_DOWNLOADS_LOCK:
+        return len(ACTIVE_DOWNLOADS)
+
+# Pending Management (thread-safe)
 def add_pending(token: str, data: dict):
-    if len(PENDING) >= PENDING_MAX_SIZE:
-        oldest = next(iter(PENDING))
-        PENDING.pop(oldest)
-    data["created_at"] = time.time()
-    PENDING[token] = data
+    with PENDING_LOCK:
+        if len(PENDING) >= PENDING_MAX_SIZE:
+            oldest = next(iter(PENDING))
+            PENDING.pop(oldest)
+        data["created_at"] = time.time()
+        PENDING[token] = data
     asyncio.run_coroutine_threadsafe(_expire_pending(token), APP_LOOP)
+
+def get_pending(token: str):
+    with PENDING_LOCK:
+        return PENDING.get(token)
+
+def remove_pending(token: str):
+    with PENDING_LOCK:
+        return PENDING.pop(token, None)
 
 async def _expire_pending(token: str):
     await asyncio.sleep(PENDING_EXPIRE_SECONDS)
-    PENDING.pop(token, None)
+    remove_pending(token)
+
+def register_active_download(token: str, chat_id: int):
+    """Registra um download ativo"""
+    with ACTIVE_DOWNLOADS_LOCK:
+        ACTIVE_DOWNLOADS[token] = {
+            "chat_id": chat_id,
+            "started_at": time.time()
+        }
+
+def unregister_active_download(token: str):
+    """Remove um download ativo"""
+    with ACTIVE_DOWNLOADS_LOCK:
+        ACTIVE_DOWNLOADS.pop(token, None)
 
 # Telegram Handlers
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         count = get_monthly_users_count()
+        active = get_active_downloads_count()
         cookies = []
         if COOKIE_YT:
             cookies.append("🎬 YouTube")
@@ -272,7 +310,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Me envie um link de vídeo do YouTube, Shopee ou Instagram.\n\n"
             f"🎬 Para YouTube, você poderá escolher a qualidade!\n\n"
             f"📊 Usuários: {count}\n"
-            f"🍪 Cookies: {cookie_text}"
+            f"🍪 Cookies: {cookie_text}\n"
+            f"⚡ Downloads ativos: {active}/{MAX_CONCURRENT_DOWNLOADS}"
         )
     except Exception as e:
         LOG.error("Erro no /start: %s", e)
@@ -280,11 +319,17 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         count = get_monthly_users_count()
+        active = get_active_downloads_count()
         cookies_count = sum([1 for c in [COOKIE_YT, COOKIE_SHOPEE, COOKIE_IG] if c])
+        
+        with PENDING_LOCK:
+            pending_count = len(PENDING)
+        
         await update.message.reply_text(
             f"📊 Estatísticas\n\n"
             f"👥 Usuários mensais: {count}\n"
-            f"⏳ Pendentes: {len(PENDING)}\n"
+            f"⏳ Pendentes: {pending_count}\n"
+            f"⚡ Downloads ativos: {active}/{MAX_CONCURRENT_DOWNLOADS}\n"
             f"🍪 Cookies: {cookies_count}/3"
         )
     except Exception as e:
@@ -346,7 +391,7 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if data.startswith("dl:"):
             token = data.split(":", 1)[1]
-            entry = PENDING.get(token)
+            entry = get_pending(token)
             
             if not entry:
                 await query.edit_message_text(ERROR_MESSAGES["expired"])
@@ -397,7 +442,7 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             token = parts[1]
             quality = parts[2]
             
-            entry = PENDING.get(token)
+            entry = get_pending(token)
             if not entry:
                 await query.edit_message_text(ERROR_MESSAGES["expired"])
                 return
@@ -421,14 +466,14 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data.startswith("cancel:"):
             token = data.split(":", 1)[1]
-            PENDING.pop(token, None)
+            remove_pending(token)
             await query.edit_message_text("Cancelado ✅")
     except Exception as e:
         LOG.exception("Erro em callback: %s", e)
 
-# Download Task
+# Download Task com Semaphore
 async def start_download_task(token: str, quality: str = None):
-    entry = PENDING.get(token)
+    entry = get_pending(token)
     if not entry:
         return
     
@@ -438,28 +483,59 @@ async def start_download_task(token: str, quality: str = None):
     if not pm:
         return
 
+    # NOVO: Controle de concorrência com semaphore
     try:
-        with temp_download_dir() as tmpdir:
-            url = resolve_shopee_link(url)
-            
-            # Shopee Video - método especial
-            if 'sv.shopee' in url.lower() or 'share-video' in url.lower():
-                await _download_shopee(url, tmpdir, chat_id, pm)
-            else:
-                # Outros sites - yt-dlp
-                await _download_ytdlp(url, tmpdir, chat_id, pm, token, quality)
-    except Exception as e:
-        LOG.exception("Erro no download: %s", e)
-        try:
+        # Tenta adquirir slot para download
+        acquired = DOWNLOAD_SEMAPHORE.locked()
+        if acquired and get_active_downloads_count() >= MAX_CONCURRENT_DOWNLOADS:
             await application.bot.edit_message_text(
-                text=ERROR_MESSAGES["unknown"],
+                text=ERROR_MESSAGES["queue_full"],
                 chat_id=pm["chat_id"],
                 message_id=pm["message_id"]
             )
-        except:
-            pass
+            remove_pending(token)
+            return
+        
+        async with DOWNLOAD_SEMAPHORE:
+            # Registra download ativo
+            register_active_download(token, chat_id)
+            LOG.info("Download iniciado [%s] - Ativos: %d/%d", token[:8], get_active_downloads_count(), MAX_CONCURRENT_DOWNLOADS)
+            
+            try:
+                # Timeout de 5 minutos por download
+                async with asyncio.timeout(WATCHDOG_TIMEOUT):
+                    with temp_download_dir() as tmpdir:
+                        url = resolve_shopee_link(url)
+                        
+                        # Shopee Video - método especial
+                        if 'sv.shopee' in url.lower() or 'share-video' in url.lower():
+                            await _download_shopee(url, tmpdir, chat_id, pm)
+                        else:
+                            # Outros sites - yt-dlp
+                            await _download_ytdlp(url, tmpdir, chat_id, pm, token, quality)
+            except asyncio.TimeoutError:
+                LOG.error("Download timeout [%s]", token[:8])
+                await application.bot.edit_message_text(
+                    text=ERROR_MESSAGES["timeout"],
+                    chat_id=pm["chat_id"],
+                    message_id=pm["message_id"]
+                )
+            except Exception as e:
+                LOG.exception("Erro no download [%s]: %s", token[:8], e)
+                try:
+                    await application.bot.edit_message_text(
+                        text=ERROR_MESSAGES["unknown"],
+                        chat_id=pm["chat_id"],
+                        message_id=pm["message_id"]
+                    )
+                except:
+                    pass
+            finally:
+                # Remove download ativo
+                unregister_active_download(token)
+                LOG.info("Download finalizado [%s] - Ativos: %d/%d", token[:8], get_active_downloads_count(), MAX_CONCURRENT_DOWNLOADS)
     finally:
-        PENDING.pop(token, None)
+        remove_pending(token)
 
 async def _download_shopee(url: str, tmpdir: str, chat_id: int, pm: dict):
     """Download de Shopee Video"""
@@ -619,11 +695,8 @@ async def _download_ytdlp(url: str, tmpdir: str, chat_id: int, pm: dict, token: 
         # Define formato baseado na qualidade escolhida
         if quality and quality in QUALITY_OPTIONS:
             height = QUALITY_OPTIONS[quality]["height"]
-            # FORMATO ESPECÍFICO PARA EVITAR VÍDEOS ESTICADOS
-            # Baixa vídeo e áudio separados e mescla corretamente
             format_str = f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}]"
         else:
-            # Formato padrão (720p)
             format_str = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]"
         
         ydl_opts = {
@@ -632,7 +705,7 @@ async def _download_ytdlp(url: str, tmpdir: str, chat_id: int, pm: dict, token: 
             "no_warnings": True,
             "format": format_str,
             "merge_output_format": "mp4",
-            # CRÍTICO: Usa scale para preservar aspect ratio
+            # Preserva aspect ratio original
             "postprocessor_args": {
                 "ffmpeg": [
                     "-vf", "scale='min(iw,1920)':'min(ih,1080)':force_original_aspect_ratio=decrease",
@@ -687,7 +760,7 @@ async def _download_ytdlp(url: str, tmpdir: str, chat_id: int, pm: dict, token: 
 def _progress_hook(d, token, pm):
     """Hook de progresso para yt-dlp com rate limiting"""
     try:
-        entry = PENDING.get(token)
+        entry = get_pending(token)
         if not entry:
             return
         
@@ -755,13 +828,19 @@ def webhook():
 
 @app.route("/")
 def index():
-    return "Bot Online ✅"
+    active = get_active_downloads_count()
+    return f"Bot Online ✅<br>Downloads ativos: {active}/{MAX_CONCURRENT_DOWNLOADS}"
 
 @app.route("/health")
 def health():
+    with PENDING_LOCK:
+        pending_count = len(PENDING)
+    
     return {
         "status": "ok",
-        "pending": len(PENDING),
+        "pending": pending_count,
+        "active_downloads": get_active_downloads_count(),
+        "max_downloads": MAX_CONCURRENT_DOWNLOADS,
         "cookies": {
             "youtube": bool(COOKIE_YT),
             "shopee": bool(COOKIE_SHOPEE),
@@ -772,5 +851,8 @@ def health():
 # Main
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    LOG.info("Iniciando na porta %d", port)
-    app.run(host="0.0.0.0", port=port)
+    LOG.info("🚀 Iniciando bot na porta %d", port)
+    LOG.info("⚡ Máximo de downloads simultâneos: %d", MAX_CONCURRENT_DOWNLOADS)
+    
+    # IMPORTANTE: threaded=True para suportar múltiplas requisições
+    app.run(host="0.0.0.0", port=port, threaded=True)
