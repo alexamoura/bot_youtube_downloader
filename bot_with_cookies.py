@@ -1,35 +1,8 @@
-async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler do comando /start."""
-    try:
-        count = get_monthly_users_count()
-        
-        # Verifica quais cookies estão disponíveis
-        cookies_status = []
-        if COOKIE_YT:
-            cookies_status.#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 bot_with_cookies.py - Versão Melhorada
 
-Telegram bot (webhook) que:
-- detecta links enviados diretamente ou em grupo quando mencionado (@SeuBot + link),
-- pergunta "quer baixar?" com botão,
-- ao confirmar, inicia o download e mostra uma barra de progresso atualizada,
-- envia partes se necessário (ffmpeg) e mostra mensagem final.
-- track de usuários mensais via SQLite.
-
-Melhorias implementadas:
-- Cleanup automático de arquivos temporários
-- Proteção contra race conditions no SQLite
-- Watchdog timeout para downloads travados
-- Validação de URLs
-- Expiração automática de requests pendentes
-- Tratamento de erros robusto
-- Mensagens de erro amigáveis
-- Health check endpoint
-
-Requisitos:
-- TELEGRAM_BOT_TOKEN (env)
-- YT_COOKIES_B64 (opcional; base64 do cookies.txt em formato Netscape)
+Telegram bot (webhook) com suporte a múltiplos cookies
 """
 import os
 import sys
@@ -60,8 +33,6 @@ from telegram.ext import (
     filters,
 )
 
-# ==================== CONFIGURAÇÃO ====================
-
 # Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 LOG = logging.getLogger("ytbot")
@@ -69,7 +40,7 @@ LOG = logging.getLogger("ytbot")
 # Token
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
-    LOG.error("TELEGRAM_BOT_TOKEN não definido. Defina o secret TELEGRAM_BOT_TOKEN e redeploy.")
+    LOG.error("TELEGRAM_BOT_TOKEN não definido.")
     sys.exit(1)
 
 LOG.info("TELEGRAM_BOT_TOKEN presente (len=%d).", len(TOKEN))
@@ -78,13 +49,13 @@ LOG.info("TELEGRAM_BOT_TOKEN presente (len=%d).", len(TOKEN))
 URL_RE = re.compile(r"(https?://[^\s]+)")
 DB_FILE = "users.db"
 PENDING_MAX_SIZE = 1000
-PENDING_EXPIRE_SECONDS = 600  # 10 minutos
-WATCHDOG_TIMEOUT = 180  # 3 minutos
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
-SPLIT_SIZE = 45 * 1024 * 1024  # 45MB
+PENDING_EXPIRE_SECONDS = 600
+WATCHDOG_TIMEOUT = 180
+MAX_FILE_SIZE = 50 * 1024 * 1024
+SPLIT_SIZE = 45 * 1024 * 1024
 
 # Estado global
-PENDING = OrderedDict()  # token -> metadata
+PENDING = OrderedDict()
 DB_LOCK = threading.Lock()
 
 # Mensagens de erro
@@ -99,20 +70,17 @@ ERROR_MESSAGES = {
     "expired": "⏰ Este pedido expirou. Envie o link novamente.",
 }
 
-# Flask app
 app = Flask(__name__)
 
-# ==================== TELEGRAM APPLICATION ====================
-
+# Telegram Application
 try:
     application = ApplicationBuilder().token(TOKEN).build()
     LOG.info("ApplicationBuilder criado com sucesso.")
 except Exception as e:
-    LOG.exception("Erro ao construir ApplicationBuilder: %s", str(e))
-    LOG.error("Tipo: %s, Args: %s", type(e).__name__, e.args)
+    LOG.exception("Erro ao construir ApplicationBuilder")
     sys.exit(1)
 
-# Cria loop asyncio persistente em background
+# Loop asyncio
 APP_LOOP = asyncio.new_event_loop()
 
 def _start_loop(loop):
@@ -123,19 +91,16 @@ LOG.info("Iniciando event loop de background...")
 loop_thread = threading.Thread(target=_start_loop, args=(APP_LOOP,), daemon=True)
 loop_thread.start()
 
-# Inicializa a application no loop de background
 try:
     fut = asyncio.run_coroutine_threadsafe(application.initialize(), APP_LOOP)
     fut.result(timeout=30)
-    LOG.info("Application inicializada no loop de background.")
+    LOG.info("Application inicializada.")
 except Exception as e:
-    LOG.exception("Falha ao inicializar a Application no loop de background: %s", str(e))
+    LOG.exception("Falha ao inicializar Application")
     sys.exit(1)
 
-# ==================== SQLITE DATABASE ====================
-
+# Database
 def init_db():
-    """Inicializa o banco de dados."""
     with DB_LOCK:
         try:
             conn = sqlite3.connect(DB_FILE, timeout=10)
@@ -147,15 +112,12 @@ def init_db():
                 )
             """)
             conn.commit()
+            conn.close()
             LOG.info("Banco de dados inicializado.")
         except sqlite3.Error as e:
-            LOG.error("Erro ao inicializar banco de dados: %s", e)
-            raise
-        finally:
-            conn.close()
+            LOG.error("Erro ao inicializar banco: %s", e)
 
 def update_user(user_id: int):
-    """Atualiza a tabela com o usuário atual."""
     with DB_LOCK:
         try:
             conn = sqlite3.connect(DB_FILE, timeout=10)
@@ -169,13 +131,11 @@ def update_user(user_id: int):
             else:
                 c.execute("INSERT INTO monthly_users (user_id, last_month) VALUES (?, ?)", (user_id, month))
             conn.commit()
-        except sqlite3.Error as e:
-            LOG.error("Erro SQLite ao atualizar user %s: %s", user_id, e)
-        finally:
             conn.close()
+        except sqlite3.Error as e:
+            LOG.error("Erro ao atualizar user: %s", e)
 
 def get_monthly_users_count() -> int:
-    """Retorna a contagem de usuários únicos do mês atual."""
     month = time.strftime("%Y-%m")
     with DB_LOCK:
         try:
@@ -183,22 +143,18 @@ def get_monthly_users_count() -> int:
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM monthly_users WHERE last_month=?", (month,))
             count = c.fetchone()[0]
-            return count
-        except sqlite3.Error as e:
-            LOG.error("Erro ao obter contagem de usuários: %s", e)
-            return 0
-        finally:
             conn.close()
+            return count
+        except sqlite3.Error:
+            return 0
 
 init_db()
 
-# ==================== COOKIES ====================
-
+# Cookies
 def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
-    """Prepara arquivo de cookies a partir de variável de ambiente (base64)."""
     b64 = os.environ.get(env_var)
     if not b64:
-        LOG.info("Nenhuma variável %s encontrada – rodando sem cookies.", env_var)
+        LOG.info("Nenhuma variável %s encontrada.", env_var)
         return None
     
     try:
@@ -208,25 +164,23 @@ def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
         return None
 
     try:
-        fd, path = tempfile.mkstemp(prefix="youtube_cookies_", suffix=".txt")
+        fd, path = tempfile.mkstemp(prefix=f"{env_var.lower()}_", suffix=".txt")
         os.close(fd)
         with open(path, "wb") as f:
             f.write(raw)
-        LOG.info("Cookies gravados em %s", path)
+        LOG.info("Cookies %s gravados em %s", env_var, path)
         return path
     except Exception as e:
-        LOG.error("Falha ao escrever cookies: %s", e)
+        LOG.error("Falha ao escrever cookies %s: %s", env_var, e)
         return None
 
-# Cria cookies individuais para cada site
+# Carrega cookies de diferentes plataformas
 COOKIE_YT = prepare_cookies_from_env("YT_COOKIES_B64")
 COOKIE_SHOPEE = prepare_cookies_from_env("SHOPEE_COOKIES_B64")
 COOKIE_IG = prepare_cookies_from_env("IG_COOKIES_B64")
 
-# ==================== UTILITIES ====================
-
+# Utilities
 def is_valid_url(url: str) -> bool:
-    """Valida se a string é uma URL HTTP/HTTPS válida."""
     try:
         result = urlparse(url)
         return all([result.scheme in ('http', 'https'), result.netloc])
@@ -250,7 +204,7 @@ def get_cookie_for_url(url: str):
             LOG.info("Usando cookies do YouTube")
             return COOKIE_YT
     
-    # Fallback: tenta YouTube primeiro, depois os outros
+    # Fallback
     if COOKIE_YT:
         LOG.info("Usando cookies do YouTube (fallback)")
         return COOKIE_YT
@@ -266,7 +220,6 @@ def get_cookie_for_url(url: str):
 
 @contextmanager
 def temp_download_dir():
-    """Context manager para criar e limpar diretório temporário."""
     tmpdir = tempfile.mkdtemp(prefix="ytbot_")
     LOG.info("Diretório temporário criado: %s", tmpdir)
     try:
@@ -279,7 +232,6 @@ def temp_download_dir():
             LOG.error("Falha no cleanup de %s: %s", tmpdir, e)
 
 def split_video_file(input_path: str, output_dir: str) -> list:
-    """Divide vídeo em partes usando ffmpeg. Retorna lista de caminhos."""
     os.makedirs(output_dir, exist_ok=True)
     output_pattern = os.path.join(output_dir, "part%03d.mp4")
     
@@ -291,13 +243,7 @@ def split_video_file(input_path: str, output_dir: str) -> list:
     ]
     
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=True
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, check=True)
         LOG.info("ffmpeg concluído com sucesso.")
         parts = sorted([
             os.path.join(output_dir, f) 
@@ -316,7 +262,6 @@ def split_video_file(input_path: str, output_dir: str) -> list:
         raise
 
 def is_bot_mentioned(update: Update) -> bool:
-    """Verifica se o bot foi mencionado na mensagem."""
     try:
         bot_username = application.bot.username
         bot_id = application.bot.id
@@ -347,11 +292,8 @@ def is_bot_mentioned(update: Update) -> bool:
             return True
     return False
 
-# ==================== PENDING MANAGEMENT ====================
-
+# Pending Management
 def add_pending(token: str, data: dict):
-    """Adiciona um pedido pendente com expiração automática."""
-    # Remove mais antigo se atingir limite
     if len(PENDING) >= PENDING_MAX_SIZE:
         oldest = next(iter(PENDING))
         PENDING.pop(oldest)
@@ -360,19 +302,13 @@ def add_pending(token: str, data: dict):
     data["created_at"] = time.time()
     PENDING[token] = data
     
-    # Agenda expiração
-    asyncio.run_coroutine_threadsafe(
-        _expire_pending(token),
-        APP_LOOP
-    )
+    asyncio.run_coroutine_threadsafe(_expire_pending(token), APP_LOOP)
 
 async def _expire_pending(token: str):
-    """Expira um pedido pendente após timeout."""
     await asyncio.sleep(PENDING_EXPIRE_SECONDS)
     entry = PENDING.pop(token, None)
     if entry:
         LOG.info("Token expirado: %s", token)
-        # Tenta notificar o usuário
         try:
             await application.bot.edit_message_text(
                 text=ERROR_MESSAGES["expired"],
@@ -380,32 +316,46 @@ async def _expire_pending(token: str):
                 message_id=entry["confirm_msg_id"]
             )
         except Exception:
-            pass  # Mensagem pode ter sido deletada
+            pass
 
-# ==================== TELEGRAM HANDLERS ====================
-
+# Telegram Handlers
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler do comando /start."""
     try:
         count = get_monthly_users_count()
+        
+        # Verifica cookies disponíveis
+        cookies_info = []
+        if COOKIE_YT:
+            cookies_info.append("🎬 YouTube")
+        if COOKIE_SHOPEE:
+            cookies_info.append("🛍️ Shopee")
+        if COOKIE_IG:
+            cookies_info.append("📸 Instagram")
+        
+        cookies_text = ", ".join(cookies_info) if cookies_info else "Nenhum"
+        
         await update.message.reply_text(
             f"Olá! 👋\n\n"
-            f"Me envie um link do YouTube ou outro vídeo, e eu te pergunto se quer baixar.\n\n"
-            f"📊 Usuários mensais: {count}"
+            f"Me envie um link de vídeo e eu te pergunto se quer baixar.\n\n"
+            f"📊 Usuários mensais: {count}\n"
+            f"🍪 Cookies: {cookies_text}"
         )
     except Exception as e:
         LOG.error("Erro no comando /start: %s", e)
-        await update.message.reply_text("Erro ao processar comando. Tente novamente.")
+        await update.message.reply_text("Erro ao processar comando.")
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler do comando /stats."""
     try:
         count = get_monthly_users_count()
         pending_count = len(PENDING)
+        
+        cookies_count = sum([1 for c in [COOKIE_YT, COOKIE_SHOPEE, COOKIE_IG] if c])
+        
         await update.message.reply_text(
             f"📊 **Estatísticas**\n\n"
             f"👥 Usuários mensais: {count}\n"
-            f"⏳ Downloads pendentes: {pending_count}",
+            f"⏳ Downloads pendentes: {pending_count}\n"
+            f"🍪 Cookies configurados: {cookies_count}/3",
             parse_mode="Markdown"
         )
     except Exception as e:
@@ -413,12 +363,10 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Erro ao obter estatísticas.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler de mensagens com links."""
     try:
         if not getattr(update, "message", None) or not update.message.text:
             return
 
-        # Track user
         try:
             update_user(update.message.from_user.id)
         except Exception as e:
@@ -427,7 +375,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = update.message.text.strip()
         chat_type = update.message.chat.type
         
-        # Em grupos, só responde se mencionado
         if chat_type != "private" and not is_bot_mentioned(update):
             return
 
@@ -447,21 +394,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not url:
             return
 
-        # Valida URL
         if not is_valid_url(url):
             await update.message.reply_text(ERROR_MESSAGES["invalid_url"])
             return
 
-        # Cria pedido pendente
         token = uuid.uuid4().hex
-        confirm_keyboard = InlineKeyboardMarkup(
+        confirm_keyboard = InlineKeyboardMarkup([
             [
-                [
-                    InlineKeyboardButton("📥 Baixar", callback_data=f"dl:{token}"),
-                    InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}"),
-                ]
+                InlineKeyboardButton("📥 Baixar", callback_data=f"dl:{token}"),
+                InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}"),
             ]
-        )
+        ])
 
         confirm_msg = await update.message.reply_text(
             f"Você quer baixar este link?\n{url}", 
@@ -484,7 +427,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler de callbacks dos botões."""
     query = update.callback_query
     await query.answer()
     
@@ -500,15 +442,14 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             
             if query.from_user.id != entry["from_user_id"]:
-                await query.answer("⚠️ Apenas quem solicitou pode confirmar o download.", show_alert=True)
+                await query.answer("⚠️ Apenas quem solicitou pode confirmar.", show_alert=True)
                 return
 
             try:
                 await query.edit_message_text("Iniciando download... 🎬")
             except Exception as e:
-                LOG.error("Erro ao editar mensagem de confirmação: %s", e)
+                LOG.error("Erro ao editar mensagem: %s", e)
 
-            # Cria mensagem de progresso
             progress_msg = await context.bot.send_message(
                 chat_id=entry["chat_id"], 
                 text="📥 Baixando: 0% [────────────────────]"
@@ -518,7 +459,6 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "message_id": progress_msg.message_id
             }
             
-            # Inicia download em background
             asyncio.run_coroutine_threadsafe(start_download_task(token), APP_LOOP)
 
         elif data.startswith("cancel:"):
@@ -538,10 +478,8 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-# ==================== DOWNLOAD TASK ====================
-
+# Download Task
 async def start_download_task(token: str):
-    """Executa o download e envia arquivos."""
     entry = PENDING.get(token)
     if not entry:
         LOG.warning("Token não encontrado: %s", token)
@@ -555,7 +493,6 @@ async def start_download_task(token: str):
         LOG.warning("progress_msg não encontrado para token: %s", token)
         return
 
-    # Inicia watchdog
     watchdog_task = asyncio.create_task(_watchdog(token, WATCHDOG_TIMEOUT))
     
     try:
@@ -572,7 +509,6 @@ async def start_download_task(token: str):
         PENDING.pop(token, None)
 
 async def _watchdog(token: str, timeout: int):
-    """Cancela download após timeout."""
     await asyncio.sleep(timeout)
     entry = PENDING.pop(token, None)
     if entry and entry.get("progress_msg"):
@@ -581,7 +517,6 @@ async def _watchdog(token: str, timeout: int):
     LOG.warning("Watchdog timeout para token: %s", token)
 
 async def _notify_error(pm: dict, error_type: str):
-    """Notifica usuário sobre erro."""
     try:
         message = ERROR_MESSAGES.get(error_type, ERROR_MESSAGES["unknown"])
         await application.bot.edit_message_text(
@@ -593,7 +528,6 @@ async def _notify_error(pm: dict, error_type: str):
         LOG.error("Erro ao notificar erro: %s", e)
 
 async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict):
-    """Realiza o download e envio."""
     outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
     last_percent = -1
 
@@ -606,7 +540,7 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
                 total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
                 if total:
                     percent = int(downloaded * 100 / total)
-                    if percent != last_percent and percent % 5 == 0:  # Atualiza a cada 5%
+                    if percent != last_percent and percent % 5 == 0:
                         last_percent = percent
                         blocks = int(percent / 5)
                         bar = "█" * blocks + "─" * (20 - blocks)
@@ -652,7 +586,7 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         "fragment_retries": 20,
     }
     
-    # CORREÇÃO: Usa o cookie apropriado baseado na URL
+    # Usa o cookie apropriado
     cookie_file = get_cookie_for_url(url)
     if cookie_file:
         ydl_opts["cookiefile"] = cookie_file
@@ -682,7 +616,6 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
             tamanho = os.path.getsize(path)
             
             if tamanho > MAX_FILE_SIZE:
-                # Dividir arquivo
                 partes_dir = os.path.join(tmpdir, "partes")
                 try:
                     partes = split_video_file(path, partes_dir)
@@ -700,7 +633,6 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
                     await _notify_error(pm, "ffmpeg_error")
                     return
             else:
-                # Enviar arquivo diretamente
                 with open(path, "rb") as fh:
                     await application.bot.send_video(chat_id=chat_id, video=fh)
                     
@@ -720,22 +652,18 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         LOG.error("Erro ao enviar mensagem final: %s", e)
 
 def _run_ydl(options, urls):
-    """Executa yt-dlp de forma síncrona."""
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.download(urls)
 
-# ==================== HANDLERS REGISTRATION ====================
-
+# Handlers Registration
 application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("stats", stats_cmd))
 application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
-# ==================== FLASK ROUTES ====================
-
+# Flask Routes
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    """Webhook do Telegram."""
     try:
         update_data = request.get_json(force=True)
         update = Update.de_json(update_data, application.bot)
@@ -746,20 +674,22 @@ def webhook():
 
 @app.route("/")
 def index():
-    """Rota principal."""
     return "Bot rodando ✅"
 
 @app.route("/health")
 def health():
-    """Health check endpoint."""
     checks = {
         "bot": "ok",
         "db": "ok",
         "pending_count": len(PENDING),
+        "cookies": {
+            "youtube": bool(COOKIE_YT),
+            "shopee": bool(COOKIE_SHOPEE),
+            "instagram": bool(COOKIE_IG)
+        },
         "timestamp": time.time()
     }
     
-    # Verifica DB
     try:
         with DB_LOCK:
             conn = sqlite3.connect(DB_FILE, timeout=5)
@@ -769,7 +699,6 @@ def health():
         checks["db"] = f"error: {str(e)}"
         LOG.error("Health check DB falhou: %s", e)
     
-    # Verifica bot
     try:
         bot_info = application.bot.get_me()
         checks["bot_username"] = bot_info.username
@@ -780,8 +709,7 @@ def health():
     status = 200 if checks["bot"] == "ok" and checks["db"] == "ok" else 503
     return checks, status
 
-# ==================== MAIN ====================
-
+# Main
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     LOG.info("Iniciando servidor Flask na porta %d", port)
