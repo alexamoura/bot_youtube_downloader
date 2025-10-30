@@ -568,8 +568,52 @@ async def start_download_task(token: str, quality: str = None):
     finally:
         remove_pending(token)
 
+async def _try_shopee_api(url: str) -> str:
+    """Tenta extrair via API interna da Shopee"""
+    try:
+        # Extrai ID do vídeo da URL se possível
+        video_id_match = re.search(r'/video/(\d+)', url)
+        if not video_id_match:
+            return None
+        
+        video_id = video_id_match.group(1)
+        
+        # Tenta API da Shopee (pode variar por região)
+        api_urls = [
+            f"https://shopee.com.br/api/v4/video/get_video_by_id?video_id={video_id}",
+            f"https://shopee.com.br/api/v2/video/get?video_id={video_id}",
+        ]
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": url,
+            "Accept": "application/json"
+        }
+        
+        for api_url in api_urls:
+            try:
+                resp = await asyncio.to_thread(
+                    lambda: requests.get(api_url, headers=headers, timeout=10)
+                )
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    
+                    # Busca URL do vídeo no JSON da API
+                    video_url = _extract_video_from_json(data)
+                    if video_url:
+                        LOG.info("Vídeo via API Shopee: %s", video_url[:80])
+                        return video_url
+            except:
+                continue
+        
+        return None
+    except Exception as e:
+        LOG.warning("API Shopee falhou: %s", e)
+        return None
+
 async def _download_shopee(url: str, tmpdir: str, chat_id: int, pm: dict):
-    """Download de Shopee Video"""
+    """Download de Shopee Video - tenta pegar versão SEM marca d'água"""
     if not REQUESTS_AVAILABLE:
         await application.bot.edit_message_text(
             text="⚠️ Shopee não disponível (faltam dependências)",
@@ -585,18 +629,45 @@ async def _download_shopee(url: str, tmpdir: str, chat_id: int, pm: dict):
             message_id=pm["message_id"]
         )
         
-        # Tenta SVXtract primeiro
-        video_url = await _try_svxtract(url)
-        source = "SVXtract"
+        video_url = None
+        source = "Desconhecido"
         
-        # Se falhar, tenta extração direta
+        # ESTRATÉGIA 1: API da Shopee (mais confiável para vídeo original)
+        await application.bot.edit_message_text(
+            text="🛍️ Tentando API Shopee...",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+        video_url = await _try_shopee_api(url)
+        if video_url:
+            source = "API Shopee (sem marca d'água)"
+        
+        # ESTRATÉGIA 2: Extração direta da página
         if not video_url:
+            await application.bot.edit_message_text(
+                text="🛍️ Extraindo da página...",
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"]
+            )
             video_url = await _try_direct_shopee(url)
-            source = "Direto"
+            if video_url:
+                source = "Página HTML (sem marca d'água)"
+        
+        # ESTRATÉGIA 3: SVXtract (fallback)
+        if not video_url:
+            await application.bot.edit_message_text(
+                text="🛍️ Tentando SVXtract...",
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"]
+            )
+            video_url = await _try_svxtract(url)
+            if video_url:
+                source = "SVXtract"
         
         if not video_url:
             await application.bot.edit_message_text(
-                text="⚠️ Não consegui extrair o vídeo da Shopee.",
+                text="⚠️ Não consegui extrair o vídeo da Shopee.\n\n"
+                     "Dica: Tente copiar o link diretamente do vídeo no app.",
                 chat_id=pm["chat_id"],
                 message_id=pm["message_id"]
             )
@@ -632,7 +703,7 @@ async def _download_shopee(url: str, tmpdir: str, chat_id: int, pm: dict):
             await application.bot.send_video(
                 chat_id=chat_id,
                 video=fh,
-                caption=f"🛍️ Shopee ({source})"
+                caption=f"🛍️ Shopee\n💧 {source}"
             )
         
         await application.bot.edit_message_text(
@@ -649,9 +720,12 @@ async def _download_shopee(url: str, tmpdir: str, chat_id: int, pm: dict):
         )
 
 async def _try_svxtract(url: str) -> str:
-    """Tenta extrair via SVXtract"""
+    """Tenta extrair via SVXtract - busca vídeo SEM marca d'água"""
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json, text/plain, */*"
+        }
         
         # Pega CSRF token
         resp = await asyncio.to_thread(
@@ -674,17 +748,24 @@ async def _try_svxtract(url: str) -> str:
             lambda: requests.get(dl_url, headers=headers, timeout=15)
         )
         
-        # Busca URL do vídeo
-        patterns = [
+        # Busca URL do vídeo - prioriza versões sem marca d'água
+        priority_patterns = [
+            r'"original_video_url"\s*:\s*"([^"]+)"',
+            r'"no_watermark_url"\s*:\s*"([^"]+)"',
+            r'"raw_video_url"\s*:\s*"([^"]+)"',
             r'"video_url"\s*:\s*"([^"]+)"',
             r'"url"\s*:\s*"([^"]+\.mp4[^"]*)"',
             r'href="([^"]+\.mp4[^"]*)"',
         ]
         
-        for pattern in patterns:
+        for pattern in priority_patterns:
             match = re.search(pattern, resp.text)
             if match:
-                return match.group(1)
+                video_url = match.group(1)
+                # Evita URLs com indicação de marca d'água
+                if 'watermark' not in video_url.lower() and 'wm' not in video_url.lower():
+                    LOG.info("Vídeo via SVXtract (sem marca d'água): %s", video_url[:80])
+                    return video_url
         
         return None
     except Exception as e:
@@ -692,31 +773,108 @@ async def _try_svxtract(url: str) -> str:
         return None
 
 async def _try_direct_shopee(url: str) -> str:
-    """Extração direta da página Shopee"""
+    """Extração direta da página Shopee - busca vídeo SEM marca d'água"""
     try:
-        headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://shopee.com.br/"}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://shopee.com.br/",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        }
         
         resp = await asyncio.to_thread(
             lambda: requests.get(url, headers=headers, timeout=20)
         )
         
-        patterns = [
-            r'(https://[^"\s]*\.mp4[^"\s]*)',
-            r'"videoUrl"\s*:\s*"([^"]+)"',
-            r'"playAddr"\s*:\s*"([^"]+)"',
+        # ESTRATÉGIA 1: Buscar URLs específicas SEM marca d'água
+        # A Shopee usa diferentes chaves para vídeo original vs download
+        priority_patterns = [
+            r'"originVideoUrl"\s*:\s*"([^"]+)"',  # URL original
+            r'"rawVideoUrl"\s*:\s*"([^"]+)"',     # URL raw
+            r'"defaultVideo"\s*:\s*"([^"]+)"',    # URL padrão
+            r'"video_url"\s*:\s*"([^"]+)"',       # URL do vídeo
         ]
         
-        for pattern in patterns:
+        # Tenta padrões prioritários primeiro (vídeo original)
+        for pattern in priority_patterns:
             matches = re.findall(pattern, resp.text)
             for match in matches:
-                clean = match.replace('\\/', '/')
+                clean = match.replace('\\/', '/').replace('\\u0026', '&')
+                if 'http' in clean and ('.mp4' in clean or 'video' in clean):
+                    # Verifica se não é a URL com marca d'água
+                    if 'watermark' not in clean.lower() and 'wm' not in clean.lower():
+                        LOG.info("Vídeo original Shopee encontrado: %s", clean[:80])
+                        return clean
+        
+        # ESTRATÉGIA 2: Buscar no JSON embutido na página
+        # Shopee costuma ter um JSON com dados do vídeo
+        json_pattern = r'<script[^>]*>window\.__INITIAL_STATE__\s*=\s*({.+?})</script>'
+        json_match = re.search(json_pattern, resp.text, re.DOTALL)
+        
+        if json_match:
+            try:
+                json_data = json.loads(json_match.group(1))
+                # Navega pelo JSON procurando URLs de vídeo
+                video_url = _extract_video_from_json(json_data)
+                if video_url:
+                    LOG.info("Vídeo original via JSON: %s", video_url[:80])
+                    return video_url
+            except:
+                pass
+        
+        # ESTRATÉGIA 3: Padrões genéricos (fallback)
+        fallback_patterns = [
+            r'(https://[^"\s]*video[^"\s]*\.mp4[^"\s]*)',
+            r'"videoUrl"\s*:\s*"([^"]+)"',
+            r'"playAddr"\s*:\s*"([^"]+)"',
+            r'(https://[^"\s]*\.mp4[^"\s]*)',
+        ]
+        
+        for pattern in fallback_patterns:
+            matches = re.findall(pattern, resp.text)
+            for match in matches:
+                clean = match.replace('\\/', '/').replace('\\u0026', '&')
                 if 'http' in clean and '.mp4' in clean:
-                    return clean
+                    # Evita URLs de thumbnail/preview
+                    if 'thumbnail' not in clean.lower() and 'preview' not in clean.lower():
+                        LOG.info("Vídeo Shopee (fallback): %s", clean[:80])
+                        return clean
         
         return None
     except Exception as e:
-        LOG.warning("Extração direta falhou: %s", e)
+        LOG.warning("Extração direta Shopee falhou: %s", e)
         return None
+
+def _extract_video_from_json(data, depth=0):
+    """
+    Extrai URL de vídeo recursivamente de estrutura JSON
+    Procura por chaves que contenham 'video', 'url', etc
+    """
+    if depth > 10:  # Limita profundidade para evitar loops
+        return None
+    
+    if isinstance(data, dict):
+        # Procura por chaves prioritárias
+        priority_keys = ['originVideoUrl', 'rawVideoUrl', 'defaultVideo', 'videoUrl']
+        for key in priority_keys:
+            if key in data and isinstance(data[key], str):
+                url = data[key]
+                if 'http' in url and ('mp4' in url or 'video' in url):
+                    if 'watermark' not in url.lower():
+                        return url
+        
+        # Busca recursiva em todos os valores
+        for value in data.values():
+            result = _extract_video_from_json(value, depth + 1)
+            if result:
+                return result
+    
+    elif isinstance(data, list):
+        for item in data:
+            result = _extract_video_from_json(item, depth + 1)
+            if result:
+                return result
+    
+    return None
 
 async def _download_ytdlp(url: str, tmpdir: str, chat_id: int, pm: dict, token: str, quality: str = None):
     """Download via yt-dlp com progresso e qualidade específica"""
