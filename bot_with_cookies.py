@@ -65,6 +65,9 @@ DOWNLOAD_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 # NOVO: Modo de economia de CPU - evita reprocessamento quando possível
 LOW_CPU_MODE = os.getenv("LOW_CPU_MODE", "true").lower() == "true"
 
+# NOVO: Tempo em segundos para mostrar aviso de download lento (padrão: 15s)
+SLOW_DOWNLOAD_WARNING_DELAY = int(os.getenv("SLOW_DOWNLOAD_WARNING_DELAY", "15"))
+
 # Estruturas thread-safe
 PENDING = OrderedDict()
 PENDING_LOCK = threading.Lock()  # NOVO: Lock para PENDING dict
@@ -486,6 +489,24 @@ async def start_download_task(token: str, quality: str = None):
     if not pm:
         return
 
+    # NOVO: Flag para rastrear se deve mostrar aviso de demora
+    show_slow_warning_task = None
+    
+    # NOVO: Função que mostra aviso após X segundos
+    async def show_slow_download_warning():
+        await asyncio.sleep(SLOW_DOWNLOAD_WARNING_DELAY)  # Tempo configurável
+        # Verifica se ainda está ativo (não terminou)
+        if token in [t for t, _ in ACTIVE_DOWNLOADS.items()]:
+            try:
+                await application.bot.send_message(
+                    chat_id=chat_id,
+                    text="⏳ Este download pode levar até 10 minutos dependendo do tamanho do vídeo.\n\n"
+                         "Você pode continuar usando o bot normalmente enquanto aguarda! 😊"
+                )
+                LOG.info("Aviso de download demorado enviado [%s]", token[:8])
+            except Exception as e:
+                LOG.warning("Erro ao enviar aviso de demora: %s", e)
+
     # NOVO: Controle de concorrência com semaphore
     try:
         # Tenta adquirir slot para download
@@ -503,6 +524,9 @@ async def start_download_task(token: str, quality: str = None):
             # Registra download ativo
             register_active_download(token, chat_id)
             LOG.info("Download iniciado [%s] - Ativos: %d/%d", token[:8], get_active_downloads_count(), MAX_CONCURRENT_DOWNLOADS)
+            
+            # NOVO: Agenda tarefa para mostrar aviso após 15s
+            show_slow_warning_task = asyncio.create_task(show_slow_download_warning())
             
             try:
                 # Timeout de 5 minutos por download
@@ -534,6 +558,10 @@ async def start_download_task(token: str, quality: str = None):
                 except:
                     pass
             finally:
+                # NOVO: Cancela aviso se ainda não foi enviado
+                if show_slow_warning_task and not show_slow_warning_task.done():
+                    show_slow_warning_task.cancel()
+                
                 # Remove download ativo
                 unregister_active_download(token)
                 LOG.info("Download finalizado [%s] - Ativos: %d/%d", token[:8], get_active_downloads_count(), MAX_CONCURRENT_DOWNLOADS)
@@ -866,6 +894,7 @@ if __name__ == "__main__":
     LOG.info("🚀 Iniciando bot na porta %d", port)
     LOG.info("⚡ Máximo de downloads simultâneos: %d", MAX_CONCURRENT_DOWNLOADS)
     LOG.info("💻 Modo LOW_CPU: %s", "ATIVADO" if LOW_CPU_MODE else "DESATIVADO")
+    LOG.info("⏰ Aviso de demora após: %d segundos", SLOW_DOWNLOAD_WARNING_DELAY)
     
     # IMPORTANTE: threaded=True para suportar múltiplas requisições
     app.run(host="0.0.0.0", port=port, threaded=True)
