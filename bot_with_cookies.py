@@ -685,13 +685,14 @@ async def _download_ytdlp(url: str, tmpdir: str, chat_id: int, pm: dict, token: 
         )
 
 def _progress_hook(d, token, pm):
-    """Hook de progresso para yt-dlp"""
+    """Hook de progresso para yt-dlp com rate limiting"""
     try:
         entry = PENDING.get(token)
         if not entry:
             return
         
         status = d.get('status')
+        current_time = time.time()
         
         if status == 'downloading':
             percent = d.get('_percent_str', '0%').strip()
@@ -700,8 +701,9 @@ def _progress_hook(d, token, pm):
             
             message = f"📥 Baixando: {percent}\n⚡ Velocidade: {speed}\n⏱️ Tempo restante: {eta}"
             
-            # Atualiza a cada mudança de porcentagem
-            if entry.get("last_progress", "") != percent:
+            # Rate limiting: atualiza apenas a cada 3 segundos
+            last_update = entry.get("last_update_time", 0)
+            if current_time - last_update >= 3.0:
                 try:
                     asyncio.run_coroutine_threadsafe(
                         application.bot.edit_message_text(
@@ -711,9 +713,12 @@ def _progress_hook(d, token, pm):
                         ),
                         APP_LOOP
                     )
+                    entry["last_update_time"] = current_time
                     entry["last_progress"] = percent
-                except:
-                    pass
+                except Exception as e:
+                    # Ignora erros de rate limit silenciosamente
+                    if "429" not in str(e):
+                        LOG.debug("Erro ao atualizar progresso: %s", e)
         
         elif status == 'finished':
             asyncio.run_coroutine_threadsafe(
