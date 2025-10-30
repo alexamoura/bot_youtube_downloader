@@ -613,10 +613,10 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         debug_html_path = os.path.join(tmpdir, "shopee_debug.html")
         with open(debug_html_path, 'w', encoding='utf-8') as f:
             f.write(response.text)
-        LOG.info("HTML salvo em: %s (primeiros 2000 chars)", debug_html_path)
-        LOG.info("HTML preview: %s", response.text[:2000])
+        LOG.info("HTML salvo em: %s", debug_html_path)
         
-        # Busca URL do vídeo no HTML/JavaScript
+        # Busca TODAS as URLs de vídeo possíveis
+        all_video_urls = []
         video_url = None
         
         # Padrão 1: Busca em tags <script> com JSON
@@ -649,12 +649,36 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             for match in matches:
                 # Limpa a URL
                 clean_url = match.replace('\\/', '/').replace('\\', '')
-                if 'http' in clean_url and ('mp4' in clean_url.lower() or 'video' in clean_url.lower()):
-                    video_url = clean_url
-                    LOG.info("URL de vídeo encontrada via regex: %s", video_url[:100])
-                    break
-            if video_url:
-                break
+                if 'http' in clean_url and len(clean_url) > 20:
+                    all_video_urls.append(clean_url)
+        
+        # Remove duplicatas
+        all_video_urls = list(set(all_video_urls))
+        LOG.info("Total de URLs encontradas: %d", len(all_video_urls))
+        
+        # PRIORIDADE 1: URLs com .mp4 (SEM marca d'água)
+        mp4_urls = [url for url in all_video_urls if '.mp4' in url.lower()]
+        if mp4_urls:
+            video_url = mp4_urls[0]
+            LOG.info("✅ URL .mp4 encontrada (SEM marca d'água): %s", video_url[:100])
+        
+        # PRIORIDADE 2: URLs com 'video' no nome
+        if not video_url:
+            video_urls = [url for url in all_video_urls if 'video' in url.lower()]
+            if video_urls:
+                video_url = video_urls[0]
+                LOG.info("⚠️ URL com 'video' encontrada (pode ter marca d'água): %s", video_url[:100])
+        
+        # PRIORIDADE 3: Qualquer URL restante
+        if not video_url and all_video_urls:
+            video_url = all_video_urls[0]
+            LOG.info("⚠️ URL genérica encontrada: %s", video_url[:100])
+        
+        # Log de todas URLs encontradas para debug
+        if all_video_urls:
+            LOG.info("Todas URLs encontradas:")
+            for idx, url in enumerate(all_video_urls[:5], 1):  # Mostra até 5
+                LOG.info("  %d. %s", idx, url[:150])
         
         # Padrão 2: Busca em meta tags
         if not video_url:
@@ -743,15 +767,20 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         
         LOG.info("Baixando vídeo da URL: %s", video_url[:100])
         
+        # Verifica se é .mp4 (sem marca d'água)
+        is_mp4 = '.mp4' in video_url.lower()
+        quality_msg = "✨ Sem marca d'água" if is_mp4 else "⚠️ Pode conter marca d'água"
+        
         # Atualiza mensagem
         await application.bot.edit_message_text(
-            text="📥 Baixando vídeo da Shopee...",
+            text=f"📥 Baixando vídeo da Shopee...\n{quality_msg}",
             chat_id=pm["chat_id"],
             message_id=pm["message_id"]
         )
         
         # Baixa o vídeo
-        output_path = os.path.join(tmpdir, "shopee_video.mp4")
+        file_extension = ".mp4" if is_mp4 else ".mp4"  # Sempre salva como .mp4
+        output_path = os.path.join(tmpdir, f"shopee_video{file_extension}")
         
         video_response = await asyncio.to_thread(
             lambda: requests.get(video_url, headers=headers, cookies=cookies_dict, stream=True, timeout=120)
@@ -776,7 +805,7 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
                             bar = "█" * blocks + "─" * (20 - blocks)
                             try:
                                 await application.bot.edit_message_text(
-                                    text=f"🛍️ Baixando: {percent}% [{bar}]",
+                                    text=f"🛍️ Baixando: {percent}% [{bar}]\n{quality_msg}",
                                     chat_id=pm["chat_id"],
                                     message_id=pm["message_id"]
                                 )
@@ -796,8 +825,12 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             message_id=pm["message_id"]
         )
         
+        caption = "🛍️ Shopee Video"
+        if is_mp4:
+            caption += " ✨ (Sem marca d'água)"
+        
         with open(output_path, "rb") as fh:
-            await application.bot.send_video(chat_id=chat_id, video=fh, caption="🛍️ Shopee Video")
+            await application.bot.send_video(chat_id=chat_id, video=fh, caption=caption)
         
         await application.bot.edit_message_text(
             text="✅ Vídeo da Shopee enviado!",
