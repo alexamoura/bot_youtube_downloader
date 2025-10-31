@@ -16,3 +16,6 @@ Pillow==10.1.0
 
 # IA APIs
 groq>=0.11.0             # Groq (gratuito)
+
+#Remoção Marca Dagua Shopee
+opencv-python==4.9.0.80
