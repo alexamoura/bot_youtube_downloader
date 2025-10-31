@@ -133,7 +133,7 @@ MESSAGES = {
         "• Vídeos curtos (até 50 MB)\n"
         "• Qualidade até 720p\n"
         "• Fila: até 3 downloads simultâneos\n\n"
-        "Digite /status para verificar seu saldo de downloads."
+        "Digite /status para verificar seu saldo de downloads ou /premium para assinar o plano."
     ),
     "url_prompt": "📎 Por favor, envie o link do vídeo que deseja baixar.",
     "processing": "⚙️ Processando sua solicitação...",
