@@ -11,6 +11,5 @@ beautifulsoup4==4.12.3
 lxml==5.1.0
 
 #API PIX Mercado Pago
-mercadopago==2.2.1
-Pillow==10.1.0
-```
+mercadopago=>=2.2.1
+Pillow>=10.1.0
