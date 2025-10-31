@@ -58,7 +58,7 @@ URL_RE = re.compile(r"(https?://[^\s]+)")
 # ============================
 # CONFIGURAÇÃO DE DISCO PERSISTENTE (Render Disk)
 # ============================
-DISK_PATH = os.getenv("DISK_PATH", "/data")
+DISK_PATH = os.getenv("DISK_PATH", "/var/data")
 
 if not os.path.exists(DISK_PATH):
     LOG.warning(f"Disco persistente não encontrado em {DISK_PATH}. Usando /tmp como fallback.")
@@ -139,19 +139,20 @@ MESSAGES = {
         "{premium_info}"
     ),
     "premium_info": (
-        "💎 <b>Informações sobre o Plano Premium</b>\n\n"
-        "✨ <b>Benefícios:</b>\n"
-        "• Downloads ilimitados\n"
-        "• Qualidade máxima (até 1080p)\n"
-        "• Processamento prioritário\n"
-        "• Suporte dedicado\n\n"
-        "💰 <b>Valor:</b> R$ 9,90/mês\n\n"
-        "📱 <b>Como contratar:</b>\n"
-        "1. Faça o pagamento via PIX\n"
-        "2. Envie o comprovante para confirmação\n"
-        "3. Seu acesso será liberado em até 5 minutos\n\n"
-        "🔑 Chave PIX: [A SER CONFIGURADA]\n\n"
-        "⚠️ <b>Importante:</b> Após o pagamento, envie uma mensagem com o texto 'COMPROVANTE' junto com a imagem do comprovante."
+    "💎 <b>Informações sobre o Plano Premium</b>\n\n"
+    "✨ <b>Benefícios:</b>\n"
+    "• Downloads ilimitados\n"
+    "• Qualidade máxima (até 1080p)\n"
+    "• Processamento prioritário\n"
+    "• Suporte dedicado\n\n"
+    "💰 <b>Valor:</b> R$ 9,90/mês\n\n"
+    "📱 <b>Como contratar:</b>\n"
+    "1. Faça o pagamento via PIX\n"
+    "2. Envie o comprovante para confirmação\n"
+    "3. Seu acesso será liberado em até 5 minutos\n\n"
+    f"🔑 Chave PIX: {PIX_KEY}\n\n"
+    "⚠️ <b>Importante:</b> Após o pagamento, envie uma mensagem com o texto 'COMPROVANTE' junto com a imagem do comprovante."
+)
     ),
     "stats": "📈 <b>Estatísticas do Bot</b>\n\n👥 Usuários ativos este mês: {count}",
     "error_timeout": "⏱️ O tempo de processamento excedeu o limite. Por favor, tente novamente.",
@@ -1360,14 +1361,36 @@ def _cleanup_pending():
         PENDING.popitem(last=False)
 
 # ============================
+# HANDLER PARA SUBSCRIBE
+# ============================
+async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+
+    # Cria pagamento PIX usando Mercado Pago
+    reference = create_pix_payment(user_id, 9.90)
+    if reference:
+        text = (
+            "✅ Pedido criado!\n\n"
+            f"Use a chave PIX abaixo para pagar:\n\n🔑 {PIX_KEY}\n"
+            f"📎 Referência: {reference}\n\n"
+            "Após o pagamento, envie o comprovante com a palavra 'COMPROVANTE'."
+        )
+    else:
+        text = "❌ Erro ao criar pagamento. Tente novamente mais tarde."
+
+    await query.edit_message_text(text)
+
+# ============================
 # REGISTRO DE HANDLERS
 # ============================
-
 application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("stats", stats_cmd))
 application.add_handler(CommandHandler("status", status_cmd))
 application.add_handler(CommandHandler("premium", premium_cmd))
-application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:|subscribe:)"))
+application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
+application.add_handler(CallbackQueryHandler(subscribe_callback, pattern=r"^subscribe:"))
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
 # ============================
