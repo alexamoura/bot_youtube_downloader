@@ -1399,7 +1399,46 @@ def health():
     
     status = 200 if checks["bot"] == "ok" and checks["db"] == "ok" else 503
     return checks, status
+# ============================
+# MERCADOPAGO
+# ============================
 
+from flask import request
+import mercadopago
+import os
+
+@app.route("/webhook/pix", methods=["POST"])
+def webhook_pix():
+    """Endpoint para receber notificações de pagamento PIX do Mercado Pago"""
+    try:
+        data = request.get_json()
+        LOG.info("Webhook PIX recebido: %s", data)
+
+        if data.get("type") == "payment":
+            payment_id = data["data"]["id"]
+            sdk = mercadopago.SDK(os.getenv("MERCADOPAGO_ACCESS_TOKEN"))
+            payment = sdk.payment().get(payment_id)["response"]
+
+            if payment["status"] == "approved":
+                # Extrai o valor do campo external_reference que deve conter o user_id
+                reference = payment.get("external_reference")
+                if reference and reference.startswith("PIX_"):
+                    parts = reference.split("_")
+                    if len(parts) == 3:
+                        user_id = int(parts[2])
+                        confirm_pix_payment(payment_reference=reference, user_id=user_id)
+                        LOG.info("Pagamento confirmado e premium ativado para user_id=%s", user_id)
+                    else:
+                        LOG.warning("Formato de referência inválido: %s", reference)
+                else:
+                    LOG.warning("Referência externa ausente ou inválida: %s", reference)
+
+        return "ok", 200
+
+    except Exception as e:
+        LOG.exception("Erro no webhook PIX: %s", e)
+        return "erro", 500
+        
 # ============================
 # MAIN
 # ============================
