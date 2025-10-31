@@ -2,7 +2,7 @@
 """
 bot_with_cookies.py - Versão Melhorada
 
-Telegram bot (webhook) com suporte a múltiplos cookies
+Telegram bot com suporte a múltiplos cookies
 """
 import os
 import sys
