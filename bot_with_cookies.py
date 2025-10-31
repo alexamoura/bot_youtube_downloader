@@ -54,6 +54,33 @@ LOG.info("TELEGRAM_BOT_TOKEN presente (len=%d).", len(TOKEN))
 
 # Constantes do Sistema
 URL_RE = re.compile(r"(https?://[^\s]+)")
+
+# ============================
+# CONFIGURAÇÃO DE DISCO PERSISTENTE (Render Disk)
+# ============================
+DISK_PATH = os.getenv("DISK_PATH", "/data")
+
+if not os.path.exists(DISK_PATH):
+    LOG.warning(f"Disco persistente não encontrado em {DISK_PATH}. Usando /tmp como fallback.")
+    DISK_PATH = "/tmp"
+
+try:
+    os.makedirs(DISK_PATH, exist_ok=True)
+    LOG.info(f"Disco ativo em: {DISK_PATH}")
+except Exception as e:
+    LOG.error(f"Erro ao criar diretório do disco: {e}")
+    DISK_PATH = "/tmp"
+
+DB_FILE = os.path.join(DISK_PATH, "users.db")
+LOG.info(f"Banco de dados será armazenado em: {DB_FILE}")
+
+TMP_DOWNLOAD_DIR = os.path.join(DISK_PATH, "tmp")
+os.makedirs(TMP_DOWNLOAD_DIR, exist_ok=True)
+LOG.info(f"Diretório para downloads temporários: {TMP_DOWNLOAD_DIR}")
+
+def create_temp_download_dir():
+    return tempfile.mkdtemp(prefix="ytbot_", dir=TMP_DOWNLOAD_DIR)
+
 DB_FILE = "users.db"
 PENDING_MAX_SIZE = 1000
 PENDING_EXPIRE_SECONDS = 600
