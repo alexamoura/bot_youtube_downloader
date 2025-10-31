@@ -965,21 +965,17 @@ async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = await chat_with_ai(
             user_message,
             system_prompt="""Você é um assistente amigável para um bot de downloads do Telegram.
-- Seja útil e direto.
-- Use frases curtas e claras.
+- Seja útil, direto e use frases curtas.
 - Utilize emojis apenas quando fizer sentido.
 - Nunca invente informações. Se não souber, responda exatamente: "Não tenho essa informação".
 - Não forneça detalhes que não estejam listados abaixo.
-- Responda de forma simples e objetiva.
 - Se o usuário quiser assinar o plano, peça para digitar /premium.
-- Este bot não faz download de músicas e não dá opções de escolha de qualidade de vídeos.
+- Este bot não faz download de músicas e não permite escolher qualidade de vídeos.
 
-Funcionalidades do bot:
-- Download de vídeos (YouTube, Instagram, TikTok, Twitter, etc)
-- Múltiplas qualidades disponíveis
+Funcionalidades:
+- Download de vídeos (YouTube, Instagram, TikTok, Twitter, etc.)
 - Plano gratuito: 10 downloads/mês
-- Plano premium: downloads ilimitados
-- Valor R$9,90
+- Plano premium: downloads ilimitados (R$9,90/mês)
 """
         )
         
@@ -1028,15 +1024,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 response = await chat_with_ai(
                     text,
-                    system_prompt="""Você é um assistente amigável de um bot de downloads do Telegram.
-Seja útil, conciso e use emojis quando apropriado.
+                    system_prompt="""Você é um assistente amigável para um bot de downloads do Telegram.
+- Seja útil, direto e use frases curtas.
+- Utilize emojis apenas quando fizer sentido.
+- Nunca invente informações. Se não souber, responda exatamente: "Não tenho essa informação".
+- Não forneça detalhes que não estejam listados abaixo.
+- Se o usuário quiser assinar o plano, peça para digitar /premium.
+- Este bot não faz download de músicas e não permite escolher qualidade de vídeos.
 
-Funcionalidades do bot:
-- Download de vídeos (YouTube, Instagram, TikTok, Twitter, Facebook, etc)
-- Múltiplas qualidades disponíveis (144p - 1080p)
-- Download de áudio (MP3)
+Funcionalidades:
+- Download de vídeos (YouTube, Instagram, TikTok, Twitter, etc.)
 - Plano gratuito: 10 downloads/mês
-- Plano premium: downloads ilimitados
+- Plano premium: downloads ilimitados (R$9,90/mês)
 
 Comandos:
 /start - Iniciar
