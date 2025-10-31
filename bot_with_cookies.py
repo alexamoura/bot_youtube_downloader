@@ -20,6 +20,8 @@ import subprocess
 from collections import OrderedDict
 from contextlib import contextmanager
 from urllib.parse import urlparse, parse_qs, unquote
+from datetime import datetime, timedelta
+import io
 import yt_dlp
 
 try:
@@ -28,6 +30,18 @@ try:
     REQUESTS_AVAILABLE = True
 except ImportError:
     REQUESTS_AVAILABLE = False
+
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    
+try:
+    import mercadopago
+    MERCADOPAGO_AVAILABLE = True
+except ImportError:
+    MERCADOPAGO_AVAILABLE = False
 
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -54,7 +68,7 @@ LOG.info("TELEGRAM_BOT_TOKEN presente (len=%d).", len(TOKEN))
 
 # Constantes do Sistema
 URL_RE = re.compile(r"(https?://[^\s]+)")
-DB_FILE = "users.db"
+DB_FILE = os.getenv("DB_FILE", "/data/users.db") if os.path.exists("/data") else "users.db"
 PENDING_MAX_SIZE = 1000
 PENDING_EXPIRE_SECONDS = 600
 WATCHDOG_TIMEOUT = 180
@@ -64,6 +78,19 @@ SPLIT_SIZE = 45 * 1024 * 1024
 # Constantes de Controle de Downloads
 FREE_DOWNLOADS_LIMIT = 10
 MAX_CONCURRENT_DOWNLOADS = 3  # Até 3 downloads simultâneos
+
+# Configuração do Mercado Pago
+MERCADOPAGO_ACCESS_TOKEN = os.getenv("MERCADOPAGO_ACCESS_TOKEN")
+PREMIUM_PRICE = float(os.getenv("PREMIUM_PRICE", "9.90"))
+PREMIUM_DURATION_DAYS = int(os.getenv("PREMIUM_DURATION_DAYS", "30"))
+
+if MERCADOPAGO_AVAILABLE and MERCADOPAGO_ACCESS_TOKEN:
+    LOG.info("✅ Mercado Pago configurado - Token: %s...", MERCADOPAGO_ACCESS_TOKEN[:20])
+else:
+    if not MERCADOPAGO_AVAILABLE:
+        LOG.warning("⚠️ mercadopago não instalado - pip install mercadopago")
+    if not MERCADOPAGO_ACCESS_TOKEN:
+        LOG.warning("⚠️ MERCADOPAGO_ACCESS_TOKEN não configurado")
 
 # Estado Global
 PENDING = OrderedDict()
@@ -120,11 +147,11 @@ MESSAGES = {
         "• Suporte dedicado\n\n"
         "💰 <b>Valor:</b> R$ 9,90/mês\n\n"
         "📱 <b>Como contratar:</b>\n"
-        "1. Faça o pagamento via PIX\n"
-        "2. Envie o comprovante para confirmação\n"
-        "3. Seu acesso será liberado em até 5 minutos\n\n"
-        "🔑 Chave PIX: [A SER CONFIGURADA]\n\n"
-        "⚠️ <b>Importante:</b> Após o pagamento, envie uma mensagem com o texto 'COMPROVANTE' junto com a imagem do comprovante."
+        "1️⃣ Clique no botão \"Assinar Premium\"\n"
+        "2️⃣ Escaneie o QR Code PIX gerado\n"
+        "3️⃣ Confirme o pagamento no seu banco\n"
+        "4️⃣ Aguarde a ativação automática (30-60 segundos)\n\n"
+        "⚡ <b>Ativação instantânea via PIX!</b>"
     ),
     "stats": "📈 <b>Estatísticas do Bot</b>\n\n👥 Usuários ativos este mês: {count}",
     "error_timeout": "⏱️ O tempo de processamento excedeu o limite. Por favor, tente novamente.",
@@ -1053,6 +1080,366 @@ async def get_video_info(url: str) -> dict:
         LOG.error("Erro ao extrair informações: %s", e)
         return None
 
+# ====================================================================
+# FUNÇÕES DO MERCADO PAGO
+# ====================================================================
+
+async def callback_buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler para compra de premium via Mercado Pago PIX"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    username = query.from_user.first_name or f"User{user_id}"
+    
+    LOG.info("🛒 Usuário %d iniciou compra de premium", user_id)
+    
+    # Verifica se já é premium
+    stats = get_user_download_stats(user_id)
+    if stats["is_premium"]:
+        await query.edit_message_text(
+            "💎 <b>Você já é Premium!</b>\n\n"
+            "Continue aproveitando seus benefícios ilimitados! 🎉",
+            parse_mode="HTML"
+        )
+        LOG.info("Usuário %d já é premium", user_id)
+        return
+    
+    # Verifica se Mercado Pago está disponível
+    if not MERCADOPAGO_AVAILABLE or not MERCADOPAGO_ACCESS_TOKEN:
+        await query.edit_message_text(
+            "❌ <b>Sistema de Pagamento Indisponível</b>\n\n"
+            "O sistema de pagamento está temporariamente indisponível.\n"
+            "Por favor, tente novamente mais tarde ou contate o suporte.",
+            parse_mode="HTML"
+        )
+        LOG.error("Tentativa de compra mas Mercado Pago não configurado")
+        return
+    
+    # Mostra mensagem de processamento
+    await query.edit_message_text(
+        "⏳ <b>Gerando pagamento PIX...</b>\n\nAguarde um momento.",
+        parse_mode="HTML"
+    )
+    
+    try:
+        LOG.info("Inicializando SDK do Mercado Pago")
+        sdk = mercadopago.SDK(MERCADOPAGO_ACCESS_TOKEN)
+        
+        # Prepara dados do pagamento
+        payment_data = {
+            "transaction_amount": float(PREMIUM_PRICE),
+            "description": f"Plano Premium - Bot Downloads (User ID: {user_id})",
+            "payment_method_id": "pix",
+            "payer": {
+                "email": f"user{user_id}@telegram.bot",
+                "first_name": username,
+                "last_name": "Telegram"
+            },
+            "external_reference": f"PIX_{user_id}_{int(time.time())}",
+            "metadata": {
+                "user_id": user_id,
+                "plan": "premium",
+                "duration_days": PREMIUM_DURATION_DAYS
+            }
+        }
+        
+        # Adiciona notification_url se tiver RENDER_EXTERNAL_URL
+        render_url = os.getenv("RENDER_EXTERNAL_URL")
+        if render_url:
+            payment_data["notification_url"] = f"{render_url}/webhook/pix"
+            LOG.info("Notification URL configurada: %s/webhook/pix", render_url)
+        
+        LOG.info("Criando pagamento PIX para usuário %d - Valor: R$ %.2f", user_id, PREMIUM_PRICE)
+        
+        # Cria o pagamento
+        payment_response = sdk.payment().create(payment_data)
+        
+        LOG.info("Resposta do Mercado Pago - Status: %s", payment_response.get("status"))
+        
+        # Valida resposta
+        if payment_response["status"] != 201:
+            LOG.error("Erro ao criar pagamento - Status %s: %s", 
+                     payment_response.get("status"), payment_response)
+            raise Exception(f"Mercado Pago retornou erro: status {payment_response.get('status')}")
+        
+        payment = payment_response["response"]
+        payment_id = payment.get("id")
+        
+        LOG.info("✅ Payment criado - ID: %s, Status: %s", payment_id, payment.get("status"))
+        
+        # Valida estrutura do PIX
+        if "point_of_interaction" not in payment:
+            LOG.error("Resposta sem point_of_interaction: %s", payment)
+            raise Exception("PIX não foi gerado - point_of_interaction ausente")
+        
+        poi = payment["point_of_interaction"]
+        if "transaction_data" not in poi:
+            LOG.error("point_of_interaction sem transaction_data: %s", poi)
+            raise Exception("PIX não foi gerado - transaction_data ausente")
+        
+        td = poi["transaction_data"]
+        if "qr_code" not in td or "qr_code_base64" not in td:
+            LOG.error("transaction_data sem QR codes: %s", td)
+            raise Exception("PIX não foi gerado - QR codes ausentes")
+        
+        # Extrai informações do PIX
+        pix_info = {
+            "payment_id": payment_id,
+            "qr_code": td["qr_code"],
+            "qr_code_base64": td["qr_code_base64"],
+            "amount": payment["transaction_amount"]
+        }
+        
+        LOG.info("✅ PIX gerado com sucesso - ID: %s", payment_id)
+        
+        # Salva no banco de dados
+        try:
+            with DB_LOCK:
+                conn = sqlite3.connect(DB_FILE, timeout=10)
+                c = conn.cursor()
+                c.execute("""
+                    INSERT INTO pix_payments (user_id, amount, pix_key, status) 
+                    VALUES (?, ?, ?, 'pending')
+                """, (user_id, pix_info["amount"], payment_id))
+                conn.commit()
+                conn.close()
+            LOG.info("Pagamento salvo no banco de dados")
+        except Exception as e:
+            LOG.error("Erro ao salvar pagamento no banco: %s", e)
+            # Continua mesmo se falhar ao salvar no banco
+        
+        # Prepara mensagem
+        message_text = (
+            "💳 <b>Pagamento PIX Gerado</b>\n\n"
+            f"💰 Valor: R$ {pix_info['amount']:.2f}\n"
+            f"🆔 ID: <code>{payment_id}</code>\n\n"
+            "📱 <b>Como pagar:</b>\n"
+            "1️⃣ Abra o app do seu banco\n"
+            "2️⃣ Vá em PIX → Ler QR Code\n"
+            "3️⃣ Escaneie o código abaixo\n"
+            "4️⃣ Confirme o pagamento\n\n"
+            "⏱️ <b>Expira em:</b> 30 minutos\n"
+            "✅ <b>Ativação automática após confirmação!</b>\n\n"
+            "⚡ Seu premium será ativado em até 60 segundos."
+        )
+        
+        # Tenta enviar QR Code como imagem
+        qr_sent = False
+        if PIL_AVAILABLE:
+            try:
+                LOG.info("Tentando enviar QR Code como imagem")
+                
+                # Decodifica QR Code
+                qr_bytes = base64.b64decode(pix_info["qr_code_base64"])
+                qr_image = Image.open(io.BytesIO(qr_bytes))
+                
+                # Salva temporariamente
+                qr_path = f"/tmp/qr_{user_id}_{int(time.time())}.png"
+                qr_image.save(qr_path)
+                
+                # Envia imagem
+                with open(qr_path, "rb") as photo:
+                    await query.message.reply_photo(
+                        photo=photo,
+                        caption=message_text,
+                        parse_mode="HTML"
+                    )
+                
+                # Remove arquivo temporário
+                os.remove(qr_path)
+                qr_sent = True
+                LOG.info("✅ QR Code enviado como imagem")
+                
+            except Exception as e:
+                LOG.error("Erro ao enviar QR Code como imagem: %s", e)
+        
+        # Fallback: envia como texto
+        if not qr_sent:
+            LOG.info("Enviando QR Code como texto (código copia e cola)")
+            await query.message.reply_text(
+                message_text + f"\n\n📋 <b>Código PIX Copia e Cola:</b>\n<code>{pix_info['qr_code']}</code>",
+                parse_mode="HTML"
+            )
+        
+        # Deleta mensagem antiga
+        try:
+            await query.message.delete()
+        except Exception as e:
+            LOG.debug("Não foi possível deletar mensagem antiga: %s", e)
+        
+        # Inicia monitoramento do pagamento
+        LOG.info("Iniciando monitoramento do pagamento %s", payment_id)
+        asyncio.create_task(monitor_payment_status(user_id, payment_id))
+        
+        LOG.info("✅ Processo completo - Pagamento %s criado e em monitoramento", payment_id)
+        
+    except Exception as e:
+        LOG.exception("❌ ERRO ao gerar pagamento PIX: %s", e)
+        
+        # Determina mensagem de erro específica
+        error_msg = str(e).lower()
+        if "401" in error_msg or "unauthorized" in error_msg:
+            error_detail = "Token do Mercado Pago inválido ou expirado."
+        elif "point_of_interaction" in error_msg or "qr" in error_msg:
+            error_detail = "Erro ao gerar QR Code PIX. Verifique as credenciais."
+        elif "mercadopago_access_token" in error_msg:
+            error_detail = "Sistema de pagamento não configurado no servidor."
+        else:
+            error_detail = f"Erro ao processar pagamento."
+        
+        await query.edit_message_text(
+            f"❌ <b>Erro ao Gerar Pagamento</b>\n\n"
+            f"{error_detail}\n\n"
+            f"Por favor, tente novamente em alguns instantes.\n\n"
+            f"Se o erro persistir, entre em contato com o suporte.",
+            parse_mode="HTML"
+        )
+
+
+async def monitor_payment_status(user_id: int, payment_id: str):
+    """Monitora o status do pagamento em segundo plano"""
+    if not MERCADOPAGO_AVAILABLE or not MERCADOPAGO_ACCESS_TOKEN:
+        LOG.error("Não é possível monitorar pagamento - Mercado Pago não configurado")
+        return
+    
+    try:
+        sdk = mercadopago.SDK(MERCADOPAGO_ACCESS_TOKEN)
+        max_attempts = 60  # 30 minutos (30s * 60)
+        
+        LOG.info("🔍 Monitorando pagamento %s (max %d tentativas)", payment_id, max_attempts)
+        
+        for attempt in range(max_attempts):
+            await asyncio.sleep(30)  # Verifica a cada 30 segundos
+            
+            try:
+                payment_response = sdk.payment().get(payment_id)
+                
+                if payment_response["status"] != 200:
+                    LOG.warning("Erro ao consultar pagamento %s: status %s", 
+                              payment_id, payment_response.get("status"))
+                    continue
+                
+                payment = payment_response["response"]
+                status = payment["status"]
+                
+                LOG.debug("Pagamento %s - Status: %s (tentativa %d/%d)", 
+                         payment_id, status, attempt + 1, max_attempts)
+                
+                if status == "approved":
+                    # Pagamento aprovado!
+                    LOG.info("🎉 Pagamento %s APROVADO!", payment_id)
+                    await activate_premium(user_id, payment_id)
+                    break
+                    
+                elif status in ["rejected", "cancelled", "refunded"]:
+                    LOG.info("⚠️ Pagamento %s não concluído: %s", payment_id, status)
+                    
+                    # Notifica usuário
+                    try:
+                        status_messages = {
+                            "rejected": "rejeitado",
+                            "cancelled": "cancelado",
+                            "refunded": "reembolsado"
+                        }
+                        await application.bot.send_message(
+                            chat_id=user_id,
+                            text=(
+                                f"⚠️ <b>Pagamento {status_messages.get(status, status)}</b>\n\n"
+                                f"ID: <code>{payment_id}</code>\n\n"
+                                "Seu pagamento não foi concluído.\n"
+                                "Se precisar de ajuda, entre em contato com o suporte."
+                            ),
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        LOG.error("Erro ao notificar usuário sobre falha: %s", e)
+                    break
+                    
+            except Exception as e:
+                LOG.error("Erro ao verificar status do pagamento %s: %s", payment_id, e)
+        
+        if attempt >= max_attempts - 1:
+            LOG.info("⏰ Timeout de monitoramento para pagamento %s após %d minutos", 
+                    payment_id, (max_attempts * 30) // 60)
+            
+    except Exception as e:
+        LOG.exception("Erro crítico no monitoramento do pagamento %s: %s", payment_id, e)
+
+
+async def activate_premium(user_id: int, payment_id: str):
+    """Ativa o plano premium para o usuário"""
+    try:
+        LOG.info("🔓 Ativando premium para usuário %d - Pagamento: %s", user_id, payment_id)
+        
+        # Calcula data de expiração
+        premium_expires = (datetime.now() + timedelta(days=PREMIUM_DURATION_DAYS)).strftime("%Y-%m-%d")
+        
+        # Atualiza banco de dados
+        with DB_LOCK:
+            conn = sqlite3.connect(DB_FILE, timeout=10)
+            c = conn.cursor()
+            
+            # Ativa premium
+            c.execute("""
+                UPDATE user_downloads 
+                SET is_premium=1, premium_expires=? 
+                WHERE user_id=?
+            """, (premium_expires, user_id))
+            
+            # Atualiza status do pagamento
+            c.execute("""
+                UPDATE pix_payments 
+                SET status='confirmed', confirmed_at=CURRENT_TIMESTAMP 
+                WHERE user_id=? AND pix_key=?
+            """, (user_id, payment_id))
+            
+            rows_affected = c.rowcount
+            conn.commit()
+            conn.close()
+        
+        LOG.info("✅ Premium ativado no banco de dados (%d linhas atualizadas)", rows_affected)
+        
+        # Notifica o usuário
+        await application.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "🎉 <b>Pagamento Confirmado!</b>\n\n"
+                f"✅ Plano Premium ativado com sucesso!\n"
+                f"🆔 Pagamento: <code>{payment_id}</code>\n"
+                f"📅 Válido até: <b>{premium_expires}</b>\n\n"
+                "💎 <b>Benefícios liberados:</b>\n"
+                "• ♾️ Downloads ilimitados\n"
+                "• 🎬 Qualidade máxima (até 1080p)\n"
+                "• ⚡ Processamento prioritário\n"
+                "• 🎧 Suporte dedicado\n\n"
+                "Obrigado pela confiança! 🙏\n\n"
+                "Use /status para ver suas informações."
+            ),
+            parse_mode="HTML"
+        )
+        
+        LOG.info("✅ Usuário %d notificado sobre ativação do premium", user_id)
+        
+    except Exception as e:
+        LOG.exception("❌ ERRO ao ativar premium para usuário %d: %s", user_id, e)
+        
+        # Tenta notificar sobre o erro
+        try:
+            await application.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "⚠️ <b>Pagamento Recebido</b>\n\n"
+                    "Recebemos seu pagamento mas houve um erro ao ativar seu premium automaticamente.\n\n"
+                    "Por favor, entre em contato com o suporte informando este ID:\n"
+                    f"<code>{payment_id}</code>\n\n"
+                    "Resolveremos em breve!"
+                ),
+                parse_mode="HTML"
+            )
+        except:
+            pass
+
 async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para callbacks de confirmação de download"""
     query = update.callback_query
@@ -1340,7 +1727,8 @@ application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("stats", stats_cmd))
 application.add_handler(CommandHandler("status", status_cmd))
 application.add_handler(CommandHandler("premium", premium_cmd))
-application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:|subscribe:)"))
+application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
+application.add_handler(CallbackQueryHandler(callback_buy_premium, pattern=r"^subscribe:"))
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
 # ============================
