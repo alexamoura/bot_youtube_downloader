@@ -43,7 +43,6 @@ from telegram.ext import (
 # Configuração de Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 LOG = logging.getLogger("ytbot")
-PIX_KEY = os.getenv("PIX_KEY", "[CHAVE PIX NÃO CONFIGURADA]")
 
 # Token do Bot
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -124,7 +123,7 @@ MESSAGES = {
         "1. Faça o pagamento via PIX\n"
         "2. Envie o comprovante para confirmação\n"
         "3. Seu acesso será liberado em até 5 minutos\n\n"
-        f"🔑 Chave PIX: {PIX_KEY}\n\n"
+        "🔑 Chave PIX: [A SER CONFIGURADA]\n\n"
         "⚠️ <b>Importante:</b> Após o pagamento, envie uma mensagem com o texto 'COMPROVANTE' junto com a imagem do comprovante."
     ),
     "stats": "📈 <b>Estatísticas do Bot</b>\n\n👥 Usuários ativos este mês: {count}",
@@ -1448,3 +1447,44 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     LOG.info("Iniciando servidor Flask na porta %d", port)
     app.run(host="0.0.0.0", port=port)
+
+
+from telegram.constants import ParseMode
+import mercadopago
+
+async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+
+    reference = create_pix_payment(user_id, 9.90)
+    sdk = mercadopago.SDK(os.getenv("MERCADOPAGO_ACCESS_TOKEN"))
+
+    payment_data = {
+        "transaction_amount": 9.90,
+        "description": "Plano Premium",
+        "payment_method_id": "pix",
+        "payer": {"email": f"user{user_id}@example.com"},
+        "external_reference": reference
+    }
+
+    result = sdk.payment().create(payment_data)
+    response = result["response"]
+
+    if response.get("status") == "pending":
+        qr_code_base64 = response["point_of_interaction"]["transaction_data"]["qr_code_base64"]
+        qr_code_text = response["point_of_interaction"]["transaction_data"]["qr_code"]
+
+        await query.edit_message_text(
+            f"✅ Pedido criado!
+
+<code>{qr_code_text}</code>
+
+🖼️ Escaneie o QR Code abaixo para pagar:",
+            parse_mode=ParseMode.HTML
+        )
+        await context.bot.send_photo(chat_id=query.message.chat_id, photo=f"data:image/png;base64,{qr_code_base64}")
+    else:
+        await query.edit_message_text("❌ Erro ao criar pagamento. Tente novamente mais tarde.")
+
+application.add_handler(CallbackQueryHandler(subscribe_callback, pattern=r"^subscribe:"))
