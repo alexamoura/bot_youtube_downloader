@@ -992,7 +992,7 @@ Se o usuário perguntar sobre downloads, incentive a enviar um link."""
             "<i>Exemplos:</i>\n"
             "• /ai como baixar vídeos?\n"
             "• /ai o que é o plano premium?\n"
-            "• /ai me recomenda vídeos sobre Python",
+            "• /ai me recomende vídeos sobre Música",
             parse_mode="HTML"
         )
     
