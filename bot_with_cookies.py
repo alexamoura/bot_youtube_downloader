@@ -1457,46 +1457,39 @@ async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer()
     user_id = update.effective_user.id
 
-    # Cria referência no banco
-    reference = create_pix_payment(user_id, 9.90)
+    try:
+        reference = create_pix_payment(user_id, 9.90)
+        sdk = mercadopago.SDK(os.getenv("MERCADOPAGO_ACCESS_TOKEN"))
 
-    # Inicializa SDK Mercado Pago
-    sdk = mercadopago.SDK(os.getenv("MERCADOPAGO_ACCESS_TOKEN"))
+        payment_data = {
+            "transaction_amount": 9.90,
+            "description": "Plano Premium",
+            "payment_method_id": "pix",
+            "payer": {"email": f"user{user_id}@example.com"},
+            "external_reference": reference
+        }
 
-    # Dados do pagamento PIX
-    payment_data = {
-        "transaction_amount": 9.90,
-        "description": "Plano Premium",
-        "payment_method_id": "pix",
-        "payer": {"email": f"user{user_id}@example.com"},
-        "external_reference": reference
-    }
+        result = sdk.payment().create(payment_data)
+        response = result.get("response", {})
 
-    # Cria pagamento via API
-    result = sdk.payment().create(payment_data)
-    response = result["response"]
+        if response.get("status") == "pending":
+            qr_code_base64 = response["point_of_interaction"]["transaction_data"]["qr_code_base64"]
+            qr_code_text = response["point_of_interaction"]["transaction_data"]["qr_code"]
 
-    if response.get("status") == "pending":
-        qr_code_base64 = response["point_of_interaction"]["transaction_data"]["qr_code_base64"]
-        qr_code_text = response["point_of_interaction"]["transaction_data"]["qr_code"]
+            await query.edit_message_text(
+                (
+                    f"✅ Pedido criado!\n\n"
+                    f"<code>{qr_code_text}</code>\n\n"
+                    "🖼️ Escaneie o QR Code abaixo para pagar:"
+                ),
+                parse_mode=ParseMode.HTML
+            )
 
-        # Mensagem com código PIX
-        await query.edit_message_text(
-            (
-                f"✅ Pedido criado!\n\n"
-                f"<code>{qr_code_text}</code>\n\n"
-                "🖼️ Escaneie o QR Code abaixo para pagar:"
-            ),
-            parse_mode=ParseMode.HTML
-        )
-
-        # Envia QR Code como imagem
-        await context.bot.send_photo(
-            chat_id=query.message.chat_id,
-            photo=f"data:image/png;base64,{qr_code_base64}"
-        )
-    else:
-        await query.edit_message_text("❌ Erro ao criar pagamento. Tente novamente mais tarde.")
-
-# Registra o handler
-application.add_handler(CallbackQueryHandler(subscribe_callback, pattern=r"^subscribe:"))
+            await context.bot.send_photo(
+                chat_id=query.message.chat_id,
+                photo=f"data:image/png;base64,{qr_code_base64}"
+            )
+        else:
+            await query.edit_message_text("❌ Erro ao criar pagamento. Tente novamente mais tarde.")
+    except Exception as e:
+        await query.edit_message_text(f"❌ Falha interna: {e}")
