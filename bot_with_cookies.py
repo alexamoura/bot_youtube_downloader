@@ -934,7 +934,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Envia mensagem de processamento
     processing_msg = await update.message.reply_text(MESSAGES["processing"])
     
-    # Obtém informações do vídeo
+    # Verifica se é Shopee Video - não conseguimos extrair info com yt-dlp
+    is_shopee_video = 'sv.shopee' in url.lower() or 'share-video' in url.lower()
+    
+    if is_shopee_video:
+        # Para Shopee Video, criamos confirmação simples sem informações detalhadas
+        LOG.info("Detectado Shopee Video - confirmação sem extração prévia")
+        
+        # Cria botões de confirmação
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Confirmar", callback_data=f"dl:{token}"),
+                InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        confirm_text = (
+            "🎬 <b>Confirmar Download</b>\n\n"
+            "🛍️ Vídeo da Shopee\n"
+            "⚠️ Informações disponíveis apenas após download\n\n"
+            "✅ Deseja prosseguir com o download?"
+        )
+        
+        await processing_msg.edit_text(
+            confirm_text,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+        
+        # Armazena informações pendentes
+        PENDING[token] = {
+            "url": url,
+            "user_id": user_id,
+            "chat_id": update.effective_chat.id,
+            "message_id": processing_msg.message_id,
+            "timestamp": time.time(),
+        }
+        
+        # Remove requisições antigas
+        _cleanup_pending()
+        return
+    
+    # Obtém informações do vídeo (para não-Shopee)
     try:
         video_info = await get_video_info(url)
         
