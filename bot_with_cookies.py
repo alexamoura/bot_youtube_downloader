@@ -2,7 +2,7 @@
 """
 bot_with_cookies.py - Versão Melhorada
 
-Telegram bot com suporte a múltiplos cookies
+Telegram bot (webhook) com suporte a múltiplos cookies
 """
 import os
 import sys
@@ -41,7 +41,7 @@ from telegram.ext import (
     filters,
 )
 
-# Configuração do sistema de logging para depuração
+# Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 LOG = logging.getLogger("ytbot")
 
@@ -62,7 +62,7 @@ WATCHDOG_TIMEOUT = 180
 MAX_FILE_SIZE = 50 * 1024 * 1024
 SPLIT_SIZE = 45 * 1024 * 1024
 
-# Estruturas globais para controle de estado e concorrência
+# Estado global
 PENDING = OrderedDict()
 DB_LOCK = threading.Lock()
 
@@ -80,7 +80,7 @@ ERROR_MESSAGES = {
 
 app = Flask(__name__)
 
-# Inicialização da aplicação Telegram via ApplicationBuilder
+# Telegram Application
 try:
     application = ApplicationBuilder().token(TOKEN).build()
     LOG.info("ApplicationBuilder criado com sucesso.")
@@ -88,7 +88,7 @@ except Exception as e:
     LOG.exception("Erro ao construir ApplicationBuilder")
     sys.exit(1)
 
-# Criação do event loop assíncrono em thread dedicada
+# Loop asyncio
 APP_LOOP = asyncio.new_event_loop()
 
 def _start_loop(loop):
@@ -107,7 +107,7 @@ except Exception as e:
     LOG.exception("Falha ao inicializar Application")
     sys.exit(1)
 
-# Funções auxiliares para manipulação do banco de dados SQLite
+# Database
 def init_db():
     with DB_LOCK:
         try:
@@ -158,7 +158,7 @@ def get_monthly_users_count() -> int:
 
 init_db()
 
-# Inicialização dos cookies a partir de variáveis de ambiente codificadas
+# Cookies
 def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
     b64 = os.environ.get(env_var)
     if not b64:
@@ -182,12 +182,12 @@ def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
         LOG.error("Falha ao escrever cookies %s: %s", env_var, e)
         return None
 
-# Carregamento dos cookies por plataforma (YouTube, Shopee, Instagram)
+# Carrega cookies de diferentes plataformas
 COOKIE_YT = prepare_cookies_from_env("YT_COOKIES_B64")
 COOKIE_SHOPEE = prepare_cookies_from_env("SHOPEE_COOKIES_B64")
 COOKIE_IG = prepare_cookies_from_env("IG_COOKIES_B64")
 
-# Funções utilitárias para validação e seleção de cookies
+# Utilities
 def is_valid_url(url: str) -> bool:
     try:
         result = urlparse(url)
@@ -351,7 +351,7 @@ async def _expire_pending(token: str):
         except Exception:
             pass
 
-# Handlers de comandos e mensagens do Telegram
+# Telegram Handlers
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         count = get_monthly_users_count()
@@ -511,7 +511,7 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-# Execução da tarefa de download com controle de progresso
+# Download Task
 async def start_download_task(token: str):
     entry = PENDING.get(token)
     if not entry:
@@ -613,10 +613,10 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         debug_html_path = os.path.join(tmpdir, "shopee_debug.html")
         with open(debug_html_path, 'w', encoding='utf-8') as f:
             f.write(response.text)
-        LOG.info("HTML salvo em: %s", debug_html_path)
+        LOG.info("HTML salvo em: %s (primeiros 2000 chars)", debug_html_path)
+        LOG.info("HTML preview: %s", response.text[:2000])
         
-        # Busca TODAS as URLs de vídeo possíveis
-        all_video_urls = []
+        # Busca URL do vídeo no HTML/JavaScript
         video_url = None
         
         # Padrão 1: Busca em tags <script> com JSON
@@ -649,36 +649,12 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             for match in matches:
                 # Limpa a URL
                 clean_url = match.replace('\\/', '/').replace('\\', '')
-                if 'http' in clean_url and len(clean_url) > 20:
-                    all_video_urls.append(clean_url)
-        
-        # Remove duplicatas
-        all_video_urls = list(set(all_video_urls))
-        LOG.info("Total de URLs encontradas: %d", len(all_video_urls))
-        
-        # PRIORIDADE 1: URLs com .mp4 (SEM marca d'água)
-        mp4_urls = [url for url in all_video_urls if '.mp4' in url.lower()]
-        if mp4_urls:
-            video_url = mp4_urls[0]
-            LOG.info("✅ URL .mp4 encontrada (SEM marca d'água): %s", video_url[:100])
-        
-        # PRIORIDADE 2: URLs com 'video' no nome
-        if not video_url:
-            video_urls = [url for url in all_video_urls if 'video' in url.lower()]
-            if video_urls:
-                video_url = video_urls[0]
-                LOG.info("⚠️ URL com 'video' encontrada (pode ter marca d'água): %s", video_url[:100])
-        
-        # PRIORIDADE 3: Qualquer URL restante
-        if not video_url and all_video_urls:
-            video_url = all_video_urls[0]
-            LOG.info("⚠️ URL genérica encontrada: %s", video_url[:100])
-        
-        # Log de todas URLs encontradas para debug
-        if all_video_urls:
-            LOG.info("Todas URLs encontradas:")
-            for idx, url in enumerate(all_video_urls[:5], 1):  # Mostra até 5
-                LOG.info("  %d. %s", idx, url[:150])
+                if 'http' in clean_url and ('mp4' in clean_url.lower() or 'video' in clean_url.lower()):
+                    video_url = clean_url
+                    LOG.info("URL de vídeo encontrada via regex: %s", video_url[:100])
+                    break
+            if video_url:
+                break
         
         # Padrão 2: Busca em meta tags
         if not video_url:
@@ -767,20 +743,15 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         
         LOG.info("Baixando vídeo da URL: %s", video_url[:100])
         
-        # Verifica se é .mp4 (sem marca d'água)
-        is_mp4 = '.mp4' in video_url.lower()
-        quality_msg = "✨ Sem marca d'água" if is_mp4 else "⚠️ Pode conter marca d'água"
-        
         # Atualiza mensagem
         await application.bot.edit_message_text(
-            text=f"📥 Baixando vídeo da Shopee...\n{quality_msg}",
+            text="📥 Baixando vídeo da Shopee...",
             chat_id=pm["chat_id"],
             message_id=pm["message_id"]
         )
         
         # Baixa o vídeo
-        file_extension = ".mp4" if is_mp4 else ".mp4"  # Sempre salva como .mp4
-        output_path = os.path.join(tmpdir, f"shopee_video{file_extension}")
+        output_path = os.path.join(tmpdir, "shopee_video.mp4")
         
         video_response = await asyncio.to_thread(
             lambda: requests.get(video_url, headers=headers, cookies=cookies_dict, stream=True, timeout=120)
@@ -805,7 +776,7 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
                             bar = "█" * blocks + "─" * (20 - blocks)
                             try:
                                 await application.bot.edit_message_text(
-                                    text=f"🛍️ Baixando: {percent}% [{bar}]\n{quality_msg}",
+                                    text=f"🛍️ Baixando: {percent}% [{bar}]",
                                     chat_id=pm["chat_id"],
                                     message_id=pm["message_id"]
                                 )
@@ -825,12 +796,8 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             message_id=pm["message_id"]
         )
         
-        caption = "🛍️ Shopee Video"
-        if is_mp4:
-            caption += " ✨ (Sem marca d'água)"
-        
         with open(output_path, "rb") as fh:
-            await application.bot.send_video(chat_id=chat_id, video=fh, caption=caption)
+            await application.bot.send_video(chat_id=chat_id, video=fh, caption="🛍️ Shopee Video")
         
         await application.bot.edit_message_text(
             text="✅ Vídeo da Shopee enviado!",
@@ -994,13 +961,13 @@ def _run_ydl(options, urls):
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.download(urls)
 
-# Registro dos handlers na aplicação Telegram
+# Handlers Registration
 application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("stats", stats_cmd))
 application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
-# Rotas HTTP para integração com o Telegram e verificação de status
+# Flask Routes
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     try:
@@ -1048,7 +1015,7 @@ def health():
     status = 200 if checks["bot"] == "ok" and checks["db"] == "ok" else 503
     return checks, status
 
-# Ponto de entrada principal da aplicação
+# Main
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     LOG.info("Iniciando servidor Flask na porta %d", port)
