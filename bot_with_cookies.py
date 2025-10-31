@@ -139,20 +139,19 @@ MESSAGES = {
         "{premium_info}"
     ),
     "premium_info": (
-    "💎 <b>Informações sobre o Plano Premium</b>\n\n"
-    "✨ <b>Benefícios:</b>\n"
-    "• Downloads ilimitados\n"
-    "• Qualidade máxima (até 1080p)\n"
-    "• Processamento prioritário\n"
-    "• Suporte dedicado\n\n"
-    "💰 <b>Valor:</b> R$ 9,90/mês\n\n"
-    "📱 <b>Como contratar:</b>\n"
-    "1. Faça o pagamento via PIX\n"
-    "2. Envie o comprovante para confirmação\n"
-    "3. Seu acesso será liberado em até 5 minutos\n\n"
-    f"🔑 Chave PIX: {PIX_KEY}\n\n"
-    "⚠️ <b>Importante:</b> Após o pagamento, envie uma mensagem com o texto 'COMPROVANTE' junto com a imagem do comprovante."
-)
+        "💎 <b>Informações sobre o Plano Premium</b>\n\n"
+        "✨ <b>Benefícios:</b>\n"
+        "• Downloads ilimitados\n"
+        "• Qualidade máxima (até 1080p)\n"
+        "• Processamento prioritário\n"
+        "• Suporte dedicado\n\n"
+        "💰 <b>Valor:</b> R$ 9,90/mês\n\n"
+        "📱 <b>Como contratar:</b>\n"
+        "1. Faça o pagamento via PIX\n"
+        "2. Envie o comprovante para confirmação\n"
+        "3. Seu acesso será liberado em até 5 minutos\n\n"
+    ) + f"🔑 Chave PIX: {PIX_KEY}\n\n" + (
+        "⚠️ <b>Importante:</b> Após o pagamento, envie uma mensagem com o texto 'COMPROVANTE' junto com a imagem do comprovante."
     ),
     "stats": "📈 <b>Estatísticas do Bot</b>\n\n👥 Usuários ativos este mês: {count}",
     "error_timeout": "⏱️ O tempo de processamento excedeu o limite. Por favor, tente novamente.",
