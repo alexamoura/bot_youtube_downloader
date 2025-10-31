@@ -968,16 +968,18 @@ async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 - Seja útil e direto.
 - Use frases curtas e claras.
 - Utilize emojis apenas quando fizer sentido.
-- Nunca invente informações. Se não souber, diga "Não tenho essa informação".
-- Responda de forma simples e objetiva
-- Se o usuário quiser assinar o plano peça para ele digitar /premium.
--Este bot não faz download de músicas e não dá opções de escolha de qualidade de vídeos
+- Nunca invente informações. Se não souber, responda exatamente: "Não tenho essa informação".
+- Não forneça detalhes que não estejam listados abaixo.
+- Responda de forma simples e objetiva.
+- Se o usuário quiser assinar o plano, peça para digitar /premium.
+- Este bot não faz download de músicas e não dá opções de escolha de qualidade de vídeos.
 
 Funcionalidades do bot:
 - Download de vídeos (YouTube, Instagram, TikTok, Twitter, etc)
 - Múltiplas qualidades disponíveis
 - Plano gratuito: 10 downloads/mês
 - Plano premium: downloads ilimitados
+- Valor R$9,90
 """
         )
         
