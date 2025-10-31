@@ -551,17 +551,87 @@ def get_format_for_url(url: str) -> str:
 def resolve_shopee_universal_link(url: str) -> str:
     """Resolve universal links da Shopee para URL real"""
     try:
-        if 'universal-link' in url and 'redir=' in url:
+        # Detecta se é universal-link
+        if 'universal-link' not in url:
+            return url
+        
+        # Método 1: Extrai do parâmetro redir
+        if 'redir=' in url:
             parsed = urlparse(url)
             params = parse_qs(parsed.query)
             if 'redir' in params:
                 redir = unquote(params['redir'][0])
-                LOG.info("Universal link resolvido: %s -> %s", url[:50], redir[:50])
+                LOG.info("🔗 Universal link resolvido: %s", redir[:80])
                 return redir
+        
+        # Método 2: Tenta seguir redirect HTTP
+        try:
+            import requests
+            response = requests.head(url, allow_redirects=True, timeout=5)
+            if response.url != url:
+                LOG.info("🔗 Redirect HTTP seguido: %s", response.url[:80])
+                return response.url
+        except:
+            pass
+        
+        LOG.warning("⚠️ Não foi possível resolver universal-link")
+        return url
+        
     except Exception as e:
         LOG.error("Erro ao resolver universal link: %s", e)
-    
-    return url
+        return url
+
+
+def extract_shopee_video_direct(url: str) -> dict:
+    """
+    Extrai informações de vídeo da Shopee diretamente da página.
+    Usado quando yt-dlp não suporta o formato.
+    """
+    try:
+        import requests
+        import re
+        import json
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://shopee.com.br/',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        }
+        
+        LOG.info("🛍️ Tentando extração direta da Shopee...")
+        response = requests.get(url, headers=headers, timeout=10)
+        html = response.text
+        
+        # Procura por URLs de vídeo no HTML/JavaScript
+        video_patterns = [
+            r'"video_url"\s*:\s*"([^"]+)"',
+            r'"url"\s*:\s*"(https://[^"]*\.mp4[^"]*)"',
+            r'https://cf\.shopee\.com\.br/file/[a-zA-Z0-9]+',
+            r'https://[^"\']*shopee[^"\']*\.mp4[^"\']*',
+        ]
+        
+        video_url = None
+        for pattern in video_patterns:
+            matches = re.findall(pattern, html)
+            if matches:
+                video_url = matches[0].replace('\\/', '/')
+                LOG.info("✅ URL de vídeo encontrada: %s", video_url[:80])
+                break
+        
+        if video_url:
+            return {
+                'url': video_url,
+                'title': 'Vídeo da Shopee',
+                'ext': 'mp4',
+                'direct': True  # Marca como extração direta
+            }
+        
+        LOG.warning("⚠️ Nenhuma URL de vídeo encontrada na página")
+        return None
+        
+    except Exception as e:
+        LOG.error("Erro na extração direta: %s", e)
+        return None
 
 def format_duration(seconds: int) -> str:
     """Formata duração em segundos para formato legível"""
@@ -1084,14 +1154,17 @@ Comandos:
     # Cria token único para esta requisição
     token = str(uuid.uuid4())
     
-    # Resolve links universais da Shopee
-    if 'shopee' in url.lower() and 'universal-link' in url:
+    # Resolve links universais da Shopee SEMPRE (antes de qualquer coisa)
+    if 'shopee' in url.lower():
+        original_url = url
         url = resolve_shopee_universal_link(url)
+        if url != original_url:
+            LOG.info("✅ URL resolvida com sucesso")
     
     # Envia mensagem de processamento
     processing_msg = await update.message.reply_text(MESSAGES["processing"])
     
-    # Verifica se é Shopee Video - não conseguimos extrair info com yt-dlp
+    # Verifica se é Shopee Video
     is_shopee_video = 'sv.shopee' in url.lower() or 'share-video' in url.lower()
     
     if is_shopee_video:
@@ -1227,7 +1300,16 @@ async def get_video_info(url: str) -> dict:
             info = await asyncio.to_thread(ydl.extract_info, url, download=False)
             return info
     except Exception as e:
-        LOG.error("Erro ao extrair informações: %s", e)
+        LOG.error("Erro ao extrair informações com yt-dlp: %s", e)
+        
+        # Se for Shopee e yt-dlp falhou, tenta extração direta
+        if is_shopee:
+            LOG.info("🛍️ Tentando extração direta da Shopee como fallback...")
+            direct_info = extract_shopee_video_direct(url)
+            if direct_info:
+                LOG.info("✅ Extração direta bem-sucedida!")
+                return direct_info
+        
         return None
 
 # ====================================================================
