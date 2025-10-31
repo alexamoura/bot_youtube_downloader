@@ -954,9 +954,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         LOG.info("Usuário %d atingiu limite de downloads", user_id)
         return
-        )
-        LOG.info("Usuário %d atingiu limite de downloads", user_id)
-        return
+
+    # ... restante da lógica original continua igual ...
     
     # Cria token único para esta requisição
     token = str(uuid.uuid4())
@@ -1261,8 +1260,19 @@ async def callback_buy_premium(update: Update, context: ContextTypes.DEFAULT_TYP
             except Exception as e:
                 LOG.error("Erro ao enviar QR Code como imagem: %s", e)
         
-        # Fallback: envia como texto
-        if not qr_sent:
+        # Se enviou imagem, envia código separado; senão envia tudo junto
+        if qr_sent:
+            # Envia código PIX copia e cola em mensagem separada
+            LOG.info("Enviando código PIX copia e cola em mensagem separada")
+            await query.message.reply_text(
+                "📋 <b>Código PIX Copia e Cola:</b>\n\n"
+                "Caso prefira, copie o código abaixo e cole no seu app de pagamento:\n\n"
+                f"<code>{pix_info['qr_code']}</code>\n\n"
+                "💡 <i>Clique no código acima para copiar automaticamente</i>",
+                parse_mode="HTML"
+            )
+        else:
+            # Fallback: envia tudo como texto
             LOG.info("Enviando QR Code como texto (código copia e cola)")
             await query.message.reply_text(
                 message_text + f"\n\n📋 <b>Código PIX Copia e Cola:</b>\n<code>{pix_info['qr_code']}</code>",
@@ -1736,12 +1746,12 @@ application.add_handler(CommandHandler("status", status_cmd))
 application.add_handler(CommandHandler("premium", premium_cmd))
 application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
 application.add_handler(CallbackQueryHandler(callback_buy_premium, pattern=r"^subscribe:"))
-from telegram.constants import MessageEntityType
+application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
+from telegram.constants import MessageEntityType
 
 mention_or_private_filter = (filters.ChatType.PRIVATE | (filters.TEXT & filters.Entity(MessageEntityType.MENTION)))
 application.add_handler(MessageHandler(mention_or_private_filter, handle_message))
-
 
 # ============================
 # FLASK ROUTES
