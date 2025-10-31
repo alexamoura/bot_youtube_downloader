@@ -58,15 +58,18 @@ DB_FILE = "users.db"
 PENDING_MAX_SIZE = 1000
 PENDING_EXPIRE_SECONDS = 600
 WATCHDOG_TIMEOUT = 180
-MAX_FILE_SIZE = 50 * 1024 * 1024
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB - limite para vídeos curtos
 SPLIT_SIZE = 45 * 1024 * 1024
 
 # Constantes de Controle de Downloads
 FREE_DOWNLOADS_LIMIT = 10
+MAX_CONCURRENT_DOWNLOADS = 3  # Até 3 downloads simultâneos
 
 # Estado Global
 PENDING = OrderedDict()
 DB_LOCK = threading.Lock()
+DOWNLOAD_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)  # Controle de fila
+ACTIVE_DOWNLOADS = {}  # Rastreamento de downloads ativos
 
 # Mensagens Profissionais do Bot
 MESSAGES = {
@@ -74,14 +77,20 @@ MESSAGES = {
         "🎥 <b>Bem-vindo ao Serviço de Downloads</b>\n\n"
         "Envie um link de vídeo de YouTube, Instagram ou Shopee e eu processarei o download para você.\n\n"
         "📊 <b>Planos disponíveis:</b>\n"
-        "• Gratuito: {free_limit} downloads\n"
+        "• Gratuito: {free_limit} downloads/mês\n"
         "• Premium: Downloads ilimitados\n\n"
+        "⚙️ <b>Especificações:</b>\n"
+        "• Vídeos curtos (até 50 MB)\n"
+        "• Qualidade até 720p\n"
+        "• Fila: até 3 downloads simultâneos\n\n"
         "Digite /status para verificar seu saldo de downloads."
     ),
     "url_prompt": "📎 Por favor, envie o link do vídeo que deseja baixar.",
     "processing": "⚙️ Processando sua solicitação...",
     "invalid_url": "⚠️ O link fornecido não é válido. Por favor, verifique e tente novamente.",
-    "confirm_download": "🎬 <b>Confirmar Download</b>\n\n📹 Vídeo: {title}\n⏱️ Duração: {duration}\n\n✅ Deseja prosseguir com o download?",
+    "file_too_large": "⚠️ <b>Arquivo muito grande</b>\n\nEste vídeo excede o limite de 50 MB. Por favor, escolha um vídeo mais curto.",
+    "confirm_download": "🎬 <b>Confirmar Download</b>\n\n📹 Vídeo: {title}\n⏱️ Duração: {duration}\n📦 Tamanho: {filesize}\n\n✅ Deseja prosseguir com o download?",
+    "queue_position": "⏳ Aguardando na fila... Posição: {position}\n\n{active} downloads em andamento.",
     "download_started": "📥 Download iniciado. Aguarde enquanto processamos seu vídeo...",
     "download_progress": "📥 Progresso: {percent}%\n{bar}",
     "download_complete": "✅ Download concluído. Enviando arquivo...",
@@ -120,12 +129,13 @@ MESSAGES = {
     "stats": "📈 <b>Estatísticas do Bot</b>\n\n👥 Usuários ativos este mês: {count}",
     "error_timeout": "⏱️ O tempo de processamento excedeu o limite. Por favor, tente novamente.",
     "error_network": "🌐 Erro de conexão detectado. Verifique sua internet e tente novamente em alguns instantes.",
-    "error_file_large": "📦 O arquivo excede o tamanho máximo permitido para processamento.",
+    "error_file_large": "📦 O arquivo excede o limite de 50 MB. Por favor, escolha um vídeo mais curto.",
     "error_ffmpeg": "🎬 Ocorreu um erro durante o processamento do vídeo.",
     "error_upload": "📤 Falha ao enviar o arquivo. Por favor, tente novamente.",
     "error_unknown": "❌ Um erro inesperado ocorreu. Nossa equipe foi notificada. Por favor, tente novamente.",
     "error_expired": "⏰ Esta solicitação expirou. Por favor, envie o link novamente.",
     "download_cancelled": "🚫 Download cancelado com sucesso.",
+    "cleanup": "🧹 Limpeza: removido {path}",
 }
 
 app = Flask(__name__)
@@ -464,6 +474,25 @@ def get_cookie_for_url(url: str):
     LOG.info("Nenhum cookie disponível")
     return None
 
+def get_format_for_url(url: str) -> str:
+    """Retorna o formato apropriado baseado na plataforma"""
+    url_lower = url.lower()
+    
+    # Instagram: usa formato simples sem especificar height
+    if 'instagram' in url_lower or 'insta' in url_lower:
+        LOG.info("Formato Instagram: best (sem restrições específicas)")
+        return "best"
+    
+    # YouTube: limita a 720p
+    elif 'youtube' in url_lower or 'youtu.be' in url_lower:
+        LOG.info("Formato YouTube: 720p máximo")
+        return "best[height<=720]/best"
+    
+    # Outras plataformas: formato padrão flexível
+    else:
+        LOG.info("Formato padrão: best com fallback")
+        return "best/bestvideo+bestaudio"
+
 def resolve_shopee_universal_link(url: str) -> str:
     """Resolve universal links da Shopee para URL real"""
     try:
@@ -494,6 +523,294 @@ def format_duration(seconds: int) -> str:
         return f"{minutes}m {secs}s"
     else:
         return f"{secs}s"
+
+def format_filesize(bytes_size: int) -> str:
+    """Formata tamanho de arquivo em bytes para formato legível"""
+    if not bytes_size:
+        return "N/A"
+    
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if bytes_size < 1024.0:
+            return f"{bytes_size:.1f} {unit}"
+        bytes_size /= 1024.0
+    
+    return f"{bytes_size:.1f} TB"
+
+async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
+    """Download especial para Shopee Video usando web scraping"""
+    if not REQUESTS_AVAILABLE:
+        await application.bot.edit_message_text(
+            text="⚠️ Extrator Shopee não disponível. Instale: pip install requests beautifulsoup4",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+        return
+    
+    try:
+        # Atualiza mensagem
+        await application.bot.edit_message_text(
+            text="🛍️ Extraindo vídeo da Shopee...",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+        
+        LOG.info("Iniciando extração customizada da Shopee: %s", url)
+        
+        # Faz requisição à página
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://shopee.com.br/",
+        }
+        
+        # Carrega cookies se disponível
+        cookies_dict = {}
+        if COOKIE_SHOPEE:
+            try:
+                with open(COOKIE_SHOPEE, 'r') as f:
+                    for line in f:
+                        if not line.startswith('#') and line.strip():
+                            parts = line.strip().split('\t')
+                            if len(parts) >= 7:
+                                cookies_dict[parts[5]] = parts[6]
+                LOG.info("Cookies da Shopee carregados: %d cookies", len(cookies_dict))
+            except Exception as e:
+                LOG.warning("Erro ao carregar cookies: %s", e)
+        
+        response = await asyncio.to_thread(
+            lambda: requests.get(url, headers=headers, cookies=cookies_dict, timeout=30)
+        )
+        response.raise_for_status()
+        
+        LOG.info("Página da Shopee carregada, analisando...")
+        
+        # Busca URL do vídeo no HTML/JavaScript
+        video_url = None
+        
+        # Padrão 1: Busca em tags <script> com JSON
+        import json
+        patterns = [
+            # Padrões originais
+            r'"videoUrl"\s*:\s*"([^"]+)"',
+            r'"video_url"\s*:\s*"([^"]+)"',
+            r'"playAddr"\s*:\s*"([^"]+)"',
+            r'"url"\s*:\s*"(https://[^"]*\.mp4[^"]*)"',
+            r'playAddr["\']:\s*["\']([^"\']+)',
+            r'"playUrl"\s*:\s*"([^"]+)"',
+            # Novos padrões para Shopee
+            r'"video"\s*:\s*{\s*"url"\s*:\s*"([^"]+)"',
+            r'"stream"\s*:\s*"([^"]+)"',
+            r'"source"\s*:\s*"([^"]+)"',
+            r'videoUrl:\s*["\']([^"\']+)',
+            r'src:\s*["\']([^"\']+\.mp4[^"\']*)',
+            # Padrões para dados em window/global
+            r'window\.__INITIAL_STATE__.*?"video".*?"url"\s*:\s*"([^"]+)"',
+            r'window\.videoData.*?"url"\s*:\s*"([^"]+)"',
+            # Padrões para URLs diretas de CDN
+            r'(https://[^"\s]*shopee[^"\s]*\.mp4[^"\s]*)',
+            r'(https://[^"\s]*vod[^"\s]*\.mp4[^"\s]*)',
+            r'(https://[^"\s]*video[^"\s]*\.mp4[^"\s]*)',
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, response.text)
+            for match in matches:
+                # Limpa a URL
+                clean_url = match.replace('\\/', '/').replace('\\', '')
+                if 'http' in clean_url and ('mp4' in clean_url.lower() or 'video' in clean_url.lower()):
+                    video_url = clean_url
+                    LOG.info("URL de vídeo encontrada via regex: %s", video_url[:100])
+                    break
+            if video_url:
+                break
+        
+        # Padrão 2: Busca em meta tags
+        if not video_url:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Busca em scripts tipo application/json ou application/ld+json
+            scripts = soup.find_all('script', type=['application/json', 'application/ld+json'])
+            for script in scripts:
+                if script.string:
+                    try:
+                        data = json.loads(script.string)
+                        # Busca recursivamente no JSON
+                        def find_video_url_in_dict(obj, depth=0):
+                            if depth > 10:
+                                return None
+                            if isinstance(obj, dict):
+                                for key, value in obj.items():
+                                    if key in ['videoUrl', 'video_url', 'playAddr', 'playUrl', 'url', 'src', 'source']:
+                                        if isinstance(value, str) and ('http' in value or value.endswith('.mp4')):
+                                            return value
+                                    result = find_video_url_in_dict(value, depth + 1)
+                                    if result:
+                                        return result
+                            elif isinstance(obj, list):
+                                for item in obj:
+                                    result = find_video_url_in_dict(item, depth + 1)
+                                    if result:
+                                        return result
+                            return None
+                        
+                        found_url = find_video_url_in_dict(data)
+                        if found_url:
+                            video_url = found_url
+                            LOG.info("URL encontrada em script JSON: %s", video_url[:100])
+                            break
+                    except:
+                        pass
+            
+            # Meta tags
+            if not video_url:
+                meta_tags = [
+                    soup.find('meta', property='og:video'),
+                    soup.find('meta', property='og:video:url'),
+                    soup.find('meta', property='og:video:secure_url'),
+                    soup.find('meta', attrs={'name': 'twitter:player:stream'}),
+                ]
+                
+                for tag in meta_tags:
+                    if tag and tag.get('content'):
+                        video_url = tag.get('content')
+                        LOG.info("URL de vídeo encontrada via meta tag: %s", video_url[:100])
+                        break
+        
+        # Padrão 3: Busca em tags <video> ou <source>
+        if not video_url:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            video_tag = soup.find('video')
+            if video_tag:
+                video_url = video_tag.get('src') or video_tag.get('data-src')
+            
+            if not video_url:
+                source_tags = soup.find_all('source')
+                for source in source_tags:
+                    src = source.get('src') or source.get('data-src')
+                    if src and ('mp4' in src.lower() or 'video' in src.lower()):
+                        video_url = src
+                        break
+        
+        if not video_url:
+            LOG.error("Nenhuma URL de vídeo encontrada na página da Shopee")
+            await application.bot.edit_message_text(
+                text="⚠️ <b>Não consegui encontrar o vídeo</b>\n\n"
+                     "Possíveis causas:\n"
+                     "• O link pode estar incorreto\n"
+                     "• O vídeo pode ter sido removido\n"
+                     "• A Shopee mudou a estrutura do site\n\n"
+                     "Tente baixar pelo app oficial da Shopee.",
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"],
+                parse_mode="HTML"
+            )
+            return
+        
+        # Ajusta URL se necessário
+        if not video_url.startswith('http'):
+            video_url = 'https:' + video_url if video_url.startswith('//') else 'https://sv.shopee.com.br' + video_url
+        
+        LOG.info("Baixando vídeo da URL: %s", video_url[:100])
+        
+        # Atualiza mensagem
+        await application.bot.edit_message_text(
+            text="📥 Baixando vídeo da Shopee...",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+        
+        # Baixa o vídeo
+        output_path = os.path.join(tmpdir, "shopee_video.mp4")
+        
+        video_response = await asyncio.to_thread(
+            lambda: requests.get(video_url, headers=headers, cookies=cookies_dict, stream=True, timeout=120)
+        )
+        video_response.raise_for_status()
+        
+        total_size = int(video_response.headers.get('content-length', 0))
+        
+        # Verifica tamanho antes de baixar
+        if total_size > MAX_FILE_SIZE:
+            LOG.warning("Vídeo da Shopee excede 50 MB: %d bytes", total_size)
+            await application.bot.edit_message_text(
+                text=MESSAGES["file_too_large"],
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"],
+                parse_mode="HTML"
+            )
+            return
+        
+        downloaded = 0
+        last_percent = -1
+        
+        with open(output_path, 'wb') as f:
+            for chunk in video_response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    
+                    if total_size:
+                        percent = int(downloaded * 100 / total_size)
+                        if percent != last_percent and percent % 10 == 0:
+                            last_percent = percent
+                            blocks = int(percent / 5)
+                            bar = "█" * blocks + "░" * (20 - blocks)
+                            try:
+                                await application.bot.edit_message_text(
+                                    text=f"📥 Shopee: {percent}%\n{bar}",
+                                    chat_id=pm["chat_id"],
+                                    message_id=pm["message_id"]
+                                )
+                            except:
+                                pass
+        
+        LOG.info("Vídeo da Shopee baixado com sucesso: %s", output_path)
+        
+        # Verifica se arquivo foi criado
+        if not os.path.exists(output_path) or os.path.getsize(output_path) < 1000:
+            raise Exception("Arquivo baixado está vazio ou corrompido")
+        
+        # Envia o vídeo
+        await application.bot.edit_message_text(
+            text="✅ Download concluído, enviando...",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+        
+        with open(output_path, "rb") as fh:
+            await application.bot.send_video(chat_id=chat_id, video=fh, caption="🛍️ Shopee Video")
+        
+        # Mensagem de sucesso com contador
+        stats = get_user_download_stats(pm["user_id"])
+        success_text = MESSAGES["upload_complete"].format(
+            remaining=stats["remaining"],
+            total=stats["limit"] if not stats["is_premium"] else "∞"
+        )
+        
+        await application.bot.edit_message_text(
+            text=success_text,
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+        
+    except requests.exceptions.RequestException as e:
+        LOG.exception("Erro de rede ao baixar da Shopee: %s", e)
+        await application.bot.edit_message_text(
+            text=MESSAGES["error_network"],
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+    except Exception as e:
+        LOG.exception("Erro no download Shopee customizado: %s", e)
+        await application.bot.edit_message_text(
+            text="⚠️ <b>Erro ao baixar vídeo da Shopee</b>\n\n"
+                 "A Shopee pode ter proteções especiais neste vídeo. "
+                 "Tente baixar pelo app oficial.",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"],
+            parse_mode="HTML"
+        )
 
 def split_video_file(input_path: str, output_dir: str, segment_size: int = SPLIT_SIZE) -> list:
     """Divide arquivo de vídeo em partes menores"""
@@ -627,6 +944,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         title = video_info.get("title", "Vídeo")[:100]
         duration = format_duration(video_info.get("duration", 0))
+        filesize_bytes = video_info.get("filesize") or video_info.get("filesize_approx", 0)
+        filesize = format_filesize(filesize_bytes)
+        
+        # Verifica se o arquivo excede o limite de 50 MB
+        if filesize_bytes and filesize_bytes > MAX_FILE_SIZE:
+            await processing_msg.edit_text(MESSAGES["file_too_large"], parse_mode="HTML")
+            LOG.info("Vídeo rejeitado por exceder 50 MB: %d bytes", filesize_bytes)
+            return
         
         # Cria botões de confirmação
         keyboard = [
@@ -639,7 +964,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         confirm_text = MESSAGES["confirm_download"].format(
             title=title,
-            duration=duration
+            duration=duration,
+            filesize=filesize
         )
         
         await processing_msg.edit_text(
@@ -711,8 +1037,27 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if action == "dl":
-        # Inicia o download
+        # Verifica quantos downloads estão ativos
+        active_count = len(ACTIVE_DOWNLOADS)
+        
+        if active_count >= MAX_CONCURRENT_DOWNLOADS:
+            # Mostra posição na fila
+            queue_position = active_count - MAX_CONCURRENT_DOWNLOADS + 1
+            queue_text = MESSAGES["queue_position"].format(
+                position=queue_position,
+                active=MAX_CONCURRENT_DOWNLOADS
+            )
+            await query.edit_message_text(queue_text)
+        
+        # Remove da lista de pendentes
         del PENDING[token]
+        
+        # Adiciona à lista de downloads ativos
+        ACTIVE_DOWNLOADS[token] = {
+            "user_id": pm["user_id"],
+            "started_at": time.time()
+        }
+        
         await query.edit_message_text(MESSAGES["download_started"])
         
         # Incrementa contador de downloads
@@ -720,37 +1065,74 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Inicia download em background
         asyncio.create_task(_process_download(token, pm))
-        LOG.info("Download iniciado para usuário %d", pm["user_id"])
+        LOG.info("Download iniciado para usuário %d (Token: %s)", pm["user_id"], token)
 
 async def _process_download(token: str, pm: dict):
     """Processa o download em background"""
-    try:
-        tmpdir = tempfile.mkdtemp(prefix=f"dl_{token}_")
-        
+    tmpdir = None
+    
+    # Aguarda na fila (semáforo para controlar 3 downloads simultâneos)
+    async with DOWNLOAD_SEMAPHORE:
         try:
-            await _do_download(token, pm["url"], tmpdir, pm["chat_id"], pm)
-        finally:
-            # Limpa arquivos temporários
+            tmpdir = tempfile.mkdtemp(prefix=f"ytbot_")
+            LOG.info("Diretório temporário criado: %s", tmpdir)
+            
             try:
-                shutil.rmtree(tmpdir, ignore_errors=True)
-            except Exception as e:
-                LOG.error("Erro ao limpar tmpdir: %s", e)
+                await _do_download(token, pm["url"], tmpdir, pm["chat_id"], pm)
+            finally:
+                # Limpa arquivos temporários e envia mensagem de cleanup
+                if tmpdir and os.path.exists(tmpdir):
+                    try:
+                        shutil.rmtree(tmpdir, ignore_errors=True)
+                        cleanup_msg = MESSAGES["cleanup"].format(path=tmpdir)
+                        LOG.info(cleanup_msg)
+                        
+                        # Envia mensagem de cleanup para o usuário
+                        try:
+                            await application.bot.send_message(
+                                chat_id=pm["chat_id"],
+                                text=cleanup_msg
+                            )
+                        except Exception as e:
+                            LOG.debug("Erro ao enviar mensagem de cleanup: %s", e)
+                    except Exception as e:
+                        LOG.error("Erro ao limpar tmpdir: %s", e)
                 
-    except Exception as e:
-        LOG.exception("Erro no processamento de download: %s", e)
-        try:
-            await application.bot.edit_message_text(
-                text=MESSAGES["error_unknown"],
-                chat_id=pm["chat_id"],
-                message_id=pm["message_id"]
-            )
-        except Exception:
-            pass
+                # Remove da lista de downloads ativos
+                if token in ACTIVE_DOWNLOADS:
+                    del ACTIVE_DOWNLOADS[token]
+                    LOG.info("Download removido da lista ativa: %s", token)
+                    
+        except Exception as e:
+            LOG.exception("Erro no processamento de download: %s", e)
+            try:
+                await application.bot.edit_message_text(
+                    text=MESSAGES["error_unknown"],
+                    chat_id=pm["chat_id"],
+                    message_id=pm["message_id"]
+                )
+            except Exception:
+                pass
+            finally:
+                # Remove da lista de downloads ativos em caso de erro
+                if token in ACTIVE_DOWNLOADS:
+                    del ACTIVE_DOWNLOADS[token]
 
 async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict):
     """Executa o download do vídeo"""
     outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
     last_percent = -1
+    
+    # Resolve universal links da Shopee
+    if 'shopee' in url.lower() and 'universal-link' in url:
+        url = resolve_shopee_universal_link(url)
+        LOG.info("Usando URL resolvida para download: %s", url[:100])
+    
+    # Verifica se é Shopee Video - precisa tratamento especial
+    if 'sv.shopee' in url.lower() or 'share-video' in url.lower():
+        LOG.info("Detectado Shopee Video, usando método alternativo")
+        await _download_shopee_video(url, tmpdir, chat_id, pm)
+        return
     
     def progress_hook(d):
         nonlocal last_percent
@@ -759,6 +1141,12 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
             if status == "downloading":
                 downloaded = d.get("downloaded_bytes", 0) or 0
                 total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                
+                # Verifica se o tamanho está excedendo o limite durante download
+                if total and total > MAX_FILE_SIZE:
+                    LOG.warning("Download cancelado: arquivo excede 50 MB (%d bytes)", total)
+                    raise Exception(f"Arquivo muito grande: {total} bytes")
+                
                 if total:
                     percent = int(downloaded * 100 / total)
                     if percent != last_percent and percent % 10 == 0:
@@ -801,7 +1189,7 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         "progress_hooks": [progress_hook],
         "quiet": False,
         "logger": LOG,
-        "format": "bestvideo+bestaudio/best",  # Limite de 720p
+        "format": get_format_for_url(url),  # Formato adaptável por plataforma
         "merge_output_format": "mp4",
         "concurrent_fragment_downloads": 1,
         "force_ipv4": True,
@@ -840,27 +1228,15 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         try:
             tamanho = os.path.getsize(path)
             
+            # Verifica se o arquivo excede 50 MB
             if tamanho > MAX_FILE_SIZE:
-                # Divide arquivo grande
-                partes_dir = os.path.join(tmpdir, "partes")
-                try:
-                    partes = split_video_file(path, partes_dir)
-                    LOG.info("Arquivo dividido em %d partes", len(partes))
-                    
-                    for idx, ppath in enumerate(partes, 1):
-                        with open(ppath, "rb") as fh:
-                            await application.bot.send_video(
-                                chat_id=chat_id, 
-                                video=fh,
-                                caption=f"📦 Parte {idx}/{len(partes)}"
-                            )
-                except Exception as e:
-                    LOG.exception("Erro ao dividir/enviar arquivo: %s", e)
-                    await _notify_error(pm, "error_ffmpeg")
-                    return
-            else:
-                with open(path, "rb") as fh:
-                    await application.bot.send_video(chat_id=chat_id, video=fh)
+                LOG.error("Arquivo muito grande após download: %d bytes", tamanho)
+                await _notify_error(pm, "error_file_large")
+                return
+            
+            # Envia o vídeo
+            with open(path, "rb") as fh:
+                await application.bot.send_video(chat_id=chat_id, video=fh)
                     
         except Exception as e:
             LOG.exception("Erro ao enviar arquivo %s: %s", path, e)
@@ -952,6 +1328,9 @@ def health():
         "bot": "ok",
         "db": "ok",
         "pending_count": len(PENDING),
+        "active_downloads": len(ACTIVE_DOWNLOADS),
+        "max_concurrent": MAX_CONCURRENT_DOWNLOADS,
+        "queue_available": MAX_CONCURRENT_DOWNLOADS - len(ACTIVE_DOWNLOADS),
         "cookies": {
             "youtube": bool(COOKIE_YT),
             "shopee": bool(COOKIE_SHOPEE),
