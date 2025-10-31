@@ -1235,7 +1235,7 @@ async def chat_with_ai(message: str, system_prompt: str = None) -> str:
         
         # Chama API do Groq
         response = groq_client.chat.completions.create(
-            model="llama-3.1-70b-versatile",
+            model="llama-3.1-70b",
             messages=messages,
             temperature=0.7,
             max_tokens=1024
