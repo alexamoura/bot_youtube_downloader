@@ -976,6 +976,7 @@ Funcionalidades:
 - Download de vídeos (YouTube, Instagram, TikTok, Twitter, etc.)
 - Plano gratuito: 10 downloads/mês
 - Plano premium: downloads ilimitados (R$9,90/mês)
+- Se o usuário falar para você baixar algum vídeo, incentive ele a te enviar um link
 """
         )
         
@@ -1036,6 +1037,7 @@ Funcionalidades:
 - Download de vídeos (YouTube, Instagram, TikTok, Twitter, etc.)
 - Plano gratuito: 10 downloads/mês
 - Plano premium: downloads ilimitados (R$9,90/mês)
+- Se o usuário falar para você baixar algum vídeo, incentive ele a te enviar um link
 
 Comandos:
 /start - Iniciar
