@@ -1040,10 +1040,8 @@ Funcionalidades:
 Comandos:
 /start - Iniciar
 /status - Ver estatísticas
-/premium - Plano premium  
-/ai - Chat com IA
-
-Se perguntarem como baixar, explique que basta enviar o link do vídeo."""
+/premium - Plano premium 
+"""
                 )
                 
                 if response:
