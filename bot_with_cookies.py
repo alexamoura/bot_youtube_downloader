@@ -1457,9 +1457,13 @@ async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer()
     user_id = update.effective_user.id
 
+    # Cria referência no banco
     reference = create_pix_payment(user_id, 9.90)
+
+    # Inicializa SDK Mercado Pago
     sdk = mercadopago.SDK(os.getenv("MERCADOPAGO_ACCESS_TOKEN"))
 
+    # Dados do pagamento PIX
     payment_data = {
         "transaction_amount": 9.90,
         "description": "Plano Premium",
@@ -1468,6 +1472,7 @@ async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "external_reference": reference
     }
 
+    # Cria pagamento via API
     result = sdk.payment().create(payment_data)
     response = result["response"]
 
@@ -1475,16 +1480,23 @@ async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         qr_code_base64 = response["point_of_interaction"]["transaction_data"]["qr_code_base64"]
         qr_code_text = response["point_of_interaction"]["transaction_data"]["qr_code"]
 
+        # Mensagem com código PIX
         await query.edit_message_text(
-            f"✅ Pedido criado!
-
-<code>{qr_code_text}</code>
-
-🖼️ Escaneie o QR Code abaixo para pagar:",
+            (
+                f"✅ Pedido criado!\n\n"
+                f"<code>{qr_code_text}</code>\n\n"
+                "🖼️ Escaneie o QR Code abaixo para pagar:"
+            ),
             parse_mode=ParseMode.HTML
         )
-        await context.bot.send_photo(chat_id=query.message.chat_id, photo=f"data:image/png;base64,{qr_code_base64}")
+
+        # Envia QR Code como imagem
+        await context.bot.send_photo(
+            chat_id=query.message.chat_id,
+            photo=f"data:image/png;base64,{qr_code_base64}"
+        )
     else:
         await query.edit_message_text("❌ Erro ao criar pagamento. Tente novamente mais tarde.")
 
+# Registra o handler
 application.add_handler(CallbackQueryHandler(subscribe_callback, pattern=r"^subscribe:"))
