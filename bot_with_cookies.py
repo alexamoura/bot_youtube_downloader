@@ -528,8 +528,13 @@ def get_format_for_url(url: str) -> str:
     """Retorna o formato apropriado baseado na plataforma"""
     url_lower = url.lower()
     
+    # Shopee: formato específico para vídeos
+    if 'shopee' in url_lower or 'shope.ee' in url_lower:
+        LOG.info("🛍️ Formato Shopee: best video+audio ou best")
+        return "best[ext=mp4]/best"
+    
     # Instagram: usa formato simples sem especificar height
-    if 'instagram' in url_lower or 'insta' in url_lower:
+    elif 'instagram' in url_lower or 'insta' in url_lower:
         LOG.info("Formato Instagram: best (sem restrições específicas)")
         return "best"
     
@@ -1188,11 +1193,31 @@ async def get_video_info(url: str) -> dict:
     """Obtém informações básicas do vídeo sem fazer download"""
     cookie_file = get_cookie_for_url(url)
     
+    # Configuração especial para Shopee
+    is_shopee = 'shopee' in url.lower() or 'shope.ee' in url.lower()
+    
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "extract_flat": False,
+        "no_check_certificate": True,
+        "prefer_insecure": True,
     }
+    
+    if is_shopee:
+        # Configurações específicas para Shopee
+        ydl_opts.update({
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+                "Referer": "https://shopee.com.br/",
+                "Origin": "https://shopee.com.br",
+            },
+            "socket_timeout": 30,
+            "retries": 3,
+        })
+        LOG.info("🛍️ Configurações especiais para Shopee aplicadas")
     
     if cookie_file:
         ydl_opts["cookiefile"] = cookie_file
@@ -1883,12 +1908,14 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
             LOG.error("Erro no progress_hook: %s", e)
 
     # Configurações do yt-dlp
+    is_shopee = 'shopee' in url.lower() or 'shope.ee' in url.lower()
+    
     ydl_opts = {
         "outtmpl": outtmpl,
         "progress_hooks": [progress_hook],
         "quiet": False,
         "logger": LOG,
-        "format": get_format_for_url(url),  # Formato adaptável por plataforma
+        "format": get_format_for_url(url),
         "merge_output_format": "mp4",
         "concurrent_fragment_downloads": 1,
         "force_ipv4": True,
@@ -1896,7 +1923,34 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         "http_chunk_size": 1048576,
         "retries": 20,
         "fragment_retries": 20,
+        "no_check_certificate": True,
+        "prefer_insecure": True,
     }
+    
+    # Configurações específicas para Shopee
+    if is_shopee:
+        LOG.info("🛍️ Aplicando configurações otimizadas para Shopee")
+        ydl_opts.update({
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "*/*",
+                "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Referer": "https://shopee.com.br/",
+                "Origin": "https://shopee.com.br",
+                "Sec-Fetch-Dest": "video",
+                "Sec-Fetch-Mode": "no-cors",
+                "Sec-Fetch-Site": "cross-site",
+            },
+            "extractor_args": {
+                "shopee": {
+                    "api_ver": "v4"
+                }
+            },
+            # Força download direto sem fragmentação
+            "noprogress": False,
+            "keep_fragments": False,
+        })
     
     # Adiciona cookies apropriados
     cookie_file = get_cookie_for_url(url)
