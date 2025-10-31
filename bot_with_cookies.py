@@ -780,6 +780,27 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         
         total_size = int(video_response.headers.get('content-length', 0))
         
+from watermark_simple import remove_watermark_simple
+# Caminho do vídeo tratado
+clean_path = os.path.join(tmpdir, "shopee_video_clean.mp4")
+
+# Salva o vídeo original
+with open(output_path, 'wb') as f:
+    for chunk in video_response.iter_content(chunk_size=8192):
+        if chunk:
+            f.write(chunk)
+
+# Aplica a remoção da marca d'água
+try:
+    remove_watermark_simple(output_path, clean_path)
+    final_path = clean_path
+except Exception as e:
+    LOG.error(f"Erro ao remover marca d'água: {e}")
+    final_path = output_path  # fallback para o vídeo original
+
+# Envie final_path para o usuário
+with open(final_path, "rb") as fh:
+    await application.bot.send_video(chat_id=chat_id, video=fh, caption="🎬 Shopee Video (limpo)")
         # Verifica tamanho antes de baixar
         if total_size > MAX_FILE_SIZE:
             LOG.warning("Vídeo da Shopee excede 50 MB: %d bytes", total_size)
