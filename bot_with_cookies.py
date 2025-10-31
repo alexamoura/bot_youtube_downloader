@@ -43,6 +43,7 @@ from telegram.ext import (
 # Configuração de Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 LOG = logging.getLogger("ytbot")
+PIX_KEY = os.getenv("PIX_KEY", "[CHAVE PIX NÃO CONFIGURADA]")
 
 # Token do Bot
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -54,33 +55,6 @@ LOG.info("TELEGRAM_BOT_TOKEN presente (len=%d).", len(TOKEN))
 
 # Constantes do Sistema
 URL_RE = re.compile(r"(https?://[^\s]+)")
-
-# ============================
-# CONFIGURAÇÃO DE DISCO PERSISTENTE (Render Disk)
-# ============================
-DISK_PATH = os.getenv("DISK_PATH", "/var/data")
-
-if not os.path.exists(DISK_PATH):
-    LOG.warning(f"Disco persistente não encontrado em {DISK_PATH}. Usando /tmp como fallback.")
-    DISK_PATH = "/tmp"
-
-try:
-    os.makedirs(DISK_PATH, exist_ok=True)
-    LOG.info(f"Disco ativo em: {DISK_PATH}")
-except Exception as e:
-    LOG.error(f"Erro ao criar diretório do disco: {e}")
-    DISK_PATH = "/tmp"
-
-DB_FILE = os.path.join(DISK_PATH, "users.db")
-LOG.info(f"Banco de dados será armazenado em: {DB_FILE}")
-
-TMP_DOWNLOAD_DIR = os.path.join(DISK_PATH, "tmp")
-os.makedirs(TMP_DOWNLOAD_DIR, exist_ok=True)
-LOG.info(f"Diretório para downloads temporários: {TMP_DOWNLOAD_DIR}")
-
-def create_temp_download_dir():
-    return tempfile.mkdtemp(prefix="ytbot_", dir=TMP_DOWNLOAD_DIR)
-
 DB_FILE = "users.db"
 PENDING_MAX_SIZE = 1000
 PENDING_EXPIRE_SECONDS = 600
@@ -150,7 +124,7 @@ MESSAGES = {
         "1. Faça o pagamento via PIX\n"
         "2. Envie o comprovante para confirmação\n"
         "3. Seu acesso será liberado em até 5 minutos\n\n"
-    ) + f"🔑 Chave PIX: {PIX_KEY}\n\n" + (
+        f"🔑 Chave PIX: {PIX_KEY}\n\n"
         "⚠️ <b>Importante:</b> Após o pagamento, envie uma mensagem com o texto 'COMPROVANTE' junto com a imagem do comprovante."
     ),
     "stats": "📈 <b>Estatísticas do Bot</b>\n\n👥 Usuários ativos este mês: {count}",
@@ -1360,36 +1334,14 @@ def _cleanup_pending():
         PENDING.popitem(last=False)
 
 # ============================
-# HANDLER PARA SUBSCRIBE
-# ============================
-async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = update.effective_user.id
-
-    # Cria pagamento PIX usando Mercado Pago
-    reference = create_pix_payment(user_id, 9.90)
-    if reference:
-        text = (
-            "✅ Pedido criado!\n\n"
-            f"Use a chave PIX abaixo para pagar:\n\n🔑 {PIX_KEY}\n"
-            f"📎 Referência: {reference}\n\n"
-            "Após o pagamento, envie o comprovante com a palavra 'COMPROVANTE'."
-        )
-    else:
-        text = "❌ Erro ao criar pagamento. Tente novamente mais tarde."
-
-    await query.edit_message_text(text)
-
-# ============================
 # REGISTRO DE HANDLERS
 # ============================
+
 application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("stats", stats_cmd))
 application.add_handler(CommandHandler("status", status_cmd))
 application.add_handler(CommandHandler("premium", premium_cmd))
-application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
-application.add_handler(CallbackQueryHandler(subscribe_callback, pattern=r"^subscribe:"))
+application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:|subscribe:)"))
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
 # ============================
