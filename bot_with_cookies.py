@@ -801,7 +801,7 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         "progress_hooks": [progress_hook],
         "quiet": False,
         "logger": LOG,
-        "format": "best[height<=720]+bestaudio/best[height<=720]",  # Limite de 720p
+        "format": "bestvideo+bestaudio/best",  # Limite de 720p
         "merge_output_format": "mp4",
         "concurrent_fragment_downloads": 1,
         "force_ipv4": True,
