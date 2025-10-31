@@ -964,16 +964,21 @@ async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         response = await chat_with_ai(
             user_message,
-            system_prompt="""Você é um assistente amigável de um bot de downloads do Telegram.
-Seja útil, conciso e use emojis quando apropriado.
+            system_prompt="""Você é um assistente amigável para um bot de downloads do Telegram.
+- Seja útil e direto.
+- Use frases curtas e claras.
+- Utilize emojis apenas quando fizer sentido.
+- Nunca invente informações. Se não souber, diga "Não tenho essa informação".
+- Responda de forma simples e objetiva
+- Se o usuário quiser assinar o plano peça para ele digitar /premium.
+-Este bot não faz download de músicas e não dá opções de escolha de qualidade de vídeos
 
 Funcionalidades do bot:
 - Download de vídeos (YouTube, Instagram, TikTok, Twitter, etc)
 - Múltiplas qualidades disponíveis
 - Plano gratuito: 10 downloads/mês
 - Plano premium: downloads ilimitados
-
-Se o usuário perguntar sobre downloads, incentive a enviar um link."""
+"""
         )
         
         if response:
