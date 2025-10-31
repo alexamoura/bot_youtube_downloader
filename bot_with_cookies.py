@@ -923,14 +923,13 @@ async def premium_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     LOG.info("Comando /premium executado por usuário %d", user_id)
 
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para mensagens de texto (URLs)"""
     text = update.message.text.strip()
 
-    # ✅ Só responde se mencionado explicitamente
-    if f"@{context.bot.username}" not in text:
-        return  # Ignora mensagens que não mencionam o bot
+    # ✅ Em grupos, só responde se mencionado; em privado, responde sempre
+    if update.effective_chat.type != "private" and f"@{context.bot.username}" not in text:
+        return
 
     user_id = update.effective_user.id
     update_user(user_id)
@@ -952,6 +951,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             MESSAGES["limit_reached"].format(limit=FREE_DOWNLOADS_LIMIT),
             parse_mode="HTML"
+        )
+        LOG.info("Usuário %d atingiu limite de downloads", user_id)
+        return
         )
         LOG.info("Usuário %d atingiu limite de downloads", user_id)
         return
@@ -1736,8 +1738,10 @@ application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|c
 application.add_handler(CallbackQueryHandler(callback_buy_premium, pattern=r"^subscribe:"))
 from telegram.constants import MessageEntityType
 
-mention_filter = filters.TEXT & filters.Entity(MessageEntityType.MENTION)
-application.add_handler(MessageHandler(mention_filter, handle_message))
+
+mention_or_private_filter = (filters.ChatType.PRIVATE | (filters.TEXT & filters.Entity(MessageEntityType.MENTION)))
+application.add_handler(MessageHandler(mention_or_private_filter, handle_message))
+
 
 # ============================
 # FLASK ROUTES
