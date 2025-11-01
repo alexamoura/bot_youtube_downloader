@@ -279,6 +279,98 @@ class ShopeeVideoExtractor:
 SHOPEE_EXTRACTOR = ShopeeVideoExtractor()
 
 
+# ============================================================
+# WATERMARK REMOVER - Remove marca d'água após download
+# ============================================================
+
+class WatermarkRemover:
+    """Remove marca d'água de vídeos da Shopee usando FFmpeg"""
+    
+    # Posições da marca d'água da Shopee (testar qual funciona)
+    POSITIONS = {
+        'bottom_right': 'iw-210:ih-60:200:50',  # Canto inferior direito (mais comum)
+        'top_right': 'iw-210:10:200:50',
+        'bottom_left': '10:ih-60:200:50',
+        'top_left': '10:10:200:50',
+    }
+    
+    @staticmethod
+    def is_available() -> bool:
+        """Verifica se FFmpeg está disponível"""
+        try:
+            subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+            return True
+        except:
+            return False
+    
+    @staticmethod
+    def remove(video_path: str, position: str = 'bottom_right') -> str:
+        """
+        Remove marca d'água do vídeo
+        
+        Args:
+            video_path: Caminho do vídeo
+            position: Posição da marca (padrão: bottom_right)
+        
+        Returns:
+            Caminho do vídeo limpo ou original se falhar
+        """
+        if not WatermarkRemover.is_available():
+            LOG.warning("⚠️ FFmpeg não disponível - vídeo mantém marca")
+            return video_path
+        
+        if position not in WatermarkRemover.POSITIONS:
+            position = 'bottom_right'
+        
+        try:
+            LOG.info(f"🎬 Removendo marca d'água (posição: {position})...")
+            
+            # Cria arquivo temporário
+            base, ext = os.path.splitext(video_path)
+            temp_path = f"{base}_temp{ext}"
+            
+            # Comando FFmpeg
+            coords = WatermarkRemover.POSITIONS[position]
+            cmd = [
+                'ffmpeg',
+                '-i', video_path,
+                '-vf', f'delogo=x={coords}:show=0',
+                '-c:a', 'copy',
+                '-y',
+                temp_path
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60  # 60 segundos max
+            )
+            
+            if result.returncode == 0 and os.path.exists(temp_path):
+                # Substitui original
+                os.remove(video_path)
+                os.rename(temp_path, video_path)
+                LOG.info("✅ Marca d'água removida com sucesso!")
+                return video_path
+            else:
+                LOG.error(f"❌ FFmpeg falhou: {result.stderr[:200]}")
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                return video_path
+                
+        except subprocess.TimeoutExpired:
+            LOG.error("❌ Timeout ao remover marca")
+            return video_path
+        except Exception as e:
+            LOG.error(f"❌ Erro ao remover marca: {e}")
+            return video_path
+
+
+# Instância global do removedor
+WATERMARK_REMOVER = WatermarkRemover()
+
+
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -2387,9 +2479,45 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
                 await _notify_error(pm, "error_file_large")
                 return
             
+            # 🎬 REMOVE MARCA D'ÁGUA SE FOR SHOPEE
+            if 'shopee' in pm["url"].lower():
+                LOG.info("🛍️ Vídeo da Shopee detectado - removendo marca d'água...")
+                
+                try:
+                    # Atualiza mensagem
+                    await application.bot.edit_message_text(
+                        text="✨ Removendo marca d'água...",
+                        chat_id=pm["chat_id"],
+                        message_id=pm["message_id"]
+                    )
+                except:
+                    pass
+                
+                # Remove marca d'água
+                path = WATERMARK_REMOVER.remove(path, position='bottom_right')
+                
+                # Se falhar, tenta outras posições
+                if os.path.exists(path) and 'temp' not in path:
+                    # Verificar se ainda tem marca (simplificado - apenas tenta outra posição)
+                    LOG.info("   Tentando posições alternativas...")
+                    for pos in ['top_right', 'bottom_left', 'top_left']:
+                        try:
+                            path = WATERMARK_REMOVER.remove(path, position=pos)
+                            break
+                        except:
+                            continue
+            
             # Envia o vídeo
             with open(path, "rb") as fh:
-                await application.bot.send_video(chat_id=chat_id, video=fh)
+                caption = "🛍️ Shopee Video" if 'shopee' in pm["url"].lower() else None
+                if caption and WATERMARK_REMOVER.is_available():
+                    caption += "\n✨ Marca d'água removida"
+                
+                await application.bot.send_video(
+                    chat_id=chat_id,
+                    video=fh,
+                    caption=caption
+                )
                     
         except Exception as e:
             LOG.exception("Erro ao enviar arquivo %s: %s", path, e)
