@@ -411,7 +411,7 @@ SPLIT_SIZE = 45 * 1024 * 1024
 
 # Constantes de Controle de Downloads
 FREE_DOWNLOADS_LIMIT = 10
-MAX_CONCURRENT_DOWNLOADS = 3  # Até 3 downloads simultâneos
+MAX_CONCURRENT_DOWNLOADS = 2  # Até 3 downloads simultâneos
 
 # Configuração do Mercado Pago
 MERCADOPAGO_ACCESS_TOKEN = os.getenv("MERCADOPAGO_ACCESS_TOKEN")
