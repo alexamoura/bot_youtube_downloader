@@ -49,6 +49,85 @@ try:
 except ImportError:
     GROQ_AVAILABLE = False
 
+# ============================================================
+# SHOPEE VIDEO EXTRACTOR - SEM MARCA D'ÁGUA
+# ============================================================
+
+class ShopeeVideoExtractor:
+    """Extrator de vídeos da Shopee sem marca d'água usando API interna"""
+    
+    def __init__(self):
+        self.session = requests.Session() if REQUESTS_AVAILABLE else None
+        if self.session:
+            self.session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json',
+                'Referer': 'https://shopee.com.br/',
+            })
+    
+    def extract_ids(self, url: str):
+        """Extrai shop_id e item_id da URL"""
+        patterns = [
+            r'/product/(\d+)/(\d+)',
+            r'-i\.(\d+)\.(\d+)',
+            r'\.i\.(\d+)\.(\d+)',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                return (match.group(1), match.group(2))
+        return None
+    
+    def get_video(self, url: str):
+        """Extrai vídeo da Shopee sem marca d'água via API"""
+        if not REQUESTS_AVAILABLE or not self.session:
+            return None
+        
+        try:
+            ids = self.extract_ids(url)
+            if not ids:
+                return None
+            
+            shop_id, item_id = ids
+            
+            api_url = "https://shopee.com.br/api/v4/item/get"
+            params = {'itemid': item_id, 'shopid': shop_id}
+            
+            response = self.session.get(api_url, params=params, timeout=10)
+            data = response.json()
+            
+            if 'data' not in data:
+                return None
+            
+            item = data['data']
+            
+            # Tenta extrair vídeo
+            if 'video_info_list' in item and item['video_info_list']:
+                video = item['video_info_list'][0]
+                if 'default_format' in video:
+                    return {
+                        'url': video['default_format'].get('url'),
+                        'title': item.get('name', 'Vídeo da Shopee'),
+                        'uploader': item.get('shop_name', 'Desconhecido'),
+                    }
+            
+            if 'video' in item and item['video']:
+                return {
+                    'url': item['video'].get('url'),
+                    'title': item.get('name', 'Vídeo da Shopee'),
+                    'uploader': item.get('shop_name', 'Desconhecido'),
+                }
+            
+            return None
+            
+        except Exception as e:
+            LOG.error("Erro no ShopeeVideoExtractor: %s", e)
+            return None
+
+# Instância global
+SHOPEE_EXTRACTOR = ShopeeVideoExtractor()
+
+
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -528,8 +607,13 @@ def get_format_for_url(url: str) -> str:
     """Retorna o formato apropriado baseado na plataforma"""
     url_lower = url.lower()
     
+    # Shopee: formato específico para vídeos
+    if 'shopee' in url_lower or 'shope.ee' in url_lower:
+        LOG.info("🛍️ Formato Shopee: best video+audio ou best")
+        return "best[ext=mp4]/best"
+    
     # Instagram: usa formato simples sem especificar height
-    if 'instagram' in url_lower or 'insta' in url_lower:
+    elif 'instagram' in url_lower or 'insta' in url_lower:
         LOG.info("Formato Instagram: best (sem restrições específicas)")
         return "best"
     
@@ -546,17 +630,87 @@ def get_format_for_url(url: str) -> str:
 def resolve_shopee_universal_link(url: str) -> str:
     """Resolve universal links da Shopee para URL real"""
     try:
-        if 'universal-link' in url and 'redir=' in url:
+        # Detecta se é universal-link
+        if 'universal-link' not in url:
+            return url
+        
+        # Método 1: Extrai do parâmetro redir
+        if 'redir=' in url:
             parsed = urlparse(url)
             params = parse_qs(parsed.query)
             if 'redir' in params:
                 redir = unquote(params['redir'][0])
-                LOG.info("Universal link resolvido: %s -> %s", url[:50], redir[:50])
+                LOG.info("🔗 Universal link resolvido: %s", redir[:80])
                 return redir
+        
+        # Método 2: Tenta seguir redirect HTTP
+        try:
+            import requests
+            response = requests.head(url, allow_redirects=True, timeout=5)
+            if response.url != url:
+                LOG.info("🔗 Redirect HTTP seguido: %s", response.url[:80])
+                return response.url
+        except:
+            pass
+        
+        LOG.warning("⚠️ Não foi possível resolver universal-link")
+        return url
+        
     except Exception as e:
         LOG.error("Erro ao resolver universal link: %s", e)
-    
-    return url
+        return url
+
+
+def extract_shopee_video_direct(url: str) -> dict:
+    """
+    Extrai informações de vídeo da Shopee diretamente da página.
+    Usado quando yt-dlp não suporta o formato.
+    """
+    try:
+        import requests
+        import re
+        import json
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://shopee.com.br/',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        }
+        
+        LOG.info("🛍️ Tentando extração direta da Shopee...")
+        response = requests.get(url, headers=headers, timeout=10)
+        html = response.text
+        
+        # Procura por URLs de vídeo no HTML/JavaScript
+        video_patterns = [
+            r'"video_url"\s*:\s*"([^"]+)"',
+            r'"url"\s*:\s*"(https://[^"]*\.mp4[^"]*)"',
+            r'https://cf\.shopee\.com\.br/file/[a-zA-Z0-9]+',
+            r'https://[^"\']*shopee[^"\']*\.mp4[^"\']*',
+        ]
+        
+        video_url = None
+        for pattern in video_patterns:
+            matches = re.findall(pattern, html)
+            if matches:
+                video_url = matches[0].replace('\\/', '/')
+                LOG.info("✅ URL de vídeo encontrada: %s", video_url[:80])
+                break
+        
+        if video_url:
+            return {
+                'url': video_url,
+                'title': 'Vídeo da Shopee',
+                'ext': 'mp4',
+                'direct': True  # Marca como extração direta
+            }
+        
+        LOG.warning("⚠️ Nenhuma URL de vídeo encontrada na página")
+        return None
+        
+    except Exception as e:
+        LOG.error("Erro na extração direta: %s", e)
+        return None
 
 def format_duration(seconds: int) -> str:
     """Formata duração em segundos para formato legível"""
@@ -1079,14 +1233,17 @@ Comandos:
     # Cria token único para esta requisição
     token = str(uuid.uuid4())
     
-    # Resolve links universais da Shopee
-    if 'shopee' in url.lower() and 'universal-link' in url:
+    # Resolve links universais da Shopee SEMPRE (antes de qualquer coisa)
+    if 'shopee' in url.lower():
+        original_url = url
         url = resolve_shopee_universal_link(url)
+        if url != original_url:
+            LOG.info("✅ URL resolvida com sucesso")
     
     # Envia mensagem de processamento
     processing_msg = await update.message.reply_text(MESSAGES["processing"])
     
-    # Verifica se é Shopee Video - não conseguimos extrair info com yt-dlp
+    # Verifica se é Shopee Video
     is_shopee_video = 'sv.shopee' in url.lower() or 'share-video' in url.lower()
     
     if is_shopee_video:
@@ -1188,11 +1345,48 @@ async def get_video_info(url: str) -> dict:
     """Obtém informações básicas do vídeo sem fazer download"""
     cookie_file = get_cookie_for_url(url)
     
+    # Configuração especial para Shopee
+    is_shopee = 'shopee' in url.lower() or 'shope.ee' in url.lower()
+    
+    # 🎯 NOVO: Se for Shopee, tenta API primeiro (SEM marca d'água!)
+    if is_shopee:
+        LOG.info("🛍️ Detectado Shopee - tentando API interna (sem marca d'água)...")
+        shopee_video = await asyncio.to_thread(SHOPEE_EXTRACTOR.get_video, url)
+        
+        if shopee_video and shopee_video.get('url'):
+            LOG.info("✅ Vídeo extraído da API Shopee SEM marca d'água!")
+            return {
+                'url': shopee_video['url'],
+                'title': shopee_video.get('title', 'Vídeo da Shopee'),
+                'uploader': shopee_video.get('uploader', 'Desconhecido'),
+                'ext': 'mp4',
+                'from_shopee_api': True,  # Marca que veio da API
+            }
+        else:
+            LOG.warning("⚠️ API Shopee falhou, tentando yt-dlp...")
+    
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "extract_flat": False,
+        "no_check_certificate": True,
+        "prefer_insecure": True,
     }
+    
+    if is_shopee:
+        # Configurações específicas para Shopee
+        ydl_opts.update({
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+                "Referer": "https://shopee.com.br/",
+                "Origin": "https://shopee.com.br",
+            },
+            "socket_timeout": 30,
+            "retries": 3,
+        })
+        LOG.info("🛍️ Configurações especiais para Shopee aplicadas")
     
     if cookie_file:
         ydl_opts["cookiefile"] = cookie_file
@@ -1202,7 +1396,16 @@ async def get_video_info(url: str) -> dict:
             info = await asyncio.to_thread(ydl.extract_info, url, download=False)
             return info
     except Exception as e:
-        LOG.error("Erro ao extrair informações: %s", e)
+        LOG.error("Erro ao extrair informações com yt-dlp: %s", e)
+        
+        # Se for Shopee e yt-dlp falhou, tenta extração direta
+        if is_shopee:
+            LOG.info("🛍️ Tentando extração direta da Shopee como fallback...")
+            direct_info = extract_shopee_video_direct(url)
+            if direct_info:
+                LOG.info("✅ Extração direta bem-sucedida!")
+                return direct_info
+        
         return None
 
 # ====================================================================
@@ -1883,12 +2086,14 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
             LOG.error("Erro no progress_hook: %s", e)
 
     # Configurações do yt-dlp
+    is_shopee = 'shopee' in url.lower() or 'shope.ee' in url.lower()
+    
     ydl_opts = {
         "outtmpl": outtmpl,
         "progress_hooks": [progress_hook],
         "quiet": False,
         "logger": LOG,
-        "format": get_format_for_url(url),  # Formato adaptável por plataforma
+        "format": get_format_for_url(url),
         "merge_output_format": "mp4",
         "concurrent_fragment_downloads": 1,
         "force_ipv4": True,
@@ -1896,7 +2101,34 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         "http_chunk_size": 1048576,
         "retries": 20,
         "fragment_retries": 20,
+        "no_check_certificate": True,
+        "prefer_insecure": True,
     }
+    
+    # Configurações específicas para Shopee
+    if is_shopee:
+        LOG.info("🛍️ Aplicando configurações otimizadas para Shopee")
+        ydl_opts.update({
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "*/*",
+                "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Referer": "https://shopee.com.br/",
+                "Origin": "https://shopee.com.br",
+                "Sec-Fetch-Dest": "video",
+                "Sec-Fetch-Mode": "no-cors",
+                "Sec-Fetch-Site": "cross-site",
+            },
+            "extractor_args": {
+                "shopee": {
+                    "api_ver": "v4"
+                }
+            },
+            # Força download direto sem fragmentação
+            "noprogress": False,
+            "keep_fragments": False,
+        })
     
     # Adiciona cookies apropriados
     cookie_file = get_cookie_for_url(url)
