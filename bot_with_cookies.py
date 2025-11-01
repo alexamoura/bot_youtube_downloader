@@ -43,18 +43,6 @@ try:
 except ImportError:
     MERCADOPAGO_AVAILABLE = False
 
-try:
-    from groq import Groq
-    GROQ_AVAILABLE = True
-except ImportError:
-    GROQ_AVAILABLE = False
-
-try:
-    import cv2
-    OPENCV_AVAILABLE = True
-except ImportError:
-    OPENCV_AVAILABLE = False
-
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -104,23 +92,6 @@ else:
     if not MERCADOPAGO_ACCESS_TOKEN:
         LOG.warning("⚠️ MERCADOPAGO_ACCESS_TOKEN não configurado")
 
-# Configuração do Groq (IA)
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-groq_client = None
-
-if GROQ_AVAILABLE and GROQ_API_KEY:
-    try:
-        groq_client = Groq(api_key=GROQ_API_KEY)
-        LOG.info("✅ Groq AI configurado - Inteligência artificial ativa!")
-    except Exception as e:
-        LOG.error("❌ Erro ao inicializar Groq: %s", e)
-        groq_client = None
-else:
-    if not GROQ_AVAILABLE:
-        LOG.warning("⚠️ groq não instalado - pip install groq")
-    if not GROQ_API_KEY:
-        LOG.warning("⚠️ GROQ_API_KEY não configurado - IA desativada")
-
 # Estado Global
 PENDING = OrderedDict()
 DB_LOCK = threading.Lock()
@@ -139,7 +110,7 @@ MESSAGES = {
         "• Vídeos curtos (até 50 MB)\n"
         "• Qualidade até 720p\n"
         "• Fila: até 3 downloads simultâneos\n\n"
-        "Digite /status para verificar seu saldo de downloads ou /premium para assinar o plano."
+        "Digite /status para verificar seu saldo de downloads."
     ),
     "url_prompt": "📎 Por favor, envie o link do vídeo que deseja baixar.",
     "processing": "⚙️ Processando sua solicitação...",
@@ -777,65 +748,24 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         )
         
         # Baixa o vídeo
-output_path = os.path.join(tmpdir, "shopee_video.mp4")
-
-video_response = await asyncio.to_thread(
-    lambda: requests.get(video_url, headers=headers, cookies=cookies_dict, stream=True, timeout=120)
-)
-video_response.raise_for_status()
-
-total_size = int(video_response.headers.get('content-length', 0))
-
-# Salva o vídeo original
-with open(output_path, 'wb') as f:
-    for chunk in video_response.iter_content(chunk_size=8192):
-        if chunk:
-            f.write(chunk)
-
-# Aplica a remoção da marca d'água com OpenCV
-if OPENCV_AVAILABLE:
-    try:
-        from watermark_simple import remove_watermark_simple
-        clean_path = os.path.join(tmpdir, "shopee_video_clean.mp4")
-        remove_watermark_simple(output_path, clean_path)
-        final_path = clean_path
-    except Exception as e:
-        LOG.error(f"Erro ao remover marca d'água com OpenCV: {e}")
-        final_path = output_path  # fallback para o vídeo original
-# Verifica tamanho antes de baixar
-if total_size > MAX_FILE_SIZE:
-    LOG.warning("Vídeo da Shopee excede 50 MB: %d bytes", total_size)
-    await application.bot.edit_message_text(
-        text=MESSAGES["file_too_large"],
-        chat_id=pm["chat_id"],
-        message_id=pm["message_id"],
-        parse_mode="HTML"
-    )
-    return  # Interrompe o fluxo se o vídeo for muito grande
-
-# Salva o vídeo original
-with open(output_path, 'wb') as f:
-    for chunk in video_response.iter_content(chunk_size=8192):
-        if chunk:
-            f.write(chunk)
-
-# Aplica a remoção da marca d'água com OpenCV
-if OPENCV_AVAILABLE:
-    try:
-        from watermark_simple import remove_watermark_simple
-        clean_path = os.path.join(tmpdir, "shopee_video_clean.mp4")
-        remove_watermark_simple(output_path, clean_path)
-        final_path = clean_path
-    except Exception as e:
-        LOG.error(f"Erro ao remover marca d'água com OpenCV: {e}")
-        final_path = output_path  # fallback
-else:
-    LOG.warning("OpenCV não está disponível. Enviando vídeo original.")
-    final_path = output_path
-
-# Envia o vídeo final para o usuário
-with open(final_path, "rb") as fh:
-    await application.bot.send_video(chat_id=chat_id, video=fh, caption="🎬 Shopee Video (limpo)")
+        output_path = os.path.join(tmpdir, "shopee_video.mp4")
+        
+        video_response = await asyncio.to_thread(
+            lambda: requests.get(video_url, headers=headers, cookies=cookies_dict, stream=True, timeout=120)
+        )
+        video_response.raise_for_status()
+        
+        total_size = int(video_response.headers.get('content-length', 0))
+        
+        # Verifica tamanho antes de baixar
+        if total_size > MAX_FILE_SIZE:
+            LOG.warning("Vídeo da Shopee excede 50 MB: %d bytes", total_size)
+            await application.bot.edit_message_text(
+                text=MESSAGES["file_too_large"],
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"],
+                parse_mode="HTML"
+            )
             return
         
         downloaded = 0
@@ -993,127 +923,29 @@ async def premium_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     LOG.info("Comando /premium executado por usuário %d", user_id)
 
-async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para o comando /ai - conversar com IA"""
-    if not groq_client:
-        await update.message.reply_text(
-            "🤖 <b>IA Não Disponível</b>\n\n"
-            "A inteligência artificial não está configurada no momento.\n"
-            "Entre em contato com o administrador.",
-            parse_mode="HTML"
-        )
-        return
-    
-    # Se tem argumentos, responde direto
-    if context.args:
-        user_message = " ".join(context.args)
-        await update.message.chat.send_action("typing")
-        
-        response = await chat_with_ai(
-            user_message,
-            system_prompt="""Você é um assistente amigável para um bot de downloads do Telegram.
-- Seja útil, direto e use frases curtas.
-- Utilize emojis apenas quando fizer sentido.
-- Nunca invente informações. Se não souber, responda exatamente: "Não tenho essa informação".
-- Não forneça detalhes que não estejam listados abaixo.
-- Se o usuário quiser assinar o plano, peça para digitar /premium.
-- Este bot não faz download de músicas e não permite escolher qualidade de vídeos.
-
-Funcionalidades:
-- Download de vídeos (YouTube, Instagram, TikTok, Twitter, etc.)
-- Plano gratuito: 10 downloads/mês
-- Plano premium: downloads ilimitados (R$9,90/mês)
-- Se o usuário falar para você baixar algum vídeo, incentive ele a te enviar um link
-"""
-        )
-        
-        if response:
-            await update.message.reply_text(response, parse_mode="HTML")
-        else:
-            await update.message.reply_text(
-                "⚠️ Erro ao processar sua mensagem. Tente novamente."
-            )
-    else:
-        # Sem argumentos, mostra instruções
-        await update.message.reply_text(
-            "🤖 <b>Assistente com IA</b>\n\n"
-            "Converse comigo! Use:\n"
-            "• <code>/ai sua pergunta aqui</code>\n\n"
-            "<b>Ou simplesmente envie uma mensagem de texto!</b>\n\n"
-            "<i>Exemplos:</i>\n"
-            "• /ai como baixar vídeos?\n"
-            "• /ai o que é o plano premium?\n"
-            "• /ai me recomende vídeos sobre Música",
-            parse_mode="HTML"
-        )
-    
-    LOG.info("Comando /ai executado por usuário %d", update.effective_user.id)
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para mensagens de texto (URLs ou chat com IA)"""
-    user_id = update.effective_user.id
+    """Handler para mensagens de texto (URLs)"""
     text = update.message.text.strip()
-    
+
+    # ✅ Em grupos, só responde se mencionado; em privado, responde sempre
+    if update.effective_chat.type != "private" and f"@{context.bot.username}" not in text:
+        return
+
+    user_id = update.effective_user.id
     update_user(user_id)
-    
+
     # Verifica se é um link válido
     urls = URL_RE.findall(text)
     if not urls:
-        # Não há URL - verifica se tem IA disponível para chat
-        if groq_client:
-            # Analisa intenção do usuário
-            intent_data = await analyze_user_intent(text)
-            intent = intent_data.get('intent', 'chat')
-            
-            # Se for pedido de ajuda ou chat geral, responde com IA
-            if intent in ['help', 'chat']:
-                LOG.info("💬 Chat IA - Usuário %d: %s", user_id, text[:50])
-                await update.message.chat.send_action("typing")
-                
-                response = await chat_with_ai(
-                    text,
-                    system_prompt="""Você é um assistente amigável para um bot de downloads do Telegram.
-- Seja útil, direto e use frases curtas.
-- Utilize emojis apenas quando fizer sentido.
-- Nunca invente informações. Se não souber, responda exatamente: "Não tenho essa informação".
-- Não forneça detalhes que não estejam listados abaixo.
-- Se o usuário quiser assinar o plano, peça para digitar /premium.
-- Este bot não faz download de músicas e não permite escolher qualidade de vídeos.
-
-Funcionalidades:
-- Download de vídeos (YouTube, Instagram, TikTok, Twitter, etc.)
-- Plano gratuito: 10 downloads/mês
-- Plano premium: downloads ilimitados (R$9,90/mês)
-- Se o usuário falar para você baixar algum vídeo, incentive ele a te enviar um link
-
-Comandos:
-/start - Iniciar
-/status - Ver estatísticas
-/premium - Plano premium 
-"""
-                )
-                
-                if response:
-                    await update.message.reply_text(response)
-                else:
-                    await update.message.reply_text(
-                        "⚠️ Desculpe, não consegui processar sua mensagem.\n\n"
-                        "💡 <b>Dica:</b> Para baixar vídeos, envie um link!\n"
-                        "Use /ai para conversar comigo.",
-                        parse_mode="HTML"
-                    )
-                return
-        
-        # Sem IA ou não conseguiu processar - mostra mensagem padrão
         await update.message.reply_text(MESSAGES["url_prompt"])
         return
-    
+
     url = urls[0]
-    
+
     if not is_valid_url(url):
         await update.message.reply_text(MESSAGES["invalid_url"])
         return
-    
+
     # Verifica limite de downloads
     if not can_download(user_id):
         await update.message.reply_text(
@@ -1122,6 +954,8 @@ Comandos:
         )
         LOG.info("Usuário %d atingiu limite de downloads", user_id)
         return
+
+    # ... restante da lógica original continua igual ...
     
     # Cria token único para esta requisição
     token = str(uuid.uuid4())
@@ -1251,140 +1085,6 @@ async def get_video_info(url: str) -> dict:
     except Exception as e:
         LOG.error("Erro ao extrair informações: %s", e)
         return None
-
-# ====================================================================
-# FUNÇÕES DE INTELIGÊNCIA ARTIFICIAL (GROQ)
-# ====================================================================
-
-async def chat_with_ai(message: str, system_prompt: str = None) -> str:
-    """
-    Envia mensagem para Groq AI e retorna resposta.
-    
-    Args:
-        message: Mensagem do usuário
-        system_prompt: Instruções do sistema (opcional)
-        
-    Returns:
-        str: Resposta da IA
-    """
-    if not groq_client:
-        return None
-    
-    try:
-        messages = []
-        
-        # Adiciona prompt do sistema se fornecido
-        if system_prompt:
-            messages.append({
-                "role": "system",
-                "content": system_prompt
-            })
-        
-        # Adiciona mensagem do usuário
-        messages.append({
-            "role": "user",
-            "content": message
-        })
-        
-        # Chama API do Groq
-        response = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=messages,
-            temperature=0.7,
-            max_tokens=1024
-        )
-        
-        return response.choices[0].message.content
-        
-    except Exception as e:
-        LOG.error("Erro ao chamar Groq AI: %s", e)
-        return None
-
-
-async def generate_video_summary(video_info: dict) -> str:
-    """
-    Gera resumo inteligente de um vídeo usando IA.
-    
-    Args:
-        video_info: Dicionário com informações do vídeo
-        
-    Returns:
-        str: Resumo do vídeo ou string vazia se IA indisponível
-    """
-    if not groq_client:
-        return ""
-    
-    try:
-        title = video_info.get('title', 'N/A')
-        description = video_info.get('description', '')
-        
-        # Limita descrição para não exceder tokens
-        if description and len(description) > 500:
-            description = description[:500] + "..."
-        
-        prompt = f"""Crie um resumo CURTO e OBJETIVO deste vídeo em 3-4 pontos principais.
-Use bullets (•) e seja direto.
-
-Título: {title}
-Descrição: {description or 'Sem descrição'}
-
-Responda APENAS com o resumo, sem introduções."""
-        
-        summary = await chat_with_ai(
-            prompt,
-            system_prompt="Você é um assistente que resume vídeos de forma clara e concisa."
-        )
-        
-        return summary if summary else ""
-        
-    except Exception as e:
-        LOG.error("Erro ao gerar resumo: %s", e)
-        return ""
-
-
-async def analyze_user_intent(message: str) -> dict:
-    """
-    Analisa a intenção do usuário na mensagem.
-    
-    Args:
-        message: Mensagem do usuário
-        
-    Returns:
-        dict: {'intent': 'download' | 'chat' | 'help', 'confidence': 0.0-1.0}
-    """
-    # Fallback simples sem IA
-    if URL_RE.search(message):
-        return {'intent': 'download', 'confidence': 1.0}
-    
-    if not groq_client:
-        return {'intent': 'chat', 'confidence': 0.5}
-    
-    try:
-        prompt = f"""Analise esta mensagem de usuário e identifique a intenção:
-"{message}"
-
-Responda APENAS com uma das opções:
-- download: se pede para baixar algo ou tem URL
-- help: se pede ajuda, instruções ou explicações
-- chat: conversa geral
-
-Responda APENAS uma palavra."""
-        
-        response = await chat_with_ai(
-            prompt,
-            system_prompt="Você analisa intenções de usuários. Responda apenas: download, help ou chat."
-        )
-        
-        if response:
-            intent = response.strip().lower()
-            if intent in ['download', 'help', 'chat']:
-                return {'intent': intent, 'confidence': 0.9}
-        
-    except Exception as e:
-        LOG.error("Erro ao analisar intenção: %s", e)
-    
-    return {'intent': 'chat', 'confidence': 0.5}
-
 
 # ====================================================================
 # FUNÇÕES DO MERCADO PAGO
@@ -2044,10 +1744,14 @@ application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("stats", stats_cmd))
 application.add_handler(CommandHandler("status", status_cmd))
 application.add_handler(CommandHandler("premium", premium_cmd))
-application.add_handler(CommandHandler("ai", ai_cmd))  # ← Novo comando
 application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
 application.add_handler(CallbackQueryHandler(callback_buy_premium, pattern=r"^subscribe:"))
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+
+from telegram.constants import MessageEntityType
+
+mention_or_private_filter = (filters.ChatType.PRIVATE | (filters.TEXT & filters.Entity(MessageEntityType.MENTION)))
+application.add_handler(MessageHandler(mention_or_private_filter, handle_message))
 
 # ============================
 # FLASK ROUTES
