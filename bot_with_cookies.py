@@ -406,7 +406,7 @@ DB_FILE = os.getenv("DB_FILE", "/data/users.db") if os.path.exists("/data") else
 PENDING_MAX_SIZE = 1000
 PENDING_EXPIRE_SECONDS = 600
 WATCHDOG_TIMEOUT = 180
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB - limite do Telegram para bots (API padrão)
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB - limite para vídeos curtos
 SPLIT_SIZE = 45 * 1024 * 1024
 
 # Constantes de Controle de Downloads
@@ -853,29 +853,28 @@ def get_cookie_for_url(url: str):
     return None
 
 def get_format_for_url(url: str) -> str:
-    """Retorna o formato apropriado baseado na plataforma - MELHOR QUALIDADE"""
+    """Retorna o formato apropriado baseado na plataforma"""
     url_lower = url.lower()
     
-    # Shopee: melhor qualidade disponível
+    # Shopee: formato específico para vídeos
     if 'shopee' in url_lower or 'shope.ee' in url_lower:
-        LOG.info("🛍️ Formato Shopee: MELHOR QUALIDADE (best)")
+        LOG.info("🛍️ Formato Shopee: best video+audio ou best")
         return "best[ext=mp4]/best"
     
-    # Instagram: melhor qualidade disponível
+    # Instagram: usa formato simples sem especificar height
     elif 'instagram' in url_lower or 'insta' in url_lower:
-        LOG.info("📸 Formato Instagram: MELHOR QUALIDADE (best)")
+        LOG.info("Formato Instagram: best (sem restrições específicas)")
         return "best"
     
-    # YouTube: MELHOR QUALIDADE DISPONÍVEL (sem limites)
+    # YouTube: limita a 480p
     elif 'youtube' in url_lower or 'youtu.be' in url_lower:
-        LOG.info("🎥 Formato YouTube: MELHOR QUALIDADE (sem limites)")
-        return "bestvideo*+bestaudio/best"
+        LOG.info("Formato YouTube: 480p máximo")
+        return "best[height<=480]/best"
     
-    # Outras plataformas: melhor qualidade disponível
+    # Outras plataformas: formato padrão flexível
     else:
-        LOG.info("🎬 Formato padrão: MELHOR QUALIDADE")
-        return "bestvideo*+bestaudio/best"
-
+        LOG.info("Formato padrão: best com fallback")
+        return "best/bestvideo+bestaudio"
 
 def resolve_shopee_universal_link(url: str) -> str:
     """Resolve universal links da Shopee para URL real"""
