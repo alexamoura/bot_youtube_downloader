@@ -1030,7 +1030,7 @@ def format_filesize(bytes_size: int) -> str:
     return f"{bytes_size:.1f} TB"
 
 async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
-    """Download especial para Shopee Video usando web scraping"""
+    """Download especial para Shopee Video usando extração avançada"""
     if not REQUESTS_AVAILABLE:
         await application.bot.edit_message_text(
             text="⚠️ Extrator Shopee não disponível. Instale: pip install requests beautifulsoup4",
@@ -1048,51 +1048,71 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         )
         LOG.info("Iniciando extração customizada da Shopee: %s", url)
 
-        # Faz requisição à página
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Referer": "https://shopee.com.br/",
-        }
-
-        # Carrega cookies se disponível
-        cookies_dict = {}
-        if COOKIE_SHOPEE:
-            try:
-                with open(COOKIE_SHOPEE, 'r') as f:
-                    for line in f:
-                        if not line.startswith('#') and line.strip():
-                            parts = line.strip().split('\t')
-                            if len(parts) >= 7:
-                                cookies_dict[parts[5]] = parts[6]
-                LOG.info("Cookies da Shopee carregados: %d cookies", len(cookies_dict))
-            except Exception as e:
-                LOG.warning("Erro ao carregar cookies: %s", e)
-
-        response = await asyncio.to_thread(
-            lambda: requests.get(url, headers=headers, cookies=cookies_dict, timeout=30)
-        )
-        response.raise_for_status()
-        LOG.info("Página da Shopee carregada, analisando...")
-
-        # Busca URL do vídeo no HTML
+        # 🎯 MÉTODO 1: Usa ShopeeVideoExtractor (API interna)
+        LOG.info("🎯 Tentando método ShopeeVideoExtractor (API)...")
+        video_info = SHOPEE_EXTRACTOR.get_video(url)
+        
         video_url = None
-        patterns = [
-            r'"videoUrl"\s*:\s*"([^"]+)"',
-            r'"video_url"\s*:\s*"([^"]+)"',
-            r'"playAddr"\s*:\s*"([^"]+)"',
-            r'"url"\s*:\s*"(https://[^"]*\.mp4[^"]*)"'
-        ]
-        for pattern in patterns:
-            matches = re.findall(pattern, response.text)
-            if matches:
-                video_url = matches[0].replace('\\/', '/')
-                LOG.info("URL de vídeo encontrada via regex: %s", video_url[:100])
-                break
+        if video_info and video_info.get('url'):
+            LOG.info("✅ Vídeo extraído via ShopeeVideoExtractor!")
+            video_url = video_info['url']
+        else:
+            LOG.warning("⚠️ ShopeeVideoExtractor falhou, tentando método HTML...")
+            
+            # 🔧 MÉTODO 2: Scraping HTML (fallback)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Referer": "https://shopee.com.br/",
+            }
 
+            # Carrega cookies se disponível
+            cookies_dict = {}
+            if COOKIE_SHOPEE:
+                try:
+                    with open(COOKIE_SHOPEE, 'r') as f:
+                        for line in f:
+                            if not line.startswith('#') and line.strip():
+                                parts = line.strip().split('\t')
+                                if len(parts) >= 7:
+                                    cookies_dict[parts[5]] = parts[6]
+                    LOG.info("Cookies da Shopee carregados: %d cookies", len(cookies_dict))
+                except Exception as e:
+                        LOG.warning("Erro ao carregar cookies: %s", e)
+
+            response = await asyncio.to_thread(
+                lambda: requests.get(url, headers=headers, cookies=cookies_dict, timeout=30)
+            )
+            response.raise_for_status()
+            LOG.info("Página da Shopee carregada, analisando...")
+
+            # Busca URL do vídeo no HTML com múltiplos padrões
+            patterns = [
+                # Padrões comuns da Shopee
+                r'"videoUrl"\s*:\s*"([^"]+)"',
+                r'"video_url"\s*:\s*"([^"]+)"',
+                r'"playAddr"\s*:\s*"([^"]+)"',
+                r'"url"\s*:\s*"(https://[^"]*\.mp4[^"]*)"',
+                # Padrões do domínio específico
+                r'(https://down-[^"]*\.vod\.susercontent\.com[^"]*)',
+                r'(https://[^"]*susercontent\.com[^"]*\.mp4[^"]*)',
+                r'(https://cf\.shopee\.com\.br/file/[^"]+)',
+                # Padrão watermarkVideoUrl
+                r'"watermarkVideoUrl"\s*:\s*"([^"]+)"',
+                r'"defaultFormat"[^}]*"url"\s*:\s*"([^"]+)"',
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, response.text)
+                if matches:
+                    video_url = matches[0].replace('\\/', '/')
+                    LOG.info("URL de vídeo encontrada via regex: %s", video_url[:100])
+                    break
+        
+        # Verifica se conseguiu URL por qualquer método
         if not video_url:
-            LOG.error("Nenhuma URL de vídeo encontrada na página da Shopee")
+            LOG.error("Nenhuma URL de vídeo encontrada (todos os métodos falharam)")
             await application.bot.edit_message_text(
                 text="⚠️ <b>Não consegui encontrar o vídeo</b>\n\n"
                      "Possíveis causas:\n"
