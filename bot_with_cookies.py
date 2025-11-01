@@ -1149,15 +1149,8 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         video_response.raise_for_status()
         total_size = int(video_response.headers.get('content-length', 0))
 
-        if total_size > MAX_FILE_SIZE:
-            LOG.warning("Vídeo da Shopee excede 50 MB: %d bytes", total_size)
-            await application.bot.edit_message_text(
-                text=MESSAGES["file_too_large"],
-                chat_id=pm["chat_id"],
-                message_id=pm["message_id"],
-                parse_mode="HTML"
-            )
-            return
+        # Shopee: SEM limite de tamanho (Telegram suporta até 2GB com Bot API)
+        LOG.info("📦 Tamanho do vídeo Shopee: %.2f MB", total_size / (1024 * 1024))
 
         with open(output_path, 'wb') as f:
             for chunk in video_response.iter_content(chunk_size=8192):
@@ -1246,16 +1239,8 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         
         total_size = int(video_response.headers.get('content-length', 0))
         
-        # Verifica tamanho antes de baixar
-        if total_size > MAX_FILE_SIZE:
-            LOG.warning("Vídeo da Shopee excede 50 MB: %d bytes", total_size)
-            await application.bot.edit_message_text(
-                text=MESSAGES["file_too_large"],
-                chat_id=pm["chat_id"],
-                message_id=pm["message_id"],
-                parse_mode="HTML"
-            )
-            return
+        # Shopee: SEM limite de tamanho
+        LOG.info("📦 Tamanho do vídeo Shopee: %.2f MB", total_size / (1024 * 1024))
         
         downloaded = 0
         last_percent = -1
@@ -2510,14 +2495,19 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         try:
             tamanho = os.path.getsize(path)
             
-            # Verifica se o arquivo excede 50 MB
-            if tamanho > MAX_FILE_SIZE:
+            # Verifica se o arquivo excede 50 MB (EXCETO Shopee - sem limite)
+            is_shopee = 'shopee' in pm["url"].lower()
+            
+            if not is_shopee and tamanho > MAX_FILE_SIZE:
                 LOG.error("Arquivo muito grande após download: %d bytes", tamanho)
                 await _notify_error(pm, "error_file_large")
                 return
             
+            if is_shopee:
+                LOG.info("📦 Vídeo Shopee: %.2f MB (sem limite de tamanho)", tamanho / (1024 * 1024))
+            
             # 🎬 REMOVE MARCA D'ÁGUA SE FOR SHOPEE
-            if 'shopee' in pm["url"].lower():
+            if is_shopee:
                 LOG.info("🛍️ Vídeo da Shopee detectado - removendo marca d'água...")
                 
                 try:
