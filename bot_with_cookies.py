@@ -298,7 +298,6 @@ class WatermarkRemover:
         'top_right': '(iw-210):10:200:50',                 # Canto superior direito
         'bottom_left': '10:(ih-60):200:50',                # Canto inferior esquerdo
         'top_left': '10:10:200:50'                         # Canto superior esquerdo
-		
     }
 
     
@@ -1057,19 +1056,19 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             "Referer": "https://shopee.com.br/",
         }
 
-        
-cookies_dict = {}
-if COOKIE_SHOPEE:
-    try:
-        with open(COOKIE_SHOPEE, 'r') as f:
-            for line in f:
-                if not line.startswith('#') and line.strip():
-                    parts = line.strip().split('\t')
-                    if len(parts) >= 7:
-                        cookies_dict[parts[5]] = parts[6]
-        LOG.info("Cookies da Shopee carregados: %d cookies", len(cookies_dict))
-    except Exception as e:
-        LOG.warning("Erro ao carregar cookies: %s", e)
+        # Carrega cookies se disponível
+        cookies_dict = {}
+        if COOKIE_SHOPEE:
+            try:
+                with open(COOKIE_SHOPEE, 'r') as f:
+                    for line in f:
+                        if not line.startswith('#') and line.strip():
+                            parts = line.strip().split('\t')
+                            if len(parts) >= 7:
+                                cookies_dict[parts[5]] = parts[6]
+                LOG.info("Cookies da Shopee carregados: %d cookies", len(cookies_dict))
+            except Exception as e:
+                LOG.warning("Erro ao carregar cookies: %s", e)
 
         response = await asyncio.to_thread(
             lambda: requests.get(url, headers=headers, cookies=cookies_dict, timeout=30)
