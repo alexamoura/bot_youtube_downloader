@@ -406,7 +406,7 @@ DB_FILE = os.getenv("DB_FILE", "/data/users.db") if os.path.exists("/data") else
 PENDING_MAX_SIZE = 1000
 PENDING_EXPIRE_SECONDS = 600
 WATCHDOG_TIMEOUT = 180
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB - limite para vídeos curtos
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB - limite do Telegram para bots (API padrão)
 SPLIT_SIZE = 45 * 1024 * 1024
 
 # Constantes de Controle de Downloads
@@ -853,28 +853,30 @@ def get_cookie_for_url(url: str):
     return None
 
 def get_format_for_url(url: str) -> str:
-    """Retorna o formato apropriado baseado na plataforma"""
+    """Retorna o formato apropriado baseado na plataforma - OTIMIZADO PARA 50MB"""
     url_lower = url.lower()
     
-    # Shopee: formato específico para vídeos
+    # Shopee: melhor qualidade disponível (geralmente já é pequeno)
     if 'shopee' in url_lower or 'shope.ee' in url_lower:
-        LOG.info("🛍️ Formato Shopee: best video+audio ou best")
+        LOG.info("🛍️ Formato Shopee: best (otimizado)")
         return "best[ext=mp4]/best"
     
-    # Instagram: usa formato simples sem especificar height
+    # Instagram: formato único já otimizado
     elif 'instagram' in url_lower or 'insta' in url_lower:
-        LOG.info("Formato Instagram: best (sem restrições específicas)")
-        return "best"
+        LOG.info("📸 Formato Instagram: best (otimizado)")
+        return "best[ext=mp4]/best"
     
-    # YouTube: limita a 480p
+    # YouTube: 1080p ou 720p, formato já combinado para evitar cortes
     elif 'youtube' in url_lower or 'youtu.be' in url_lower:
-        LOG.info("Formato YouTube: 480p máximo")
-        return "best[height<=480]/best"
+        LOG.info("🎥 Formato YouTube: até 1080p (otimizado, sem cortes)")
+        # Prioriza formatos já combinados (evita cortes) e limita tamanho
+        return "best[height<=1080][ext=mp4]/best[height<=720][ext=mp4]/best[ext=mp4]/best"
     
-    # Outras plataformas: formato padrão flexível
+    # Outras plataformas: formato otimizado
     else:
-        LOG.info("Formato padrão: best com fallback")
-        return "best/bestvideo+bestaudio"
+        LOG.info("🎬 Formato padrão: best (otimizado)")
+        return "best[ext=mp4]/best"
+
 
 def resolve_shopee_universal_link(url: str) -> str:
     """Resolve universal links da Shopee para URL real"""
@@ -2445,6 +2447,13 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         "fragment_retries": 20,
         "no_check_certificate": True,
         "prefer_insecure": True,
+        # Configurações para evitar cortes e garantir qualidade
+        "postprocessors": [{
+            'key': 'FFmpegVideoConvertor',
+            'preferedformat': 'mp4',
+        }],
+        "keepvideo": False,  # Remove arquivos temporários
+        "prefer_ffmpeg": True,  # Usa FFmpeg para merge (evita cortes)
     }
     
     # Configurações específicas para Shopee
