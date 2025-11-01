@@ -711,6 +711,45 @@ def resolve_shopee_universal_link(url: str) -> str:
         return url
 
 
+def expand_short_url(url: str) -> str:
+    """
+    Expande links encurtados da Shopee (br.shp.ee, shope.ee)
+    
+    Retorna a URL expandida ou None se falhar
+    """
+    try:
+        if not REQUESTS_AVAILABLE:
+            LOG.warning("⚠️ requests não disponível para expandir link")
+            return None
+        
+        import requests
+        
+        LOG.info("🔗 Expandindo link encurtado: %s", url[:50])
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+        }
+        
+        # Tenta seguir redirects
+        response = requests.get(url, headers=headers, allow_redirects=True, timeout=10)
+        
+        if response.url != url:
+            LOG.info("✅ Link expandido: %s", response.url[:80])
+            return response.url
+        else:
+            LOG.warning("⚠️ Link não redirecionou")
+            return None
+            
+    except requests.exceptions.RequestException as e:
+        LOG.error("❌ Erro ao expandir link: %s", e)
+        return None
+    except Exception as e:
+        LOG.error("❌ Erro inesperado ao expandir link: %s", e)
+        return None
+
+
 def extract_shopee_video_direct(url: str) -> dict:
     """
     Extrai informações de vídeo da Shopee diretamente da página.
@@ -1283,7 +1322,31 @@ Comandos:
     # Cria token único para esta requisição
     token = str(uuid.uuid4())
     
-    # Resolve links universais da Shopee SEMPRE (antes de qualquer coisa)
+    # 🔗 PASSO 1: Expande links encurtados (br.shp.ee, shope.ee)
+    if 'shp.ee' in url.lower() or 'shope.ee' in url.lower():
+        LOG.info("🔗 Link encurtado detectado! Tentando expandir...")
+        
+        expanded = expand_short_url(url)
+        
+        if expanded:
+            LOG.info("✅ Link expandido com sucesso!")
+            url = expanded
+        else:
+            # Se falhar, avisa o usuário
+            await update.message.reply_text(
+                "🔗 <b>Link Encurtado Detectado</b>\n\n"
+                "⚠️ Não foi possível expandir automaticamente.\n\n"
+                "Por favor:\n"
+                "1️⃣ Abra o link no navegador\n"
+                "2️⃣ Copie a URL completa da página\n"
+                "3️⃣ Envie novamente\n\n"
+                "Exemplo: <code>https://shopee.com.br/product/123/456</code>",
+                parse_mode="HTML"
+            )
+            LOG.warning("❌ Não foi possível expandir link encurtado")
+            return
+    
+    # 🔗 PASSO 2: Resolve links universais da Shopee
     if 'shopee' in url.lower():
         original_url = url
         url = resolve_shopee_universal_link(url)
