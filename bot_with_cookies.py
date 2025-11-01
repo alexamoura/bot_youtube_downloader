@@ -293,7 +293,6 @@ class WatermarkRemover:
         'middle_right_high': '(iw-210):(ih/2-100):200:50', # Meio direito mais acima
         'middle_right_low': '(iw-210):(ih/2+50):200:50',   # Meio direito mais abaixo
         'middle_center': '(iw/2-100):(ih/2-25):200:50',    # Centro da tela
-		'middle_left': '30:(ih/2-25):200:50',              # Centro à esquerda
         'bottom_right': '(iw-210):(ih-60):200:50',         # Canto inferior direito
         'top_right': '(iw-210):10:200:50',                 # Canto superior direito
         'bottom_left': '10:(ih-60):200:50',                # Canto inferior esquerdo
@@ -1048,6 +1047,27 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         )
         LOG.info("Iniciando extração customizada da Shopee: %s", url)
 
+        # Prepara headers e cookies para download (usados em ambos os métodos)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://shopee.com.br/",
+        }
+        
+        cookies_dict = {}
+        if COOKIE_SHOPEE:
+            try:
+                with open(COOKIE_SHOPEE, 'r') as f:
+                    for line in f:
+                        if not line.startswith('#') and line.strip():
+                            parts = line.strip().split('\t')
+                            if len(parts) >= 7:
+                                cookies_dict[parts[5]] = parts[6]
+                LOG.info("Cookies da Shopee carregados: %d cookies", len(cookies_dict))
+            except Exception as e:
+                LOG.warning("Erro ao carregar cookies: %s", e)
+
         # 🎯 MÉTODO 1: Usa ShopeeVideoExtractor (API interna)
         LOG.info("🎯 Tentando método ShopeeVideoExtractor (API)...")
         video_info = SHOPEE_EXTRACTOR.get_video(url)
@@ -1060,26 +1080,6 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             LOG.warning("⚠️ ShopeeVideoExtractor falhou, tentando método HTML...")
             
             # 🔧 MÉTODO 2: Scraping HTML (fallback)
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Referer": "https://shopee.com.br/",
-            }
-
-            # Carrega cookies se disponível
-            cookies_dict = {}
-            if COOKIE_SHOPEE:
-                try:
-                    with open(COOKIE_SHOPEE, 'r') as f:
-                        for line in f:
-                            if not line.startswith('#') and line.strip():
-                                parts = line.strip().split('\t')
-                                if len(parts) >= 7:
-                                    cookies_dict[parts[5]] = parts[6]
-                    LOG.info("Cookies da Shopee carregados: %d cookies", len(cookies_dict))
-                except Exception as e:
-                        LOG.warning("Erro ao carregar cookies: %s", e)
 
             response = await asyncio.to_thread(
                 lambda: requests.get(url, headers=headers, cookies=cookies_dict, timeout=30)
