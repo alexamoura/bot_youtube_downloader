@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-bot_with_cookies_melhorado.py - Versão Profissional
+bot_with_cookies_melhorado.py - VersÃ£o Profissional
 
 Telegram bot (webhook) com sistema de controle de downloads e suporte a pagamento PIX
 """
@@ -43,6 +43,12 @@ try:
 except ImportError:
     MERCADOPAGO_AVAILABLE = False
 
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -54,14 +60,14 @@ from telegram.ext import (
     filters,
 )
 
-# Configuração de Logging
+# ConfiguraÃ§Ã£o de Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 LOG = logging.getLogger("ytbot")
 
 # Token do Bot
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
-    LOG.error("TELEGRAM_BOT_TOKEN não definido.")
+    LOG.error("TELEGRAM_BOT_TOKEN nÃ£o definido.")
     sys.exit(1)
 
 LOG.info("TELEGRAM_BOT_TOKEN presente (len=%d).", len(TOKEN))
@@ -72,25 +78,42 @@ DB_FILE = os.getenv("DB_FILE", "/data/users.db") if os.path.exists("/data") else
 PENDING_MAX_SIZE = 1000
 PENDING_EXPIRE_SECONDS = 600
 WATCHDOG_TIMEOUT = 180
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB - limite para vídeos curtos
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB - limite para vÃ­deos curtos
 SPLIT_SIZE = 45 * 1024 * 1024
 
 # Constantes de Controle de Downloads
 FREE_DOWNLOADS_LIMIT = 10
-MAX_CONCURRENT_DOWNLOADS = 3  # Até 3 downloads simultâneos
+MAX_CONCURRENT_DOWNLOADS = 3  # AtÃ© 3 downloads simultÃ¢neos
 
-# Configuração do Mercado Pago
+# ConfiguraÃ§Ã£o do Mercado Pago
 MERCADOPAGO_ACCESS_TOKEN = os.getenv("MERCADOPAGO_ACCESS_TOKEN")
 PREMIUM_PRICE = float(os.getenv("PREMIUM_PRICE", "9.90"))
 PREMIUM_DURATION_DAYS = int(os.getenv("PREMIUM_DURATION_DAYS", "30"))
 
 if MERCADOPAGO_AVAILABLE and MERCADOPAGO_ACCESS_TOKEN:
-    LOG.info("✅ Mercado Pago configurado - Token: %s...", MERCADOPAGO_ACCESS_TOKEN[:20])
+    LOG.info("âœ… Mercado Pago configurado - Token: %s...", MERCADOPAGO_ACCESS_TOKEN[:20])
 else:
     if not MERCADOPAGO_AVAILABLE:
-        LOG.warning("⚠️ mercadopago não instalado - pip install mercadopago")
+        LOG.warning("âš ï¸ mercadopago nÃ£o instalado - pip install mercadopago")
     if not MERCADOPAGO_ACCESS_TOKEN:
-        LOG.warning("⚠️ MERCADOPAGO_ACCESS_TOKEN não configurado")
+        LOG.warning("âš ï¸ MERCADOPAGO_ACCESS_TOKEN nÃ£o configurado")
+
+# ConfiguraÃ§Ã£o do Groq (IA)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+groq_client = None
+
+if GROQ_AVAILABLE and GROQ_API_KEY:
+    try:
+        groq_client = Groq(api_key=GROQ_API_KEY)
+        LOG.info("âœ… Groq AI configurado - InteligÃªncia artificial ativa!")
+    except Exception as e:
+        LOG.error("âŒ Erro ao inicializar Groq: %s", e)
+        groq_client = None
+else:
+    if not GROQ_AVAILABLE:
+        LOG.warning("âš ï¸ groq nÃ£o instalado - pip install groq")
+    if not GROQ_API_KEY:
+        LOG.warning("âš ï¸ GROQ_API_KEY nÃ£o configurado - IA desativada")
 
 # Estado Global
 PENDING = OrderedDict()
@@ -101,73 +124,73 @@ ACTIVE_DOWNLOADS = {}  # Rastreamento de downloads ativos
 # Mensagens Profissionais do Bot
 MESSAGES = {
     "welcome": (
-        "🎥 <b>Bem-vindo ao Serviço de Downloads</b>\n\n"
-        "Envie um link de vídeo de YouTube, Instagram ou Shopee e eu processarei o download para você.\n\n"
-        "📊 <b>Planos disponíveis:</b>\n"
-        "• Gratuito: {free_limit} downloads/mês\n"
-        "• Premium: Downloads ilimitados\n\n"
-        "⚙️ <b>Especificações:</b>\n"
-        "• Vídeos curtos (até 50 MB)\n"
-        "• Qualidade até 720p\n"
-        "• Fila: até 3 downloads simultâneos\n\n"
-        "Digite /status para verificar seu saldo de downloads."
+        "ðŸŽ¥ <b>Bem-vindo ao ServiÃ§o de Downloads</b>\n\n"
+        "Envie um link de vÃ­deo de YouTube, Instagram ou Shopee e eu processarei o download para vocÃª.\n\n"
+        "ðŸ“Š <b>Planos disponÃ­veis:</b>\n"
+        "â€¢ Gratuito: {free_limit} downloads/mÃªs\n"
+        "â€¢ Premium: Downloads ilimitados\n\n"
+        "âš™ï¸ <b>EspecificaÃ§Ãµes:</b>\n"
+        "â€¢ VÃ­deos curtos (atÃ© 50 MB)\n"
+        "â€¢ Qualidade atÃ© 720p\n"
+        "â€¢ Fila: atÃ© 3 downloads simultÃ¢neos\n\n"
+        "Digite /status para verificar seu saldo de downloads ou /premium para assinar o plano."
     ),
-    "url_prompt": "📎 Por favor, envie o link do vídeo que deseja baixar.",
-    "processing": "⚙️ Processando sua solicitação...",
-    "invalid_url": "⚠️ O link fornecido não é válido. Por favor, verifique e tente novamente.",
-    "file_too_large": "⚠️ <b>Arquivo muito grande</b>\n\nEste vídeo excede o limite de 50 MB. Por favor, escolha um vídeo mais curto.",
-    "confirm_download": "🎬 <b>Confirmar Download</b>\n\n📹 Vídeo: {title}\n⏱️ Duração: {duration}\n📦 Tamanho: {filesize}\n\n✅ Deseja prosseguir com o download?",
-    "queue_position": "⏳ Aguardando na fila... Posição: {position}\n\n{active} downloads em andamento.",
-    "download_started": "📥 Download iniciado. Aguarde enquanto processamos seu vídeo...",
-    "download_progress": "📥 Progresso: {percent}%\n{bar}",
-    "download_complete": "✅ Download concluído. Enviando arquivo...",
-    "upload_complete": "✅ Vídeo enviado com sucesso!\n\n📊 Downloads restantes: {remaining}/{total}",
+    "url_prompt": "ðŸ“Ž Por favor, envie o link do vÃ­deo que deseja baixar.",
+    "processing": "âš™ï¸ Processando sua solicitaÃ§Ã£o...",
+    "invalid_url": "âš ï¸ O link fornecido nÃ£o Ã© vÃ¡lido. Por favor, verifique e tente novamente.",
+    "file_too_large": "âš ï¸ <b>Arquivo muito grande</b>\n\nEste vÃ­deo excede o limite de 50 MB. Por favor, escolha um vÃ­deo mais curto.",
+    "confirm_download": "ðŸŽ¬ <b>Confirmar Download</b>\n\nðŸ“¹ VÃ­deo: {title}\nâ±ï¸ DuraÃ§Ã£o: {duration}\nðŸ“¦ Tamanho: {filesize}\n\nâœ… Deseja prosseguir com o download?",
+    "queue_position": "â³ Aguardando na fila... PosiÃ§Ã£o: {position}\n\n{active} downloads em andamento.",
+    "download_started": "ðŸ“¥ Download iniciado. Aguarde enquanto processamos seu vÃ­deo...",
+    "download_progress": "ðŸ“¥ Progresso: {percent}%\n{bar}",
+    "download_complete": "âœ… Download concluÃ­do. Enviando arquivo...",
+    "upload_complete": "âœ… VÃ­deo enviado com sucesso!\n\nðŸ“Š Downloads restantes: {remaining}/{total}",
     "limit_reached": (
-        "⚠️ <b>Limite de Downloads Atingido</b>\n\n"
-        "Você atingiu o limite de {limit} downloads gratuitos.\n\n"
-        "💎 <b>Adquira o Plano Premium para downloads ilimitados!</b>\n\n"
-        "💳 Valor: R$ 9,90/mês\n"
-        "🔄 Pagamento via PIX\n\n"
-        "Entre em contato para mais informações: /premium"
+        "âš ï¸ <b>Limite de Downloads Atingido</b>\n\n"
+        "VocÃª atingiu o limite de {limit} downloads gratuitos.\n\n"
+        "ðŸ’Ž <b>Adquira o Plano Premium para downloads ilimitados!</b>\n\n"
+        "ðŸ’³ Valor: R$ 9,90/mÃªs\n"
+        "ðŸ”„ Pagamento via PIX\n\n"
+        "Entre em contato para mais informaÃ§Ãµes: /premium"
     ),
     "status": (
-        "📊 <b>Status da Sua Conta</b>\n\n"
-        "👤 ID: {user_id}\n"
-        "📥 Downloads realizados: {used}/{total}\n"
-        "💾 Downloads restantes: {remaining}\n"
-        "📅 Período: Mensal\n\n"
+        "ðŸ“Š <b>Status da Sua Conta</b>\n\n"
+        "ðŸ‘¤ ID: {user_id}\n"
+        "ðŸ“¥ Downloads realizados: {used}/{total}\n"
+        "ðŸ’¾ Downloads restantes: {remaining}\n"
+        "ðŸ“… PerÃ­odo: Mensal\n\n"
         "{premium_info}"
     ),
     "premium_info": (
-        "💎 <b>Informações sobre o Plano Premium</b>\n\n"
-        "✨ <b>Benefícios:</b>\n"
-        "• Downloads ilimitados\n"
-        "• Qualidade máxima (até 1080p)\n"
-        "• Processamento prioritário\n"
-        "• Suporte dedicado\n\n"
-        "💰 <b>Valor:</b> R$ 9,90/mês\n\n"
-        "📱 <b>Como contratar:</b>\n"
-        "1️⃣ Clique no botão \"Assinar Premium\"\n"
-        "2️⃣ Escaneie o QR Code PIX gerado\n"
-        "3️⃣ Confirme o pagamento no seu banco\n"
-        "4️⃣ Aguarde a ativação automática (30-60 segundos)\n\n"
-        "⚡ <b>Ativação instantânea via PIX!</b>"
+        "ðŸ’Ž <b>InformaÃ§Ãµes sobre o Plano Premium</b>\n\n"
+        "âœ¨ <b>BenefÃ­cios:</b>\n"
+        "â€¢ Downloads ilimitados\n"
+        "â€¢ Qualidade mÃ¡xima (atÃ© 1080p)\n"
+        "â€¢ Processamento prioritÃ¡rio\n"
+        "â€¢ Suporte dedicado\n\n"
+        "ðŸ’° <b>Valor:</b> R$ 9,90/mÃªs\n\n"
+        "ðŸ“± <b>Como contratar:</b>\n"
+        "1ï¸âƒ£ Clique no botÃ£o \"Assinar Premium\"\n"
+        "2ï¸âƒ£ Escaneie o QR Code PIX gerado\n"
+        "3ï¸âƒ£ Confirme o pagamento no seu banco\n"
+        "4ï¸âƒ£ Aguarde a ativaÃ§Ã£o automÃ¡tica (30-60 segundos)\n\n"
+        "âš¡ <b>AtivaÃ§Ã£o instantÃ¢nea via PIX!</b>"
     ),
-    "stats": "📈 <b>Estatísticas do Bot</b>\n\n👥 Usuários ativos este mês: {count}",
-    "error_timeout": "⏱️ O tempo de processamento excedeu o limite. Por favor, tente novamente.",
-    "error_network": "🌐 Erro de conexão detectado. Verifique sua internet e tente novamente em alguns instantes.",
-    "error_file_large": "📦 O arquivo excede o limite de 50 MB. Por favor, escolha um vídeo mais curto.",
-    "error_ffmpeg": "🎬 Ocorreu um erro durante o processamento do vídeo.",
-    "error_upload": "📤 Falha ao enviar o arquivo. Por favor, tente novamente.",
-    "error_unknown": "❌ Um erro inesperado ocorreu. Nossa equipe foi notificada. Por favor, tente novamente.",
-    "error_expired": "⏰ Esta solicitação expirou. Por favor, envie o link novamente.",
-    "download_cancelled": "🚫 Download cancelado com sucesso.",
-    "cleanup": "🧹 Limpeza: removido {path}",
+    "stats": "ðŸ“ˆ <b>EstatÃ­sticas do Bot</b>\n\nðŸ‘¥ UsuÃ¡rios ativos este mÃªs: {count}",
+    "error_timeout": "â±ï¸ O tempo de processamento excedeu o limite. Por favor, tente novamente.",
+    "error_network": "ðŸŒ Erro de conexÃ£o detectado. Verifique sua internet e tente novamente em alguns instantes.",
+    "error_file_large": "ðŸ“¦ O arquivo excede o limite de 50 MB. Por favor, escolha um vÃ­deo mais curto.",
+    "error_ffmpeg": "ðŸŽ¬ Ocorreu um erro durante o processamento do vÃ­deo.",
+    "error_upload": "ðŸ“¤ Falha ao enviar o arquivo. Por favor, tente novamente.",
+    "error_unknown": "âŒ Um erro inesperado ocorreu. Nossa equipe foi notificada. Por favor, tente novamente.",
+    "error_expired": "â° Esta solicitaÃ§Ã£o expirou. Por favor, envie o link novamente.",
+    "download_cancelled": "ðŸš« Download cancelado com sucesso.",
+    "cleanup": "ðŸ§¹ Limpeza: removido {path}",
 }
 
 app = Flask(__name__)
 
-# Inicialização do Telegram Application
+# InicializaÃ§Ã£o do Telegram Application
 try:
     application = ApplicationBuilder().token(TOKEN).build()
     LOG.info("ApplicationBuilder criado com sucesso.")
@@ -200,13 +223,13 @@ except Exception as e:
 # ============================
 
 def init_db():
-    """Inicializa o banco de dados com as tabelas necessárias"""
+    """Inicializa o banco de dados com as tabelas necessÃ¡rias"""
     with DB_LOCK:
         try:
             conn = sqlite3.connect(DB_FILE, timeout=10)
             c = conn.cursor()
             
-            # Tabela de usuários mensais
+            # Tabela de usuÃ¡rios mensais
             c.execute("""
                 CREATE TABLE IF NOT EXISTS monthly_users (
                     user_id INTEGER PRIMARY KEY,
@@ -226,7 +249,7 @@ def init_db():
                 )
             """)
             
-            # Tabela de histórico de pagamentos PIX (para implementação futura)
+            # Tabela de histÃ³rico de pagamentos PIX (para implementaÃ§Ã£o futura)
             c.execute("""
                 CREATE TABLE IF NOT EXISTS pix_payments (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -247,7 +270,7 @@ def init_db():
             LOG.error("Erro ao inicializar banco de dados: %s", e)
 
 def update_user(user_id: int):
-    """Atualiza o registro de acesso mensal do usuário"""
+    """Atualiza o registro de acesso mensal do usuÃ¡rio"""
     with DB_LOCK:
         try:
             conn = sqlite3.connect(DB_FILE, timeout=10)
@@ -263,16 +286,16 @@ def update_user(user_id: int):
             conn.commit()
             conn.close()
         except sqlite3.Error as e:
-            LOG.error("Erro ao atualizar usuário: %s", e)
+            LOG.error("Erro ao atualizar usuÃ¡rio: %s", e)
 
 def get_user_download_stats(user_id: int) -> dict:
-    """Retorna estatísticas de downloads do usuário"""
+    """Retorna estatÃ­sticas de downloads do usuÃ¡rio"""
     with DB_LOCK:
         try:
             conn = sqlite3.connect(DB_FILE, timeout=10)
             c = conn.cursor()
             
-            # Busca ou cria registro do usuário
+            # Busca ou cria registro do usuÃ¡rio
             c.execute("SELECT downloads_count, is_premium, last_reset FROM user_downloads WHERE user_id=?", (user_id,))
             row = c.fetchone()
             
@@ -281,7 +304,7 @@ def get_user_download_stats(user_id: int) -> dict:
             if row:
                 downloads_count, is_premium, last_reset = row
                 
-                # Reseta contador se mudou o mês
+                # Reseta contador se mudou o mÃªs
                 if last_reset != current_month and not is_premium:
                     downloads_count = 0
                     c.execute("UPDATE user_downloads SET downloads_count=0, last_reset=? WHERE user_id=?", 
@@ -307,11 +330,11 @@ def get_user_download_stats(user_id: int) -> dict:
                 "limit": FREE_DOWNLOADS_LIMIT
             }
         except sqlite3.Error as e:
-            LOG.error("Erro ao obter estatísticas de download: %s", e)
+            LOG.error("Erro ao obter estatÃ­sticas de download: %s", e)
             return {"downloads_count": 0, "is_premium": False, "remaining": FREE_DOWNLOADS_LIMIT, "limit": FREE_DOWNLOADS_LIMIT}
 
 def can_download(user_id: int) -> bool:
-    """Verifica se o usuário pode realizar um download"""
+    """Verifica se o usuÃ¡rio pode realizar um download"""
     stats = get_user_download_stats(user_id)
     
     if stats["is_premium"]:
@@ -320,7 +343,7 @@ def can_download(user_id: int) -> bool:
     return stats["downloads_count"] < FREE_DOWNLOADS_LIMIT
 
 def increment_download_count(user_id: int):
-    """Incrementa o contador de downloads do usuário"""
+    """Incrementa o contador de downloads do usuÃ¡rio"""
     with DB_LOCK:
         try:
             conn = sqlite3.connect(DB_FILE, timeout=10)
@@ -328,12 +351,12 @@ def increment_download_count(user_id: int):
             c.execute("UPDATE user_downloads SET downloads_count = downloads_count + 1 WHERE user_id=?", (user_id,))
             conn.commit()
             conn.close()
-            LOG.info("Contador de downloads incrementado para usuário %d", user_id)
+            LOG.info("Contador de downloads incrementado para usuÃ¡rio %d", user_id)
         except sqlite3.Error as e:
             LOG.error("Erro ao incrementar contador de downloads: %s", e)
 
 def get_monthly_users_count() -> int:
-    """Retorna o número de usuários ativos no mês atual"""
+    """Retorna o nÃºmero de usuÃ¡rios ativos no mÃªs atual"""
     month = time.strftime("%Y-%m")
     with DB_LOCK:
         try:
@@ -347,17 +370,17 @@ def get_monthly_users_count() -> int:
             return 0
 
 # ============================
-# PIX PAYMENT SYSTEM (Estrutura para implementação futura)
+# PIX PAYMENT SYSTEM (Estrutura para implementaÃ§Ã£o futura)
 # ============================
 
 def create_pix_payment(user_id: int, amount: float) -> str:
     """
     Cria um registro de pagamento PIX pendente
     
-    TODO: Implementar integração com gateway de pagamento
+    TODO: Implementar integraÃ§Ã£o com gateway de pagamento
     - Gerar QR Code PIX
-    - Criar chave PIX única por transação
-    - Retornar dados para exibição ao usuário
+    - Criar chave PIX Ãºnica por transaÃ§Ã£o
+    - Retornar dados para exibiÃ§Ã£o ao usuÃ¡rio
     """
     with DB_LOCK:
         try:
@@ -388,10 +411,10 @@ def confirm_pix_payment(payment_reference: str, user_id: int):
     """
     Confirma um pagamento PIX e ativa o plano premium
     
-    TODO: Implementar verificação automática de pagamento
+    TODO: Implementar verificaÃ§Ã£o automÃ¡tica de pagamento
     - Webhook do gateway de pagamento
-    - Validação do comprovante
-    - Ativação automática do premium
+    - ValidaÃ§Ã£o do comprovante
+    - AtivaÃ§Ã£o automÃ¡tica do premium
     """
     with DB_LOCK:
         try:
@@ -405,7 +428,7 @@ def confirm_pix_payment(payment_reference: str, user_id: int):
                 WHERE user_id=? AND status='pending'
             """, (user_id,))
             
-            # Ativa premium para o usuário
+            # Ativa premium para o usuÃ¡rio
             premium_expires = time.strftime("%Y-%m-%d", time.localtime(time.time() + 30*24*60*60))  # +30 dias
             c.execute("""
                 UPDATE user_downloads 
@@ -416,7 +439,7 @@ def confirm_pix_payment(payment_reference: str, user_id: int):
             conn.commit()
             conn.close()
             
-            LOG.info("Pagamento PIX confirmado para usuário %d", user_id)
+            LOG.info("Pagamento PIX confirmado para usuÃ¡rio %d", user_id)
             return True
         except sqlite3.Error as e:
             LOG.error("Erro ao confirmar pagamento PIX: %s", e)
@@ -430,10 +453,10 @@ init_db()
 # ============================
 
 def prepare_cookies_from_env(env_var="YT_COOKIES_B64"):
-    """Prepara arquivo de cookies a partir de variável de ambiente Base64"""
+    """Prepara arquivo de cookies a partir de variÃ¡vel de ambiente Base64"""
     b64 = os.environ.get(env_var)
     if not b64:
-        LOG.info("Variável %s não encontrada.", env_var)
+        LOG.info("VariÃ¡vel %s nÃ£o encontrada.", env_var)
         return None
     
     try:
@@ -463,7 +486,7 @@ COOKIE_IG = prepare_cookies_from_env("IG_COOKIES_B64")
 # ============================
 
 def is_valid_url(url: str) -> bool:
-    """Valida se a string é uma URL válida"""
+    """Valida se a string Ã© uma URL vÃ¡lida"""
     try:
         result = urlparse(url)
         return all([result.scheme in ('http', 'https'), result.netloc])
@@ -498,7 +521,7 @@ def get_cookie_for_url(url: str):
         LOG.info("Usando cookies do Instagram (fallback)")
         return COOKIE_IG
     
-    LOG.info("Nenhum cookie disponível")
+    LOG.info("Nenhum cookie disponÃ­vel")
     return None
 
 def get_format_for_url(url: str) -> str:
@@ -507,17 +530,17 @@ def get_format_for_url(url: str) -> str:
     
     # Instagram: usa formato simples sem especificar height
     if 'instagram' in url_lower or 'insta' in url_lower:
-        LOG.info("Formato Instagram: best (sem restrições específicas)")
+        LOG.info("Formato Instagram: best (sem restriÃ§Ãµes especÃ­ficas)")
         return "best"
     
     # YouTube: limita a 720p
     elif 'youtube' in url_lower or 'youtu.be' in url_lower:
-        LOG.info("Formato YouTube: 720p máximo")
+        LOG.info("Formato YouTube: 720p mÃ¡ximo")
         return "best[height<=720]/best"
     
-    # Outras plataformas: formato padrão flexível
+    # Outras plataformas: formato padrÃ£o flexÃ­vel
     else:
-        LOG.info("Formato padrão: best com fallback")
+        LOG.info("Formato padrÃ£o: best com fallback")
         return "best/bestvideo+bestaudio"
 
 def resolve_shopee_universal_link(url: str) -> str:
@@ -536,7 +559,7 @@ def resolve_shopee_universal_link(url: str) -> str:
     return url
 
 def format_duration(seconds: int) -> str:
-    """Formata duração em segundos para formato legível"""
+    """Formata duraÃ§Ã£o em segundos para formato legÃ­vel"""
     if not seconds:
         return "N/A"
     
@@ -552,7 +575,7 @@ def format_duration(seconds: int) -> str:
         return f"{secs}s"
 
 def format_filesize(bytes_size: int) -> str:
-    """Formata tamanho de arquivo em bytes para formato legível"""
+    """Formata tamanho de arquivo em bytes para formato legÃ­vel"""
     if not bytes_size:
         return "N/A"
     
@@ -567,7 +590,7 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
     """Download especial para Shopee Video usando web scraping"""
     if not REQUESTS_AVAILABLE:
         await application.bot.edit_message_text(
-            text="⚠️ Extrator Shopee não disponível. Instale: pip install requests beautifulsoup4",
+            text="âš ï¸ Extrator Shopee nÃ£o disponÃ­vel. Instale: pip install requests beautifulsoup4",
             chat_id=pm["chat_id"],
             message_id=pm["message_id"]
         )
@@ -576,14 +599,14 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
     try:
         # Atualiza mensagem
         await application.bot.edit_message_text(
-            text="🛍️ Extraindo vídeo da Shopee...",
+            text="ðŸ›ï¸ Extraindo vÃ­deo da Shopee...",
             chat_id=pm["chat_id"],
             message_id=pm["message_id"]
         )
         
-        LOG.info("Iniciando extração customizada da Shopee: %s", url)
+        LOG.info("Iniciando extraÃ§Ã£o customizada da Shopee: %s", url)
         
-        # Faz requisição à página
+        # Faz requisiÃ§Ã£o Ã  pÃ¡gina
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -591,7 +614,7 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             "Referer": "https://shopee.com.br/",
         }
         
-        # Carrega cookies se disponível
+        # Carrega cookies se disponÃ­vel
         cookies_dict = {}
         if COOKIE_SHOPEE:
             try:
@@ -610,31 +633,31 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         )
         response.raise_for_status()
         
-        LOG.info("Página da Shopee carregada, analisando...")
+        LOG.info("PÃ¡gina da Shopee carregada, analisando...")
         
-        # Busca URL do vídeo no HTML/JavaScript
+        # Busca URL do vÃ­deo no HTML/JavaScript
         video_url = None
         
-        # Padrão 1: Busca em tags <script> com JSON
+        # PadrÃ£o 1: Busca em tags <script> com JSON
         import json
         patterns = [
-            # Padrões originais
+            # PadrÃµes originais
             r'"videoUrl"\s*:\s*"([^"]+)"',
             r'"video_url"\s*:\s*"([^"]+)"',
             r'"playAddr"\s*:\s*"([^"]+)"',
             r'"url"\s*:\s*"(https://[^"]*\.mp4[^"]*)"',
             r'playAddr["\']:\s*["\']([^"\']+)',
             r'"playUrl"\s*:\s*"([^"]+)"',
-            # Novos padrões para Shopee
+            # Novos padrÃµes para Shopee
             r'"video"\s*:\s*{\s*"url"\s*:\s*"([^"]+)"',
             r'"stream"\s*:\s*"([^"]+)"',
             r'"source"\s*:\s*"([^"]+)"',
             r'videoUrl:\s*["\']([^"\']+)',
             r'src:\s*["\']([^"\']+\.mp4[^"\']*)',
-            # Padrões para dados em window/global
+            # PadrÃµes para dados em window/global
             r'window\.__INITIAL_STATE__.*?"video".*?"url"\s*:\s*"([^"]+)"',
             r'window\.videoData.*?"url"\s*:\s*"([^"]+)"',
-            # Padrões para URLs diretas de CDN
+            # PadrÃµes para URLs diretas de CDN
             r'(https://[^"\s]*shopee[^"\s]*\.mp4[^"\s]*)',
             r'(https://[^"\s]*vod[^"\s]*\.mp4[^"\s]*)',
             r'(https://[^"\s]*video[^"\s]*\.mp4[^"\s]*)',
@@ -647,12 +670,12 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
                 clean_url = match.replace('\\/', '/').replace('\\', '')
                 if 'http' in clean_url and ('mp4' in clean_url.lower() or 'video' in clean_url.lower()):
                     video_url = clean_url
-                    LOG.info("URL de vídeo encontrada via regex: %s", video_url[:100])
+                    LOG.info("URL de vÃ­deo encontrada via regex: %s", video_url[:100])
                     break
             if video_url:
                 break
         
-        # Padrão 2: Busca em meta tags
+        # PadrÃ£o 2: Busca em meta tags
         if not video_url:
             soup = BeautifulSoup(response.content, 'html.parser')
             
@@ -701,10 +724,10 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
                 for tag in meta_tags:
                     if tag and tag.get('content'):
                         video_url = tag.get('content')
-                        LOG.info("URL de vídeo encontrada via meta tag: %s", video_url[:100])
+                        LOG.info("URL de vÃ­deo encontrada via meta tag: %s", video_url[:100])
                         break
         
-        # Padrão 3: Busca em tags <video> ou <source>
+        # PadrÃ£o 3: Busca em tags <video> ou <source>
         if not video_url:
             soup = BeautifulSoup(response.content, 'html.parser')
             video_tag = soup.find('video')
@@ -720,13 +743,13 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
                         break
         
         if not video_url:
-            LOG.error("Nenhuma URL de vídeo encontrada na página da Shopee")
+            LOG.error("Nenhuma URL de vÃ­deo encontrada na pÃ¡gina da Shopee")
             await application.bot.edit_message_text(
-                text="⚠️ <b>Não consegui encontrar o vídeo</b>\n\n"
-                     "Possíveis causas:\n"
-                     "• O link pode estar incorreto\n"
-                     "• O vídeo pode ter sido removido\n"
-                     "• A Shopee mudou a estrutura do site\n\n"
+                text="âš ï¸ <b>NÃ£o consegui encontrar o vÃ­deo</b>\n\n"
+                     "PossÃ­veis causas:\n"
+                     "â€¢ O link pode estar incorreto\n"
+                     "â€¢ O vÃ­deo pode ter sido removido\n"
+                     "â€¢ A Shopee mudou a estrutura do site\n\n"
                      "Tente baixar pelo app oficial da Shopee.",
                 chat_id=pm["chat_id"],
                 message_id=pm["message_id"],
@@ -734,20 +757,20 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             )
             return
         
-        # Ajusta URL se necessário
+        # Ajusta URL se necessÃ¡rio
         if not video_url.startswith('http'):
             video_url = 'https:' + video_url if video_url.startswith('//') else 'https://sv.shopee.com.br' + video_url
         
-        LOG.info("Baixando vídeo da URL: %s", video_url[:100])
+        LOG.info("Baixando vÃ­deo da URL: %s", video_url[:100])
         
         # Atualiza mensagem
         await application.bot.edit_message_text(
-            text="📥 Baixando vídeo da Shopee...",
+            text="ðŸ“¥ Baixando vÃ­deo da Shopee...",
             chat_id=pm["chat_id"],
             message_id=pm["message_id"]
         )
         
-        # Baixa o vídeo
+        # Baixa o vÃ­deo
         output_path = os.path.join(tmpdir, "shopee_video.mp4")
         
         video_response = await asyncio.to_thread(
@@ -759,7 +782,7 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         
         # Verifica tamanho antes de baixar
         if total_size > MAX_FILE_SIZE:
-            LOG.warning("Vídeo da Shopee excede 50 MB: %d bytes", total_size)
+            LOG.warning("VÃ­deo da Shopee excede 50 MB: %d bytes", total_size)
             await application.bot.edit_message_text(
                 text=MESSAGES["file_too_large"],
                 chat_id=pm["chat_id"],
@@ -782,37 +805,37 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
                         if percent != last_percent and percent % 10 == 0:
                             last_percent = percent
                             blocks = int(percent / 5)
-                            bar = "█" * blocks + "░" * (20 - blocks)
+                            bar = "â–ˆ" * blocks + "â–‘" * (20 - blocks)
                             try:
                                 await application.bot.edit_message_text(
-                                    text=f"📥 Shopee: {percent}%\n{bar}",
+                                    text=f"ðŸ“¥ Shopee: {percent}%\n{bar}",
                                     chat_id=pm["chat_id"],
                                     message_id=pm["message_id"]
                                 )
                             except:
                                 pass
         
-        LOG.info("Vídeo da Shopee baixado com sucesso: %s", output_path)
+        LOG.info("VÃ­deo da Shopee baixado com sucesso: %s", output_path)
         
         # Verifica se arquivo foi criado
         if not os.path.exists(output_path) or os.path.getsize(output_path) < 1000:
-            raise Exception("Arquivo baixado está vazio ou corrompido")
+            raise Exception("Arquivo baixado estÃ¡ vazio ou corrompido")
         
-        # Envia o vídeo
+        # Envia o vÃ­deo
         await application.bot.edit_message_text(
-            text="✅ Download concluído, enviando...",
+            text="âœ… Download concluÃ­do, enviando...",
             chat_id=pm["chat_id"],
             message_id=pm["message_id"]
         )
         
         with open(output_path, "rb") as fh:
-            await application.bot.send_video(chat_id=chat_id, video=fh, caption="🛍️ Shopee Video")
+            await application.bot.send_video(chat_id=chat_id, video=fh, caption="ðŸ›ï¸ Shopee Video")
         
         # Mensagem de sucesso com contador
         stats = get_user_download_stats(pm["user_id"])
         success_text = MESSAGES["upload_complete"].format(
             remaining=stats["remaining"],
-            total=stats["limit"] if not stats["is_premium"] else "∞"
+            total=stats["limit"] if not stats["is_premium"] else "âˆž"
         )
         
         await application.bot.edit_message_text(
@@ -831,8 +854,8 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
     except Exception as e:
         LOG.exception("Erro no download Shopee customizado: %s", e)
         await application.bot.edit_message_text(
-            text="⚠️ <b>Erro ao baixar vídeo da Shopee</b>\n\n"
-                 "A Shopee pode ter proteções especiais neste vídeo. "
+            text="âš ï¸ <b>Erro ao baixar vÃ­deo da Shopee</b>\n\n"
+                 "A Shopee pode ter proteÃ§Ãµes especiais neste vÃ­deo. "
                  "Tente baixar pelo app oficial.",
             chat_id=pm["chat_id"],
             message_id=pm["message_id"],
@@ -840,7 +863,7 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         )
 
 def split_video_file(input_path: str, output_dir: str, segment_size: int = SPLIT_SIZE) -> list:
-    """Divide arquivo de vídeo em partes menores"""
+    """Divide arquivo de vÃ­deo em partes menores"""
     os.makedirs(output_dir, exist_ok=True)
     
     file_size = os.path.getsize(input_path)
@@ -880,7 +903,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     welcome_text = MESSAGES["welcome"].format(free_limit=FREE_DOWNLOADS_LIMIT)
     await update.message.reply_text(welcome_text, parse_mode="HTML")
-    LOG.info("Comando /start executado por usuário %d", user_id)
+    LOG.info("Comando /start executado por usuÃ¡rio %d", user_id)
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para o comando /stats (apenas admin)"""
@@ -894,25 +917,25 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     stats = get_user_download_stats(user_id)
     
-    premium_info = "✅ Plano: <b>Premium Ativo</b>" if stats["is_premium"] else "📦 Plano: <b>Gratuito</b>"
+    premium_info = "âœ… Plano: <b>Premium Ativo</b>" if stats["is_premium"] else "ðŸ“¦ Plano: <b>Gratuito</b>"
     
     status_text = MESSAGES["status"].format(
         user_id=user_id,
         used=stats["downloads_count"],
-        total=stats["limit"] if not stats["is_premium"] else "∞",
+        total=stats["limit"] if not stats["is_premium"] else "âˆž",
         remaining=stats["remaining"],
         premium_info=premium_info
     )
     
     await update.message.reply_text(status_text, parse_mode="HTML")
-    LOG.info("Comando /status executado por usuário %d", user_id)
+    LOG.info("Comando /status executado por usuÃ¡rio %d", user_id)
 
 async def premium_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para o comando /premium - informações sobre plano premium"""
+    """Handler para o comando /premium - informaÃ§Ãµes sobre plano premium"""
     user_id = update.effective_user.id
     
     keyboard = [[
-        InlineKeyboardButton("💳 Assinar Premium", callback_data=f"subscribe:{user_id}")
+        InlineKeyboardButton("ðŸ’³ Assinar Premium", callback_data=f"subscribe:{user_id}")
     ]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -921,43 +944,139 @@ async def premium_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
         reply_markup=reply_markup
     )
-    LOG.info("Comando /premium executado por usuário %d", user_id)
+    LOG.info("Comando /premium executado por usuÃ¡rio %d", user_id)
+
+async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler para o comando /ai - conversar com IA"""
+    if not groq_client:
+        await update.message.reply_text(
+            "ðŸ¤– <b>IA NÃ£o DisponÃ­vel</b>\n\n"
+            "A inteligÃªncia artificial nÃ£o estÃ¡ configurada no momento.\n"
+            "Entre em contato com o administrador.",
+            parse_mode="HTML"
+        )
+        return
+    
+    # Se tem argumentos, responde direto
+    if context.args:
+        user_message = " ".join(context.args)
+        await update.message.chat.send_action("typing")
+        
+        response = await chat_with_ai(
+            user_message,
+            system_prompt="""VocÃª Ã© um assistente amigÃ¡vel para um bot de downloads do Telegram.
+- Seja Ãºtil, direto e use frases curtas.
+- Utilize emojis apenas quando fizer sentido.
+- Nunca invente informaÃ§Ãµes. Se nÃ£o souber, responda exatamente: "NÃ£o tenho essa informaÃ§Ã£o".
+- NÃ£o forneÃ§a detalhes que nÃ£o estejam listados abaixo.
+- Se o usuÃ¡rio quiser assinar o plano, peÃ§a para digitar /premium.
+- Este bot nÃ£o faz download de mÃºsicas e nÃ£o permite escolher qualidade de vÃ­deos.
+
+Funcionalidades:
+- Download de vÃ­deos (YouTube, Instagram, TikTok, Twitter, etc.)
+- Plano gratuito: 10 downloads/mÃªs
+- Plano premium: downloads ilimitados (R$9,90/mÃªs)
+- Se o usuÃ¡rio falar para vocÃª baixar algum vÃ­deo, incentive ele a te enviar um link
+"""
+        )
+        
+        if response:
+            await update.message.reply_text(response, parse_mode="HTML")
+        else:
+            await update.message.reply_text(
+                "âš ï¸ Erro ao processar sua mensagem. Tente novamente."
+            )
+    else:
+        # Sem argumentos, mostra instruÃ§Ãµes
+        await update.message.reply_text(
+            "ðŸ¤– <b>Assistente com IA</b>\n\n"
+            "Converse comigo! Use:\n"
+            "â€¢ <code>/ai sua pergunta aqui</code>\n\n"
+            "<b>Ou simplesmente envie uma mensagem de texto!</b>\n\n"
+            "<i>Exemplos:</i>\n"
+            "â€¢ /ai como baixar vÃ­deos?\n"
+            "â€¢ /ai o que Ã© o plano premium?\n"
+            "â€¢ /ai me recomende vÃ­deos sobre MÃºsica",
+            parse_mode="HTML"
+        )
+    
+    LOG.info("Comando /ai executado por usuÃ¡rio %d", update.effective_user.id)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para mensagens de texto (URLs)"""
-    text = update.message.text.strip()
-
-    # ✅ Em grupos, só responde se mencionado; em privado, responde sempre
-    if update.effective_chat.type != "private" and f"@{context.bot.username}" not in text:
-        return
-
+    """Handler para mensagens de texto (URLs ou chat com IA)"""
     user_id = update.effective_user.id
+    text = update.message.text.strip()
+    
     update_user(user_id)
-
-    # Verifica se é um link válido
+    
+    # Verifica se Ã© um link vÃ¡lido
     urls = URL_RE.findall(text)
     if not urls:
+        # NÃ£o hÃ¡ URL - verifica se tem IA disponÃ­vel para chat
+        if groq_client:
+            # Analisa intenÃ§Ã£o do usuÃ¡rio
+            intent_data = await analyze_user_intent(text)
+            intent = intent_data.get('intent', 'chat')
+            
+            # Se for pedido de ajuda ou chat geral, responde com IA
+            if intent in ['help', 'chat']:
+                LOG.info("ðŸ’¬ Chat IA - UsuÃ¡rio %d: %s", user_id, text[:50])
+                await update.message.chat.send_action("typing")
+                
+                response = await chat_with_ai(
+                    text,
+                    system_prompt="""VocÃª Ã© um assistente amigÃ¡vel para um bot de downloads do Telegram.
+- Seja Ãºtil, direto e use frases curtas.
+- Utilize emojis apenas quando fizer sentido.
+- Nunca invente informaÃ§Ãµes. Se nÃ£o souber, responda exatamente: "NÃ£o tenho essa informaÃ§Ã£o".
+- NÃ£o forneÃ§a detalhes que nÃ£o estejam listados abaixo.
+- Se o usuÃ¡rio quiser assinar o plano, peÃ§a para digitar /premium.
+- Este bot nÃ£o faz download de mÃºsicas e nÃ£o permite escolher qualidade de vÃ­deos.
+
+Funcionalidades:
+- Download de vÃ­deos (YouTube, Instagram, TikTok, Twitter, etc.)
+- Plano gratuito: 10 downloads/mÃªs
+- Plano premium: downloads ilimitados (R$9,90/mÃªs)
+- Se o usuÃ¡rio falar para vocÃª baixar algum vÃ­deo, incentive ele a te enviar um link
+
+Comandos:
+/start - Iniciar
+/status - Ver estatÃ­sticas
+/premium - Plano premium 
+"""
+                )
+                
+                if response:
+                    await update.message.reply_text(response)
+                else:
+                    await update.message.reply_text(
+                        "âš ï¸ Desculpe, nÃ£o consegui processar sua mensagem.\n\n"
+                        "ðŸ’¡ <b>Dica:</b> Para baixar vÃ­deos, envie um link!\n"
+                        "Use /ai para conversar comigo.",
+                        parse_mode="HTML"
+                    )
+                return
+        
+        # Sem IA ou nÃ£o conseguiu processar - mostra mensagem padrÃ£o
         await update.message.reply_text(MESSAGES["url_prompt"])
         return
-
+    
     url = urls[0]
-
+    
     if not is_valid_url(url):
         await update.message.reply_text(MESSAGES["invalid_url"])
         return
-
+    
     # Verifica limite de downloads
     if not can_download(user_id):
         await update.message.reply_text(
             MESSAGES["limit_reached"].format(limit=FREE_DOWNLOADS_LIMIT),
             parse_mode="HTML"
         )
-        LOG.info("Usuário %d atingiu limite de downloads", user_id)
+        LOG.info("UsuÃ¡rio %d atingiu limite de downloads", user_id)
         return
-
-    # ... restante da lógica original continua igual ...
     
-    # Cria token único para esta requisição
+    # Cria token Ãºnico para esta requisiÃ§Ã£o
     token = str(uuid.uuid4())
     
     # Resolve links universais da Shopee
@@ -967,27 +1086,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Envia mensagem de processamento
     processing_msg = await update.message.reply_text(MESSAGES["processing"])
     
-    # Verifica se é Shopee Video - não conseguimos extrair info com yt-dlp
+    # Verifica se Ã© Shopee Video - nÃ£o conseguimos extrair info com yt-dlp
     is_shopee_video = 'sv.shopee' in url.lower() or 'share-video' in url.lower()
     
     if is_shopee_video:
-        # Para Shopee Video, criamos confirmação simples sem informações detalhadas
-        LOG.info("Detectado Shopee Video - confirmação sem extração prévia")
+        # Para Shopee Video, criamos confirmaÃ§Ã£o simples sem informaÃ§Ãµes detalhadas
+        LOG.info("Detectado Shopee Video - confirmaÃ§Ã£o sem extraÃ§Ã£o prÃ©via")
         
-        # Cria botões de confirmação
+        # Cria botÃµes de confirmaÃ§Ã£o
         keyboard = [
             [
-                InlineKeyboardButton("✅ Confirmar", callback_data=f"dl:{token}"),
-                InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}")
+                InlineKeyboardButton("âœ… Confirmar", callback_data=f"dl:{token}"),
+                InlineKeyboardButton("âŒ Cancelar", callback_data=f"cancel:{token}")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         confirm_text = (
-            "🎬 <b>Confirmar Download</b>\n\n"
-            "🛍️ Vídeo da Shopee\n"
-            "⚠️ Informações disponíveis apenas após download\n\n"
-            "✅ Deseja prosseguir com o download?"
+            "ðŸŽ¬ <b>Confirmar Download</b>\n\n"
+            "ðŸ›ï¸ VÃ­deo da Shopee\n"
+            "âš ï¸ InformaÃ§Ãµes disponÃ­veis apenas apÃ³s download\n\n"
+            "âœ… Deseja prosseguir com o download?"
         )
         
         await processing_msg.edit_text(
@@ -996,7 +1115,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
         
-        # Armazena informações pendentes
+        # Armazena informaÃ§Ãµes pendentes
         PENDING[token] = {
             "url": url,
             "user_id": user_id,
@@ -1005,11 +1124,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "timestamp": time.time(),
         }
         
-        # Remove requisições antigas
+        # Remove requisiÃ§Ãµes antigas
         _cleanup_pending()
         return
     
-    # Obtém informações do vídeo (para não-Shopee)
+    # ObtÃ©m informaÃ§Ãµes do vÃ­deo (para nÃ£o-Shopee)
     try:
         video_info = await get_video_info(url)
         
@@ -1017,7 +1136,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await processing_msg.edit_text(MESSAGES["invalid_url"])
             return
         
-        title = video_info.get("title", "Vídeo")[:100]
+        title = video_info.get("title", "VÃ­deo")[:100]
         duration = format_duration(video_info.get("duration", 0))
         filesize_bytes = video_info.get("filesize") or video_info.get("filesize_approx", 0)
         filesize = format_filesize(filesize_bytes)
@@ -1025,14 +1144,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Verifica se o arquivo excede o limite de 50 MB
         if filesize_bytes and filesize_bytes > MAX_FILE_SIZE:
             await processing_msg.edit_text(MESSAGES["file_too_large"], parse_mode="HTML")
-            LOG.info("Vídeo rejeitado por exceder 50 MB: %d bytes", filesize_bytes)
+            LOG.info("VÃ­deo rejeitado por exceder 50 MB: %d bytes", filesize_bytes)
             return
         
-        # Cria botões de confirmação
+        # Cria botÃµes de confirmaÃ§Ã£o
         keyboard = [
             [
-                InlineKeyboardButton("✅ Confirmar", callback_data=f"dl:{token}"),
-                InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}")
+                InlineKeyboardButton("âœ… Confirmar", callback_data=f"dl:{token}"),
+                InlineKeyboardButton("âŒ Cancelar", callback_data=f"cancel:{token}")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1049,7 +1168,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
         
-        # Armazena informações pendentes
+        # Armazena informaÃ§Ãµes pendentes
         PENDING[token] = {
             "url": url,
             "user_id": user_id,
@@ -1058,15 +1177,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "timestamp": time.time(),
         }
         
-        # Remove requisições antigas
+        # Remove requisiÃ§Ãµes antigas
         _cleanup_pending()
         
     except Exception as e:
-        LOG.exception("Erro ao obter informações do vídeo: %s", e)
+        LOG.exception("Erro ao obter informaÃ§Ãµes do vÃ­deo: %s", e)
         await processing_msg.edit_text(MESSAGES["error_unknown"])
 
 async def get_video_info(url: str) -> dict:
-    """Obtém informações básicas do vídeo sem fazer download"""
+    """ObtÃ©m informaÃ§Ãµes bÃ¡sicas do vÃ­deo sem fazer download"""
     cookie_file = get_cookie_for_url(url)
     
     ydl_opts = {
@@ -1083,11 +1202,145 @@ async def get_video_info(url: str) -> dict:
             info = await asyncio.to_thread(ydl.extract_info, url, download=False)
             return info
     except Exception as e:
-        LOG.error("Erro ao extrair informações: %s", e)
+        LOG.error("Erro ao extrair informaÃ§Ãµes: %s", e)
         return None
 
 # ====================================================================
-# FUNÇÕES DO MERCADO PAGO
+# FUNÃ‡Ã•ES DE INTELIGÃŠNCIA ARTIFICIAL (GROQ)
+# ====================================================================
+
+async def chat_with_ai(message: str, system_prompt: str = None) -> str:
+    """
+    Envia mensagem para Groq AI e retorna resposta.
+    
+    Args:
+        message: Mensagem do usuÃ¡rio
+        system_prompt: InstruÃ§Ãµes do sistema (opcional)
+        
+    Returns:
+        str: Resposta da IA
+    """
+    if not groq_client:
+        return None
+    
+    try:
+        messages = []
+        
+        # Adiciona prompt do sistema se fornecido
+        if system_prompt:
+            messages.append({
+                "role": "system",
+                "content": system_prompt
+            })
+        
+        # Adiciona mensagem do usuÃ¡rio
+        messages.append({
+            "role": "user",
+            "content": message
+        })
+        
+        # Chama API do Groq
+        response = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=messages,
+            temperature=0.7,
+            max_tokens=1024
+        )
+        
+        return response.choices[0].message.content
+        
+    except Exception as e:
+        LOG.error("Erro ao chamar Groq AI: %s", e)
+        return None
+
+
+async def generate_video_summary(video_info: dict) -> str:
+    """
+    Gera resumo inteligente de um vÃ­deo usando IA.
+    
+    Args:
+        video_info: DicionÃ¡rio com informaÃ§Ãµes do vÃ­deo
+        
+    Returns:
+        str: Resumo do vÃ­deo ou string vazia se IA indisponÃ­vel
+    """
+    if not groq_client:
+        return ""
+    
+    try:
+        title = video_info.get('title', 'N/A')
+        description = video_info.get('description', '')
+        
+        # Limita descriÃ§Ã£o para nÃ£o exceder tokens
+        if description and len(description) > 500:
+            description = description[:500] + "..."
+        
+        prompt = f"""Crie um resumo CURTO e OBJETIVO deste vÃ­deo em 3-4 pontos principais.
+Use bullets (â€¢) e seja direto.
+
+TÃ­tulo: {title}
+DescriÃ§Ã£o: {description or 'Sem descriÃ§Ã£o'}
+
+Responda APENAS com o resumo, sem introduÃ§Ãµes."""
+        
+        summary = await chat_with_ai(
+            prompt,
+            system_prompt="VocÃª Ã© um assistente que resume vÃ­deos de forma clara e concisa."
+        )
+        
+        return summary if summary else ""
+        
+    except Exception as e:
+        LOG.error("Erro ao gerar resumo: %s", e)
+        return ""
+
+
+async def analyze_user_intent(message: str) -> dict:
+    """
+    Analisa a intenÃ§Ã£o do usuÃ¡rio na mensagem.
+    
+    Args:
+        message: Mensagem do usuÃ¡rio
+        
+    Returns:
+        dict: {'intent': 'download' | 'chat' | 'help', 'confidence': 0.0-1.0}
+    """
+    # Fallback simples sem IA
+    if URL_RE.search(message):
+        return {'intent': 'download', 'confidence': 1.0}
+    
+    if not groq_client:
+        return {'intent': 'chat', 'confidence': 0.5}
+    
+    try:
+        prompt = f"""Analise esta mensagem de usuÃ¡rio e identifique a intenÃ§Ã£o:
+"{message}"
+
+Responda APENAS com uma das opÃ§Ãµes:
+- download: se pede para baixar algo ou tem URL
+- help: se pede ajuda, instruÃ§Ãµes ou explicaÃ§Ãµes
+- chat: conversa geral
+
+Responda APENAS uma palavra."""
+        
+        response = await chat_with_ai(
+            prompt,
+            system_prompt="VocÃª analisa intenÃ§Ãµes de usuÃ¡rios. Responda apenas: download, help ou chat."
+        )
+        
+        if response:
+            intent = response.strip().lower()
+            if intent in ['download', 'help', 'chat']:
+                return {'intent': intent, 'confidence': 0.9}
+        
+    except Exception as e:
+        LOG.error("Erro ao analisar intenÃ§Ã£o: %s", e)
+    
+    return {'intent': 'chat', 'confidence': 0.5}
+
+
+# ====================================================================
+# FUNÃ‡Ã•ES DO MERCADO PAGO
 # ====================================================================
 
 async def callback_buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1098,33 +1351,33 @@ async def callback_buy_premium(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = query.from_user.id
     username = query.from_user.first_name or f"User{user_id}"
     
-    LOG.info("🛒 Usuário %d iniciou compra de premium", user_id)
+    LOG.info("ðŸ›’ UsuÃ¡rio %d iniciou compra de premium", user_id)
     
-    # Verifica se já é premium
+    # Verifica se jÃ¡ Ã© premium
     stats = get_user_download_stats(user_id)
     if stats["is_premium"]:
         await query.edit_message_text(
-            "💎 <b>Você já é Premium!</b>\n\n"
-            "Continue aproveitando seus benefícios ilimitados! 🎉",
+            "ðŸ’Ž <b>VocÃª jÃ¡ Ã© Premium!</b>\n\n"
+            "Continue aproveitando seus benefÃ­cios ilimitados! ðŸŽ‰",
             parse_mode="HTML"
         )
-        LOG.info("Usuário %d já é premium", user_id)
+        LOG.info("UsuÃ¡rio %d jÃ¡ Ã© premium", user_id)
         return
     
-    # Verifica se Mercado Pago está disponível
+    # Verifica se Mercado Pago estÃ¡ disponÃ­vel
     if not MERCADOPAGO_AVAILABLE or not MERCADOPAGO_ACCESS_TOKEN:
         await query.edit_message_text(
-            "❌ <b>Sistema de Pagamento Indisponível</b>\n\n"
-            "O sistema de pagamento está temporariamente indisponível.\n"
+            "âŒ <b>Sistema de Pagamento IndisponÃ­vel</b>\n\n"
+            "O sistema de pagamento estÃ¡ temporariamente indisponÃ­vel.\n"
             "Por favor, tente novamente mais tarde ou contate o suporte.",
             parse_mode="HTML"
         )
-        LOG.error("Tentativa de compra mas Mercado Pago não configurado")
+        LOG.error("Tentativa de compra mas Mercado Pago nÃ£o configurado")
         return
     
     # Mostra mensagem de processamento
     await query.edit_message_text(
-        "⏳ <b>Gerando pagamento PIX...</b>\n\nAguarde um momento.",
+        "â³ <b>Gerando pagamento PIX...</b>\n\nAguarde um momento.",
         parse_mode="HTML"
     )
     
@@ -1156,7 +1409,7 @@ async def callback_buy_premium(update: Update, context: ContextTypes.DEFAULT_TYP
             payment_data["notification_url"] = f"{render_url}/webhook/pix"
             LOG.info("Notification URL configurada: %s/webhook/pix", render_url)
         
-        LOG.info("Criando pagamento PIX para usuário %d - Valor: R$ %.2f", user_id, PREMIUM_PRICE)
+        LOG.info("Criando pagamento PIX para usuÃ¡rio %d - Valor: R$ %.2f", user_id, PREMIUM_PRICE)
         
         # Cria o pagamento
         payment_response = sdk.payment().create(payment_data)
@@ -1172,24 +1425,24 @@ async def callback_buy_premium(update: Update, context: ContextTypes.DEFAULT_TYP
         payment = payment_response["response"]
         payment_id = payment.get("id")
         
-        LOG.info("✅ Payment criado - ID: %s, Status: %s", payment_id, payment.get("status"))
+        LOG.info("âœ… Payment criado - ID: %s, Status: %s", payment_id, payment.get("status"))
         
         # Valida estrutura do PIX
         if "point_of_interaction" not in payment:
             LOG.error("Resposta sem point_of_interaction: %s", payment)
-            raise Exception("PIX não foi gerado - point_of_interaction ausente")
+            raise Exception("PIX nÃ£o foi gerado - point_of_interaction ausente")
         
         poi = payment["point_of_interaction"]
         if "transaction_data" not in poi:
             LOG.error("point_of_interaction sem transaction_data: %s", poi)
-            raise Exception("PIX não foi gerado - transaction_data ausente")
+            raise Exception("PIX nÃ£o foi gerado - transaction_data ausente")
         
         td = poi["transaction_data"]
         if "qr_code" not in td or "qr_code_base64" not in td:
             LOG.error("transaction_data sem QR codes: %s", td)
-            raise Exception("PIX não foi gerado - QR codes ausentes")
+            raise Exception("PIX nÃ£o foi gerado - QR codes ausentes")
         
-        # Extrai informações do PIX
+        # Extrai informaÃ§Ãµes do PIX
         pix_info = {
             "payment_id": payment_id,
             "qr_code": td["qr_code"],
@@ -1197,7 +1450,7 @@ async def callback_buy_premium(update: Update, context: ContextTypes.DEFAULT_TYP
             "amount": payment["transaction_amount"]
         }
         
-        LOG.info("✅ PIX gerado com sucesso - ID: %s", payment_id)
+        LOG.info("âœ… PIX gerado com sucesso - ID: %s", payment_id)
         
         # Salva no banco de dados
         try:
@@ -1217,17 +1470,17 @@ async def callback_buy_premium(update: Update, context: ContextTypes.DEFAULT_TYP
         
         # Prepara mensagem
         message_text = (
-            "💳 <b>Pagamento PIX Gerado</b>\n\n"
-            f"💰 Valor: R$ {pix_info['amount']:.2f}\n"
-            f"🆔 ID: <code>{payment_id}</code>\n\n"
-            "📱 <b>Como pagar:</b>\n"
-            "1️⃣ Abra o app do seu banco\n"
-            "2️⃣ Vá em PIX → Ler QR Code\n"
-            "3️⃣ Escaneie o código abaixo\n"
-            "4️⃣ Confirme o pagamento\n\n"
-            "⏱️ <b>Expira em:</b> 30 minutos\n"
-            "✅ <b>Ativação automática após confirmação!</b>\n\n"
-            "⚡ Seu premium será ativado em até 60 segundos."
+            "ðŸ’³ <b>Pagamento PIX Gerado</b>\n\n"
+            f"ðŸ’° Valor: R$ {pix_info['amount']:.2f}\n"
+            f"ðŸ†” ID: <code>{payment_id}</code>\n\n"
+            "ðŸ“± <b>Como pagar:</b>\n"
+            "1ï¸âƒ£ Abra o app do seu banco\n"
+            "2ï¸âƒ£ VÃ¡ em PIX â†’ Ler QR Code\n"
+            "3ï¸âƒ£ Escaneie o cÃ³digo abaixo\n"
+            "4ï¸âƒ£ Confirme o pagamento\n\n"
+            "â±ï¸ <b>Expira em:</b> 30 minutos\n"
+            "âœ… <b>AtivaÃ§Ã£o automÃ¡tica apÃ³s confirmaÃ§Ã£o!</b>\n\n"
+            "âš¡ Seu premium serÃ¡ ativado em atÃ© 60 segundos."
         )
         
         # Tenta enviar QR Code como imagem
@@ -1252,30 +1505,30 @@ async def callback_buy_premium(update: Update, context: ContextTypes.DEFAULT_TYP
                         parse_mode="HTML"
                     )
                 
-                # Remove arquivo temporário
+                # Remove arquivo temporÃ¡rio
                 os.remove(qr_path)
                 qr_sent = True
-                LOG.info("✅ QR Code enviado como imagem")
+                LOG.info("âœ… QR Code enviado como imagem")
                 
             except Exception as e:
                 LOG.error("Erro ao enviar QR Code como imagem: %s", e)
         
-        # Se enviou imagem, envia código separado; senão envia tudo junto
+        # Se enviou imagem, envia cÃ³digo separado; senÃ£o envia tudo junto
         if qr_sent:
-            # Envia código PIX copia e cola em mensagem separada
-            LOG.info("Enviando código PIX copia e cola em mensagem separada")
+            # Envia cÃ³digo PIX copia e cola em mensagem separada
+            LOG.info("Enviando cÃ³digo PIX copia e cola em mensagem separada")
             await query.message.reply_text(
-                "📋 <b>Código PIX Copia e Cola:</b>\n\n"
-                "Caso prefira, copie o código abaixo e cole no seu app de pagamento:\n\n"
+                "ðŸ“‹ <b>CÃ³digo PIX Copia e Cola:</b>\n\n"
+                "Caso prefira, copie o cÃ³digo abaixo e cole no seu app de pagamento:\n\n"
                 f"<code>{pix_info['qr_code']}</code>\n\n"
-                "💡 <i>Clique no código acima para copiar automaticamente</i>",
+                "ðŸ’¡ <i>Clique no cÃ³digo acima para copiar automaticamente</i>",
                 parse_mode="HTML"
             )
         else:
             # Fallback: envia tudo como texto
-            LOG.info("Enviando QR Code como texto (código copia e cola)")
+            LOG.info("Enviando QR Code como texto (cÃ³digo copia e cola)")
             await query.message.reply_text(
-                message_text + f"\n\n📋 <b>Código PIX Copia e Cola:</b>\n<code>{pix_info['qr_code']}</code>",
+                message_text + f"\n\nðŸ“‹ <b>CÃ³digo PIX Copia e Cola:</b>\n<code>{pix_info['qr_code']}</code>",
                 parse_mode="HTML"
             )
         
@@ -1283,30 +1536,30 @@ async def callback_buy_premium(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             await query.message.delete()
         except Exception as e:
-            LOG.debug("Não foi possível deletar mensagem antiga: %s", e)
+            LOG.debug("NÃ£o foi possÃ­vel deletar mensagem antiga: %s", e)
         
         # Inicia monitoramento do pagamento
         LOG.info("Iniciando monitoramento do pagamento %s", payment_id)
         asyncio.create_task(monitor_payment_status(user_id, payment_id))
         
-        LOG.info("✅ Processo completo - Pagamento %s criado e em monitoramento", payment_id)
+        LOG.info("âœ… Processo completo - Pagamento %s criado e em monitoramento", payment_id)
         
     except Exception as e:
-        LOG.exception("❌ ERRO ao gerar pagamento PIX: %s", e)
+        LOG.exception("âŒ ERRO ao gerar pagamento PIX: %s", e)
         
-        # Determina mensagem de erro específica
+        # Determina mensagem de erro especÃ­fica
         error_msg = str(e).lower()
         if "401" in error_msg or "unauthorized" in error_msg:
-            error_detail = "Token do Mercado Pago inválido ou expirado."
+            error_detail = "Token do Mercado Pago invÃ¡lido ou expirado."
         elif "point_of_interaction" in error_msg or "qr" in error_msg:
             error_detail = "Erro ao gerar QR Code PIX. Verifique as credenciais."
         elif "mercadopago_access_token" in error_msg:
-            error_detail = "Sistema de pagamento não configurado no servidor."
+            error_detail = "Sistema de pagamento nÃ£o configurado no servidor."
         else:
             error_detail = f"Erro ao processar pagamento."
         
         await query.edit_message_text(
-            f"❌ <b>Erro ao Gerar Pagamento</b>\n\n"
+            f"âŒ <b>Erro ao Gerar Pagamento</b>\n\n"
             f"{error_detail}\n\n"
             f"Por favor, tente novamente em alguns instantes.\n\n"
             f"Se o erro persistir, entre em contato com o suporte.",
@@ -1317,14 +1570,14 @@ async def callback_buy_premium(update: Update, context: ContextTypes.DEFAULT_TYP
 async def monitor_payment_status(user_id: int, payment_id: str):
     """Monitora o status do pagamento em segundo plano"""
     if not MERCADOPAGO_AVAILABLE or not MERCADOPAGO_ACCESS_TOKEN:
-        LOG.error("Não é possível monitorar pagamento - Mercado Pago não configurado")
+        LOG.error("NÃ£o Ã© possÃ­vel monitorar pagamento - Mercado Pago nÃ£o configurado")
         return
     
     try:
         sdk = mercadopago.SDK(MERCADOPAGO_ACCESS_TOKEN)
         max_attempts = 60  # 30 minutos (30s * 60)
         
-        LOG.info("🔍 Monitorando pagamento %s (max %d tentativas)", payment_id, max_attempts)
+        LOG.info("ðŸ” Monitorando pagamento %s (max %d tentativas)", payment_id, max_attempts)
         
         for attempt in range(max_attempts):
             await asyncio.sleep(30)  # Verifica a cada 30 segundos
@@ -1345,14 +1598,14 @@ async def monitor_payment_status(user_id: int, payment_id: str):
                 
                 if status == "approved":
                     # Pagamento aprovado!
-                    LOG.info("🎉 Pagamento %s APROVADO!", payment_id)
+                    LOG.info("ðŸŽ‰ Pagamento %s APROVADO!", payment_id)
                     await activate_premium(user_id, payment_id)
                     break
                     
                 elif status in ["rejected", "cancelled", "refunded"]:
-                    LOG.info("⚠️ Pagamento %s não concluído: %s", payment_id, status)
+                    LOG.info("âš ï¸ Pagamento %s nÃ£o concluÃ­do: %s", payment_id, status)
                     
-                    # Notifica usuário
+                    # Notifica usuÃ¡rio
                     try:
                         status_messages = {
                             "rejected": "rejeitado",
@@ -1362,34 +1615,34 @@ async def monitor_payment_status(user_id: int, payment_id: str):
                         await application.bot.send_message(
                             chat_id=user_id,
                             text=(
-                                f"⚠️ <b>Pagamento {status_messages.get(status, status)}</b>\n\n"
+                                f"âš ï¸ <b>Pagamento {status_messages.get(status, status)}</b>\n\n"
                                 f"ID: <code>{payment_id}</code>\n\n"
-                                "Seu pagamento não foi concluído.\n"
+                                "Seu pagamento nÃ£o foi concluÃ­do.\n"
                                 "Se precisar de ajuda, entre em contato com o suporte."
                             ),
                             parse_mode="HTML"
                         )
                     except Exception as e:
-                        LOG.error("Erro ao notificar usuário sobre falha: %s", e)
+                        LOG.error("Erro ao notificar usuÃ¡rio sobre falha: %s", e)
                     break
                     
             except Exception as e:
                 LOG.error("Erro ao verificar status do pagamento %s: %s", payment_id, e)
         
         if attempt >= max_attempts - 1:
-            LOG.info("⏰ Timeout de monitoramento para pagamento %s após %d minutos", 
+            LOG.info("â° Timeout de monitoramento para pagamento %s apÃ³s %d minutos", 
                     payment_id, (max_attempts * 30) // 60)
             
     except Exception as e:
-        LOG.exception("Erro crítico no monitoramento do pagamento %s: %s", payment_id, e)
+        LOG.exception("Erro crÃ­tico no monitoramento do pagamento %s: %s", payment_id, e)
 
 
 async def activate_premium(user_id: int, payment_id: str):
-    """Ativa o plano premium para o usuário"""
+    """Ativa o plano premium para o usuÃ¡rio"""
     try:
-        LOG.info("🔓 Ativando premium para usuário %d - Pagamento: %s", user_id, payment_id)
+        LOG.info("ðŸ”“ Ativando premium para usuÃ¡rio %d - Pagamento: %s", user_id, payment_id)
         
-        # Calcula data de expiração
+        # Calcula data de expiraÃ§Ã£o
         premium_expires = (datetime.now() + timedelta(days=PREMIUM_DURATION_DAYS)).strftime("%Y-%m-%d")
         
         # Atualiza banco de dados
@@ -1415,38 +1668,38 @@ async def activate_premium(user_id: int, payment_id: str):
             conn.commit()
             conn.close()
         
-        LOG.info("✅ Premium ativado no banco de dados (%d linhas atualizadas)", rows_affected)
+        LOG.info("âœ… Premium ativado no banco de dados (%d linhas atualizadas)", rows_affected)
         
-        # Notifica o usuário
+        # Notifica o usuÃ¡rio
         await application.bot.send_message(
             chat_id=user_id,
             text=(
-                "🎉 <b>Pagamento Confirmado!</b>\n\n"
-                f"✅ Plano Premium ativado com sucesso!\n"
-                f"🆔 Pagamento: <code>{payment_id}</code>\n"
-                f"📅 Válido até: <b>{premium_expires}</b>\n\n"
-                "💎 <b>Benefícios liberados:</b>\n"
-                "• ♾️ Downloads ilimitados\n"
-                "• 🎬 Qualidade máxima (até 1080p)\n"
-                "• ⚡ Processamento prioritário\n"
-                "• 🎧 Suporte dedicado\n\n"
-                "Obrigado pela confiança! 🙏\n\n"
-                "Use /status para ver suas informações."
+                "ðŸŽ‰ <b>Pagamento Confirmado!</b>\n\n"
+                f"âœ… Plano Premium ativado com sucesso!\n"
+                f"ðŸ†” Pagamento: <code>{payment_id}</code>\n"
+                f"ðŸ“… VÃ¡lido atÃ©: <b>{premium_expires}</b>\n\n"
+                "ðŸ’Ž <b>BenefÃ­cios liberados:</b>\n"
+                "â€¢ â™¾ï¸ Downloads ilimitados\n"
+                "â€¢ ðŸŽ¬ Qualidade mÃ¡xima (atÃ© 1080p)\n"
+                "â€¢ âš¡ Processamento prioritÃ¡rio\n"
+                "â€¢ ðŸŽ§ Suporte dedicado\n\n"
+                "Obrigado pela confianÃ§a! ðŸ™\n\n"
+                "Use /status para ver suas informaÃ§Ãµes."
             ),
             parse_mode="HTML"
         )
         
-        LOG.info("✅ Usuário %d notificado sobre ativação do premium", user_id)
+        LOG.info("âœ… UsuÃ¡rio %d notificado sobre ativaÃ§Ã£o do premium", user_id)
         
     except Exception as e:
-        LOG.exception("❌ ERRO ao ativar premium para usuário %d: %s", user_id, e)
+        LOG.exception("âŒ ERRO ao ativar premium para usuÃ¡rio %d: %s", user_id, e)
         
         # Tenta notificar sobre o erro
         try:
             await application.bot.send_message(
                 chat_id=user_id,
                 text=(
-                    "⚠️ <b>Pagamento Recebido</b>\n\n"
+                    "âš ï¸ <b>Pagamento Recebido</b>\n\n"
                     "Recebemos seu pagamento mas houve um erro ao ativar seu premium automaticamente.\n\n"
                     "Por favor, entre em contato com o suporte informando este ID:\n"
                     f"<code>{payment_id}</code>\n\n"
@@ -1458,7 +1711,7 @@ async def activate_premium(user_id: int, payment_id: str):
             pass
 
 async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para callbacks de confirmação de download"""
+    """Handler para callbacks de confirmaÃ§Ã£o de download"""
     query = update.callback_query
     await query.answer()
     
@@ -1471,23 +1724,23 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     pm = PENDING[token]
     
-    # Verifica se o usuário é o mesmo que solicitou
+    # Verifica se o usuÃ¡rio Ã© o mesmo que solicitou
     if pm["user_id"] != query.from_user.id:
-        await query.answer("⚠️ Esta ação não pode ser realizada por você.", show_alert=True)
+        await query.answer("âš ï¸ Esta aÃ§Ã£o nÃ£o pode ser realizada por vocÃª.", show_alert=True)
         return
     
     if action == "cancel":
         del PENDING[token]
         await query.edit_message_text(MESSAGES["download_cancelled"])
-        LOG.info("Download cancelado pelo usuário %d", pm["user_id"])
+        LOG.info("Download cancelado pelo usuÃ¡rio %d", pm["user_id"])
         return
     
     if action == "dl":
-        # Verifica quantos downloads estão ativos
+        # Verifica quantos downloads estÃ£o ativos
         active_count = len(ACTIVE_DOWNLOADS)
         
         if active_count >= MAX_CONCURRENT_DOWNLOADS:
-            # Mostra posição na fila
+            # Mostra posiÃ§Ã£o na fila
             queue_position = active_count - MAX_CONCURRENT_DOWNLOADS + 1
             queue_text = MESSAGES["queue_position"].format(
                 position=queue_position,
@@ -1498,7 +1751,7 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Remove da lista de pendentes
         del PENDING[token]
         
-        # Adiciona à lista de downloads ativos
+        # Adiciona Ã  lista de downloads ativos
         ACTIVE_DOWNLOADS[token] = {
             "user_id": pm["user_id"],
             "started_at": time.time()
@@ -1511,29 +1764,29 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Inicia download em background
         asyncio.create_task(_process_download(token, pm))
-        LOG.info("Download iniciado para usuário %d (Token: %s)", pm["user_id"], token)
+        LOG.info("Download iniciado para usuÃ¡rio %d (Token: %s)", pm["user_id"], token)
 
 async def _process_download(token: str, pm: dict):
     """Processa o download em background"""
     tmpdir = None
     
-    # Aguarda na fila (semáforo para controlar 3 downloads simultâneos)
+    # Aguarda na fila (semÃ¡foro para controlar 3 downloads simultÃ¢neos)
     async with DOWNLOAD_SEMAPHORE:
         try:
             tmpdir = tempfile.mkdtemp(prefix=f"ytbot_")
-            LOG.info("Diretório temporário criado: %s", tmpdir)
+            LOG.info("DiretÃ³rio temporÃ¡rio criado: %s", tmpdir)
             
             try:
                 await _do_download(token, pm["url"], tmpdir, pm["chat_id"], pm)
             finally:
-                # Limpa arquivos temporários e envia mensagem de cleanup
+                # Limpa arquivos temporÃ¡rios e envia mensagem de cleanup
                 if tmpdir and os.path.exists(tmpdir):
                     try:
                         shutil.rmtree(tmpdir, ignore_errors=True)
                         cleanup_msg = MESSAGES["cleanup"].format(path=tmpdir)
                         LOG.info(cleanup_msg)
                         
-                        # Envia mensagem de cleanup para o usuário
+                        # Envia mensagem de cleanup para o usuÃ¡rio
                         try:
                             await application.bot.send_message(
                                 chat_id=pm["chat_id"],
@@ -1565,7 +1818,7 @@ async def _process_download(token: str, pm: dict):
                     del ACTIVE_DOWNLOADS[token]
 
 async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict):
-    """Executa o download do vídeo"""
+    """Executa o download do vÃ­deo"""
     outtmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
     last_percent = -1
     
@@ -1574,9 +1827,9 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         url = resolve_shopee_universal_link(url)
         LOG.info("Usando URL resolvida para download: %s", url[:100])
     
-    # Verifica se é Shopee Video - precisa tratamento especial
+    # Verifica se Ã© Shopee Video - precisa tratamento especial
     if 'sv.shopee' in url.lower() or 'share-video' in url.lower():
-        LOG.info("Detectado Shopee Video, usando método alternativo")
+        LOG.info("Detectado Shopee Video, usando mÃ©todo alternativo")
         await _download_shopee_video(url, tmpdir, chat_id, pm)
         return
     
@@ -1588,7 +1841,7 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
                 downloaded = d.get("downloaded_bytes", 0) or 0
                 total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
                 
-                # Verifica se o tamanho está excedendo o limite durante download
+                # Verifica se o tamanho estÃ¡ excedendo o limite durante download
                 if total and total > MAX_FILE_SIZE:
                     LOG.warning("Download cancelado: arquivo excede 50 MB (%d bytes)", total)
                     raise Exception(f"Arquivo muito grande: {total} bytes")
@@ -1598,7 +1851,7 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
                     if percent != last_percent and percent % 10 == 0:
                         last_percent = percent
                         blocks = int(percent / 5)
-                        bar = "█" * blocks + "░" * (20 - blocks)
+                        bar = "â–ˆ" * blocks + "â–‘" * (20 - blocks)
                         text = MESSAGES["download_progress"].format(
                             percent=percent,
                             bar=bar
@@ -1629,13 +1882,13 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         except Exception as e:
             LOG.error("Erro no progress_hook: %s", e)
 
-    # Configurações do yt-dlp
+    # ConfiguraÃ§Ãµes do yt-dlp
     ydl_opts = {
         "outtmpl": outtmpl,
         "progress_hooks": [progress_hook],
         "quiet": False,
         "logger": LOG,
-        "format": get_format_for_url(url),  # Formato adaptável por plataforma
+        "format": get_format_for_url(url),  # Formato adaptÃ¡vel por plataforma
         "merge_output_format": "mp4",
         "concurrent_fragment_downloads": 1,
         "force_ipv4": True,
@@ -1676,11 +1929,11 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
             
             # Verifica se o arquivo excede 50 MB
             if tamanho > MAX_FILE_SIZE:
-                LOG.error("Arquivo muito grande após download: %d bytes", tamanho)
+                LOG.error("Arquivo muito grande apÃ³s download: %d bytes", tamanho)
                 await _notify_error(pm, "error_file_large")
                 return
             
-            # Envia o vídeo
+            # Envia o vÃ­deo
             with open(path, "rb") as fh:
                 await application.bot.send_video(chat_id=chat_id, video=fh)
                     
@@ -1695,7 +1948,7 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
     try:
         success_text = MESSAGES["upload_complete"].format(
             remaining=stats["remaining"],
-            total=stats["limit"] if not stats["is_premium"] else "∞"
+            total=stats["limit"] if not stats["is_premium"] else "âˆž"
         )
         
         await application.bot.edit_message_text(
@@ -1707,12 +1960,12 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         LOG.error("Erro ao enviar mensagem final: %s", e)
 
 def _run_ydl(options, urls):
-    """Executa yt-dlp com as opções fornecidas"""
+    """Executa yt-dlp com as opÃ§Ãµes fornecidas"""
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.download(urls)
 
 async def _notify_error(pm: dict, error_key: str):
-    """Notifica o usuário sobre um erro"""
+    """Notifica o usuÃ¡rio sobre um erro"""
     try:
         await application.bot.edit_message_text(
             text=MESSAGES.get(error_key, MESSAGES["error_unknown"]),
@@ -1723,7 +1976,7 @@ async def _notify_error(pm: dict, error_key: str):
         LOG.error("Erro ao notificar erro: %s", e)
 
 def _cleanup_pending():
-    """Remove requisições pendentes expiradas"""
+    """Remove requisiÃ§Ãµes pendentes expiradas"""
     now = time.time()
     expired = [
         token for token, pm in PENDING.items()
@@ -1732,7 +1985,7 @@ def _cleanup_pending():
     for token in expired:
         del PENDING[token]
     
-    # Limita tamanho máximo
+    # Limita tamanho mÃ¡ximo
     while len(PENDING) > PENDING_MAX_SIZE:
         PENDING.popitem(last=False)
 
@@ -1744,14 +1997,10 @@ application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("stats", stats_cmd))
 application.add_handler(CommandHandler("status", status_cmd))
 application.add_handler(CommandHandler("premium", premium_cmd))
+application.add_handler(CommandHandler("ai", ai_cmd))  # â† Novo comando
 application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
 application.add_handler(CallbackQueryHandler(callback_buy_premium, pattern=r"^subscribe:"))
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-
-from telegram.constants import MessageEntityType
-
-mention_or_private_filter = (filters.ChatType.PRIVATE | (filters.TEXT & filters.Entity(MessageEntityType.MENTION)))
-application.add_handler(MessageHandler(mention_or_private_filter, handle_message))
 
 # ============================
 # FLASK ROUTES
@@ -1771,7 +2020,7 @@ def webhook():
 @app.route("/")
 def index():
     """Rota principal"""
-    return "🤖 Bot de Download Ativo"
+    return "ðŸ¤– Bot de Download Ativo"
 
 @app.route("/health")
 def health():
@@ -1819,7 +2068,7 @@ import os
 
 @app.route("/webhook/pix", methods=["POST"])
 def webhook_pix():
-    """Endpoint para receber notificações de pagamento PIX do Mercado Pago"""
+    """Endpoint para receber notificaÃ§Ãµes de pagamento PIX do Mercado Pago"""
     try:
         data = request.get_json()
         LOG.info("Webhook PIX recebido: %s", data)
@@ -1839,9 +2088,9 @@ def webhook_pix():
                         confirm_pix_payment(payment_reference=reference, user_id=user_id)
                         LOG.info("Pagamento confirmado e premium ativado para user_id=%s", user_id)
                     else:
-                        LOG.warning("Formato de referência inválido: %s", reference)
+                        LOG.warning("Formato de referÃªncia invÃ¡lido: %s", reference)
                 else:
-                    LOG.warning("Referência externa ausente ou inválida: %s", reference)
+                    LOG.warning("ReferÃªncia externa ausente ou invÃ¡lida: %s", reference)
 
         return "ok", 200
 
@@ -1888,9 +2137,9 @@ async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
             await query.edit_message_text(
                 (
-                    f"✅ Pedido criado!\n\n"
+                    f"âœ… Pedido criado!\n\n"
                     f"<code>{qr_code_text}</code>\n\n"
-                    "🖼️ Escaneie o QR Code abaixo para pagar:"
+                    "ðŸ–¼ï¸ Escaneie o QR Code abaixo para pagar:"
                 ),
                 parse_mode=ParseMode.HTML
             )
@@ -1900,6 +2149,6 @@ async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 photo=f"data:image/png;base64,{qr_code_base64}"
             )
         else:
-            await query.edit_message_text("❌ Erro ao criar pagamento. Tente novamente mais tarde.")
+            await query.edit_message_text("âŒ Erro ao criar pagamento. Tente novamente mais tarde.")
     except Exception as e:
-        await query.edit_message_text(f"❌ Falha interna: {e}")
+        await query.edit_message_text(f"âŒ Falha interna: {e}")
