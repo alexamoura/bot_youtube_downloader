@@ -1051,12 +1051,7 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         }
 
         # Carrega cookies se disponível
-        cookies_dict = {}
-        if COOKIE_SHOPEE:
-            try:
-                with open(COOKIE_SHOPEE, 'r') as f:
-                    for line in f:
-                        if not line.startswith('#') and line.strip():
+        cookies line.startswith('#') and line.strip():
                             parts = line.strip().split('\t')
                             if len(parts) >= 7:
                                 cookies_dict[parts[5]] = parts[6]
@@ -1192,8 +1187,8 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             message_id=pm["message_id"],
             parse_mode="HTML"
         )
-            return
-        
+        return
+       
         # Ajusta URL se necessário
         if not video_url.startswith('http'):
             video_url = 'https:' + video_url if video_url.startswith('//') else 'https://sv.shopee.com.br' + video_url
