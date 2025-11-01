@@ -288,11 +288,12 @@ class WatermarkRemover:
     
     # Posições da marca d'água da Shopee (testar qual funciona)
     POSITIONS = {
-        'bottom_right': 'iw-210:ih-60:200:50',  # Canto inferior direito (mais comum)
-        'top_right': 'iw-210:10:200:50',
-        'bottom_left': '10:ih-60:200:50',
-        'top_left': '10:10:200:50',
-    }
+    'bottom_right': 'iw-210:ih-60:200:50',  # Canto inferior direito
+    'top_right': 'iw-210:10:200:50',        # Canto superior direito
+    'bottom_left': '10:ih-60:200:50',       # Canto inferior esquerdo (posição correta da imagem)
+    'top_left': '10:10:200:50'              # Canto superior esquerdo
+}
+
     
     @staticmethod
     def is_available() -> bool:
