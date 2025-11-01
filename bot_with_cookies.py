@@ -1032,7 +1032,7 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             message_id=pm["message_id"]
         )
         return
-    
+
     try:
         # Atualiza mensagem
         await application.bot.edit_message_text(
@@ -1040,9 +1040,8 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             chat_id=pm["chat_id"],
             message_id=pm["message_id"]
         )
-        
         LOG.info("Iniciando extração customizada da Shopee: %s", url)
-        
+
         # Faz requisição à página
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -1050,7 +1049,7 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
             "Referer": "https://shopee.com.br/",
         }
-        
+
         # Carrega cookies se disponível
         cookies_dict = {}
         if COOKIE_SHOPEE:
@@ -1064,121 +1063,28 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
                 LOG.info("Cookies da Shopee carregados: %d cookies", len(cookies_dict))
             except Exception as e:
                 LOG.warning("Erro ao carregar cookies: %s", e)
-        
+
         response = await asyncio.to_thread(
             lambda: requests.get(url, headers=headers, cookies=cookies_dict, timeout=30)
         )
         response.raise_for_status()
-        
         LOG.info("Página da Shopee carregada, analisando...")
-        
-        # Busca URL do vídeo no HTML/JavaScript
+
+        # Busca URL do vídeo no HTML
         video_url = None
-        
-        # Padrão 1: Busca em tags <script> com JSON
-        import json
         patterns = [
-            # Padrões originais
             r'"videoUrl"\s*:\s*"([^"]+)"',
             r'"video_url"\s*:\s*"([^"]+)"',
             r'"playAddr"\s*:\s*"([^"]+)"',
-            r'"url"\s*:\s*"(https://[^"]*\.mp4[^"]*)"',
-            r'playAddr["\']:\s*["\']([^"\']+)',
-            r'"playUrl"\s*:\s*"([^"]+)"',
-            # Novos padrões para Shopee
-            r'"video"\s*:\s*{\s*"url"\s*:\s*"([^"]+)"',
-            r'"stream"\s*:\s*"([^"]+)"',
-            r'"source"\s*:\s*"([^"]+)"',
-            r'videoUrl:\s*["\']([^"\']+)',
-            r'src:\s*["\']([^"\']+\.mp4[^"\']*)',
-            # Padrões para dados em window/global
-            r'window\.__INITIAL_STATE__.*?"video".*?"url"\s*:\s*"([^"]+)"',
-            r'window\.videoData.*?"url"\s*:\s*"([^"]+)"',
-            # Padrões para URLs diretas de CDN
-            r'(https://[^"\s]*shopee[^"\s]*\.mp4[^"\s]*)',
-            r'(https://[^"\s]*vod[^"\s]*\.mp4[^"\s]*)',
-            r'(https://[^"\s]*video[^"\s]*\.mp4[^"\s]*)',
+            r'"url"\s*:\s*"(https://[^"]*\.mp4[^"]*)"'
         ]
-        
         for pattern in patterns:
             matches = re.findall(pattern, response.text)
-            for match in matches:
-                # Limpa a URL
-                clean_url = match.replace('\\/', '/').replace('\\', '')
-                if 'http' in clean_url and ('mp4' in clean_url.lower() or 'video' in clean_url.lower()):
-                    video_url = clean_url
-                    LOG.info("URL de vídeo encontrada via regex: %s", video_url[:100])
-                    break
-            if video_url:
+            if matches:
+                video_url = matches[0].replace('\\/', '/')
+                LOG.info("URL de vídeo encontrada via regex: %s", video_url[:100])
                 break
-        
-        # Padrão 2: Busca em meta tags
-        if not video_url:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Busca em scripts tipo application/json ou application/ld+json
-            scripts = soup.find_all('script', type=['application/json', 'application/ld+json'])
-            for script in scripts:
-                if script.string:
-                    try:
-                        data = json.loads(script.string)
-                        # Busca recursivamente no JSON
-                        def find_video_url_in_dict(obj, depth=0):
-                            if depth > 10:
-                                return None
-                            if isinstance(obj, dict):
-                                for key, value in obj.items():
-                                    if key in ['videoUrl', 'video_url', 'playAddr', 'playUrl', 'url', 'src', 'source']:
-                                        if isinstance(value, str) and ('http' in value or value.endswith('.mp4')):
-                                            return value
-                                    result = find_video_url_in_dict(value, depth + 1)
-                                    if result:
-                                        return result
-                            elif isinstance(obj, list):
-                                for item in obj:
-                                    result = find_video_url_in_dict(item, depth + 1)
-                                    if result:
-                                        return result
-                            return None
-                        
-                        found_url = find_video_url_in_dict(data)
-                        if found_url:
-                            video_url = found_url
-                            LOG.info("URL encontrada em script JSON: %s", video_url[:100])
-                            break
-                    except:
-                        pass
-            
-            # Meta tags
-            if not video_url:
-                meta_tags = [
-                    soup.find('meta', property='og:video'),
-                    soup.find('meta', property='og:video:url'),
-                    soup.find('meta', property='og:video:secure_url'),
-                    soup.find('meta', attrs={'name': 'twitter:player:stream'}),
-                ]
-                
-                for tag in meta_tags:
-                    if tag and tag.get('content'):
-                        video_url = tag.get('content')
-                        LOG.info("URL de vídeo encontrada via meta tag: %s", video_url[:100])
-                        break
-        
-        # Padrão 3: Busca em tags <video> ou <source>
-        if not video_url:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            video_tag = soup.find('video')
-            if video_tag:
-                video_url = video_tag.get('src') or video_tag.get('data-src')
-            
-            if not video_url:
-                source_tags = soup.find_all('source')
-                for source in source_tags:
-                    src = source.get('src') or source.get('data-src')
-                    if src and ('mp4' in src.lower() or 'video' in src.lower()):
-                        video_url = src
-                        break
-        
+
         if not video_url:
             LOG.error("Nenhuma URL de vídeo encontrada na página da Shopee")
             await application.bot.edit_message_text(
@@ -1192,6 +1098,100 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
                 message_id=pm["message_id"],
                 parse_mode="HTML"
             )
+            return
+
+        # Ajusta URL se necessário
+        if not video_url.startswith('http'):
+            video_url = 'https:' + video_url if video_url.startswith('//') else 'https://sv.shopee.com.br' + video_url
+
+        LOG.info("Baixando vídeo da URL: %s", video_url[:100])
+
+        # Atualiza mensagem
+        await application.bot.edit_message_text(
+            text="📥 Baixando vídeo da Shopee...",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+
+        # Baixa o vídeo
+        output_path = os.path.join(tmpdir, "shopee_video.mp4")
+        video_response = await asyncio.to_thread(
+            lambda: requests.get(video_url, headers=headers, cookies=cookies_dict, stream=True, timeout=120)
+        )
+        video_response.raise_for_status()
+        total_size = int(video_response.headers.get('content-length', 0))
+
+        if total_size > MAX_FILE_SIZE:
+            LOG.warning("Vídeo da Shopee excede 50 MB: %d bytes", total_size)
+            await application.bot.edit_message_text(
+                text=MESSAGES["file_too_large"],
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"],
+                parse_mode="HTML"
+            )
+            return
+
+        with open(output_path, 'wb') as f:
+            for chunk in video_response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+
+        LOG.info("✅ Vídeo da Shopee baixado com sucesso: %s", output_path)
+
+        # ✅ Remove marca d'água antes do envio
+        if WATERMARK_REMOVER.is_available():
+            LOG.info("✨ Removendo marca d'água do vídeo Shopee...")
+            await application.bot.edit_message_text(
+                text="✨ Removendo marca d'água...",
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"]
+            )
+
+            cleaned_path = WATERMARK_REMOVER.remove(output_path, position='bottom_left')
+            if not os.path.exists(cleaned_path):
+                LOG.warning("⚠️ Falha na posição bottom_left, tentando outras...")
+                for pos in ['bottom_right', 'top_right', 'top_left']:
+                    cleaned_path = WATERMARK_REMOVER.remove(output_path, position=pos)
+                    if os.path.exists(cleaned_path):
+                        break
+
+            output_path = cleaned_path if os.path.exists(cleaned_path) else output_path
+        else:
+            LOG.warning("⚠️ FFmpeg não disponível, enviando vídeo original.")
+
+        # Envia o vídeo
+        await application.bot.edit_message_text(
+            text="✅ Download concluído, enviando...",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+
+        with open(output_path, "rb") as fh:
+            caption = "🛍️ Shopee Video\n✨ Marca d'água removida" if WATERMARK_REMOVER.is_available() else "🛍️ Shopee Video"
+            await application.bot.send_video(chat_id=chat_id, video=fh, caption=caption)
+
+        # Mensagem de sucesso
+        stats = get_user_download_stats(pm["user_id"])
+        success_text = MESSAGES["upload_complete"].format(
+            remaining=stats["remaining"],
+            total=stats["limit"] if not stats["is_premium"] else "∞"
+        )
+        await application.bot.edit_message_text(
+            text=success_text,
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
+
+    except Exception as e:
+        LOG.exception("Erro no download Shopee customizado: %s", e)
+        await application.bot.edit_message_text(
+            text="⚠️ <b>Erro ao baixar vídeo da Shopee</b>\n\n"
+                 "A Shopee pode ter proteções especiais neste vídeo. "
+                 "Tente baixar pelo app oficial.",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"],
+            parse_mode="HTML"
+        )
             return
         
         # Ajusta URL se necessário
