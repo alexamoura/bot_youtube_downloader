@@ -78,17 +78,61 @@ class ShopeeVideoExtractor:
                 return (match.group(1), match.group(2))
         return None
     
+    def extract_video_from_html(self, url: str):
+        """Extrai vídeo diretamente do HTML para URLs sv.shopee.com.br"""
+        if not REQUESTS_AVAILABLE or not self.session:
+            return None
+        
+        try:
+            LOG.info("🔍 Extraindo vídeo do HTML da página...")
+            response = self.session.get(url, timeout=10)
+            html = response.text
+            
+            # Padrões para encontrar URL do vídeo
+            patterns = [
+                r'"video_url"\s*:\s*"([^"]+)"',
+                r'"url"\s*:\s*"(https://[^"]*\.mp4[^"]*)"',
+                r'(https://cf\.shopee\.com\.br/file/[a-zA-Z0-9_-]+)',
+                r'(https://[^"\']*shopee[^"\']*\.mp4[^"\']*)',
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, html)
+                if matches:
+                    video_url = matches[0].replace('\\/', '/')
+                    LOG.info("✅ URL de vídeo encontrada no HTML!")
+                    return {
+                        'url': video_url,
+                        'title': 'Vídeo da Shopee',
+                        'uploader': 'Desconhecido',
+                    }
+            
+            return None
+            
+        except Exception as e:
+            LOG.error("Erro ao extrair do HTML: %s", e)
+            return None
+    
     def get_video(self, url: str):
         """Extrai vídeo da Shopee sem marca d'água via API"""
         if not REQUESTS_AVAILABLE or not self.session:
             return None
         
         try:
+            # Se for URL de vídeo (sv.shopee.com.br), usa extração HTML
+            if 'sv.shopee' in url.lower() or 'share-video' in url.lower():
+                LOG.info("🎬 Detectado URL de vídeo direto (sv.shopee.com.br)")
+                return self.extract_video_from_html(url)
+            
+            # Senão, tenta API normal
             ids = self.extract_ids(url)
             if not ids:
-                return None
+                LOG.warning("⚠️ Não foi possível extrair IDs da URL")
+                # Tenta HTML como fallback
+                return self.extract_video_from_html(url)
             
             shop_id, item_id = ids
+            LOG.info("🔑 IDs extraídos - Shop: %s, Item: %s", shop_id, item_id)
             
             api_url = "https://shopee.com.br/api/v4/item/get"
             params = {'itemid': item_id, 'shopid': shop_id}
@@ -97,7 +141,8 @@ class ShopeeVideoExtractor:
             data = response.json()
             
             if 'data' not in data:
-                return None
+                LOG.warning("⚠️ API não retornou dados")
+                return self.extract_video_from_html(url)
             
             item = data['data']
             
@@ -105,6 +150,7 @@ class ShopeeVideoExtractor:
             if 'video_info_list' in item and item['video_info_list']:
                 video = item['video_info_list'][0]
                 if 'default_format' in video:
+                    LOG.info("✅ Vídeo encontrado em video_info_list")
                     return {
                         'url': video['default_format'].get('url'),
                         'title': item.get('name', 'Vídeo da Shopee'),
@@ -112,11 +158,15 @@ class ShopeeVideoExtractor:
                     }
             
             if 'video' in item and item['video']:
+                LOG.info("✅ Vídeo encontrado em campo video")
                 return {
                     'url': item['video'].get('url'),
                     'title': item.get('name', 'Vídeo da Shopee'),
                     'uploader': item.get('shop_name', 'Desconhecido'),
                 }
+            
+            LOG.warning("⚠️ Nenhum vídeo na resposta da API, tentando HTML...")
+            return self.extract_video_from_html(url)
             
             return None
             
@@ -1347,6 +1397,14 @@ async def get_video_info(url: str) -> dict:
     
     # Configuração especial para Shopee
     is_shopee = 'shopee' in url.lower() or 'shope.ee' in url.lower()
+    
+    # 🔗 CRÍTICO: Resolve universal-links ANTES de tudo!
+    if is_shopee and 'universal-link' in url:
+        original_url = url
+        url = resolve_shopee_universal_link(url)
+        LOG.info("🔗 Universal link resolvido: %s", url[:80])
+        # Atualiza flag is_shopee após resolver
+        is_shopee = 'shopee' in url.lower() or 'shope.ee' in url.lower()
     
     # 🎯 NOVO: Se for Shopee, tenta API primeiro (SEM marca d'água!)
     if is_shopee:
