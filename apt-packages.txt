@@ -1,0 +1,367 @@
+#!/usr/bin/env python3
+"""
+Shopee Watermark Remover - FFmpeg
+Remove marca d'água de vídeos da Shopee após download
+"""
+
+import subprocess
+import os
+import logging
+
+LOG = logging.getLogger(__name__)
+
+
+class WatermarkRemover:
+    """
+    Remove marca d'água de vídeos usando FFmpeg
+    """
+    
+    # Posições comuns da marca d'água da Shopee
+    SHOPEE_POSITIONS = {
+        'top_left': {'x': 10, 'y': 10, 'w': 200, 'h': 50},
+        'top_right': {'x': 'iw-210', 'y': 10, 'w': 200, 'h': 50},
+        'bottom_left': {'x': 10, 'y': 'ih-60', 'w': 200, 'h': 50},
+        'bottom_right': {'x': 'iw-210', 'y': 'ih-60', 'w': 200, 'h': 50},
+        'top_center': {'x': '(iw-200)/2', 'y': 10, 'w': 200, 'h': 50},
+    }
+    
+    def __init__(self):
+        # Verifica se FFmpeg está disponível
+        self.ffmpeg_available = self._check_ffmpeg()
+    
+    def _check_ffmpeg(self) -> bool:
+        """Verifica se FFmpeg está instalado"""
+        try:
+            subprocess.run(
+                ['ffmpeg', '-version'],
+                capture_output=True,
+                check=True
+            )
+            LOG.info("✅ FFmpeg disponível")
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            LOG.warning("⚠️ FFmpeg não encontrado")
+            return False
+    
+    def detect_watermark_position(self, video_path: str) -> dict:
+        """
+        Tenta detectar posição da marca d'água automaticamente
+        Retorna melhor estimativa
+        """
+        # Por enquanto, retorna posição mais comum da Shopee
+        # TODO: Implementar detecção automática com OpenCV
+        
+        LOG.info("📍 Usando posição padrão: canto inferior direito")
+        return self.SHOPEE_POSITIONS['bottom_right']
+    
+    def remove_delogo(
+        self, 
+        input_path: str, 
+        output_path: str,
+        x: int = 10,
+        y: int = 10,
+        w: int = 200,
+        h: int = 50
+    ) -> bool:
+        """
+        Remove marca d'água usando filtro delogo do FFmpeg
+        
+        Args:
+            input_path: Caminho do vídeo original
+            output_path: Caminho para salvar vídeo limpo
+            x, y: Posição da marca (canto superior esquerdo)
+            w, h: Largura e altura da área da marca
+        
+        Returns:
+            True se sucesso, False caso contrário
+        """
+        if not self.ffmpeg_available:
+            LOG.error("❌ FFmpeg não disponível")
+            return False
+        
+        try:
+            LOG.info("🎬 Removendo marca d'água com delogo...")
+            LOG.info(f"   Posição: x={x}, y={y}, w={w}, h={h}")
+            
+            # Converte expressões para valores
+            if isinstance(x, str):
+                x_expr = x
+            else:
+                x_expr = str(x)
+            
+            if isinstance(y, str):
+                y_expr = y
+            else:
+                y_expr = str(y)
+            
+            cmd = [
+                'ffmpeg',
+                '-i', input_path,
+                '-vf', f'delogo=x={x_expr}:y={y_expr}:w={w}:h={h}:show=0',
+                '-c:a', 'copy',  # Mantém áudio original
+                '-y',  # Sobrescreve se existir
+                output_path
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            
+            LOG.info("✅ Marca d'água removida com sucesso!")
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            LOG.error(f"❌ Erro no FFmpeg: {e.stderr}")
+            return False
+        except Exception as e:
+            LOG.error(f"❌ Erro inesperado: {e}")
+            return False
+    
+    def remove_blur(
+        self,
+        input_path: str,
+        output_path: str,
+        x: int = 10,
+        y: int = 10,
+        w: int = 200,
+        h: int = 50
+    ) -> bool:
+        """
+        Borra a área da marca d'água (alternativa ao delogo)
+        Fica mais natural em alguns casos
+        """
+        if not self.ffmpeg_available:
+            return False
+        
+        try:
+            LOG.info("🌫️ Borrando área da marca d'água...")
+            
+            # Filtro de blur na área específica
+            blur_filter = (
+                f"[0:v]crop={w}:{h}:{x}:{y},boxblur=10[blurred];"
+                f"[0:v][blurred]overlay={x}:{y}"
+            )
+            
+            cmd = [
+                'ffmpeg',
+                '-i', input_path,
+                '-filter_complex', blur_filter,
+                '-c:a', 'copy',
+                '-y',
+                output_path
+            ]
+            
+            subprocess.run(cmd, capture_output=True, check=True)
+            
+            LOG.info("✅ Área borrada com sucesso!")
+            return True
+            
+        except Exception as e:
+            LOG.error(f"❌ Erro ao borrar: {e}")
+            return False
+    
+    def remove_auto(
+        self,
+        input_path: str,
+        output_path: str,
+        position: str = 'bottom_right'
+    ) -> bool:
+        """
+        Remove marca d'água automaticamente usando posição pré-definida
+        
+        Args:
+            position: 'top_left', 'top_right', 'bottom_left', 'bottom_right', 'top_center'
+        """
+        if position not in self.SHOPEE_POSITIONS:
+            LOG.error(f"❌ Posição inválida: {position}")
+            return False
+        
+        pos = self.SHOPEE_POSITIONS[position]
+        
+        LOG.info(f"🎯 Removendo marca d'água da posição: {position}")
+        
+        return self.remove_delogo(
+            input_path,
+            output_path,
+            x=pos['x'],
+            y=pos['y'],
+            w=pos['w'],
+            h=pos['h']
+        )
+    
+    def try_all_positions(
+        self,
+        input_path: str,
+        output_dir: str
+    ) -> dict:
+        """
+        Tenta remover marca d'água de todas as posições
+        Útil para descobrir onde está a marca
+        
+        Gera um vídeo para cada posição:
+        - video_top_left.mp4
+        - video_top_right.mp4
+        - etc.
+        """
+        results = {}
+        
+        for position, coords in self.SHOPEE_POSITIONS.items():
+            output_path = os.path.join(
+                output_dir,
+                f"video_{position}.mp4"
+            )
+            
+            LOG.info(f"🧪 Testando posição: {position}")
+            
+            success = self.remove_delogo(
+                input_path,
+                output_path,
+                **coords
+            )
+            
+            results[position] = {
+                'success': success,
+                'path': output_path if success else None
+            }
+        
+        return results
+
+
+# ============================================================
+# FUNÇÕES AUXILIARES PARA INTEGRAÇÃO COM O BOT
+# ============================================================
+
+def remove_shopee_watermark(
+    video_path: str,
+    position: str = 'bottom_right'
+) -> str:
+    """
+    Função simples para remover marca d'água da Shopee
+    
+    Args:
+        video_path: Caminho do vídeo
+        position: Posição da marca ('bottom_right' padrão)
+    
+    Returns:
+        Caminho do vídeo sem marca ou None se falhar
+    """
+    remover = WatermarkRemover()
+    
+    if not remover.ffmpeg_available:
+        LOG.warning("⚠️ FFmpeg não disponível - vídeo mantém marca")
+        return video_path
+    
+    # Cria nome do arquivo de saída
+    base, ext = os.path.splitext(video_path)
+    output_path = f"{base}_no_watermark{ext}"
+    
+    # Remove marca
+    success = remover.remove_auto(video_path, output_path, position)
+    
+    if success:
+        # Remove arquivo original e renomeia
+        try:
+            os.remove(video_path)
+            os.rename(output_path, video_path)
+            LOG.info("✅ Vídeo original substituído por versão sem marca")
+            return video_path
+        except:
+            LOG.warning("⚠️ Não foi possível substituir arquivo original")
+            return output_path
+    else:
+        LOG.warning("⚠️ Falha ao remover marca - mantendo original")
+        return video_path
+
+
+def remove_watermark_custom(
+    video_path: str,
+    x: int,
+    y: int,
+    w: int,
+    h: int
+) -> str:
+    """
+    Remove marca d'água com coordenadas personalizadas
+    """
+    remover = WatermarkRemover()
+    
+    if not remover.ffmpeg_available:
+        return video_path
+    
+    base, ext = os.path.splitext(video_path)
+    output_path = f"{base}_no_watermark{ext}"
+    
+    success = remover.remove_delogo(video_path, output_path, x, y, w, h)
+    
+    if success:
+        try:
+            os.remove(video_path)
+            os.rename(output_path, video_path)
+            return video_path
+        except:
+            return output_path
+    else:
+        return video_path
+
+
+# ============================================================
+# TESTE
+# ============================================================
+
+if __name__ == '__main__':
+    import sys
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    
+    print("=" * 70)
+    print("🎬 SHOPEE WATERMARK REMOVER")
+    print("=" * 70)
+    print()
+    
+    if len(sys.argv) < 2:
+        print("Uso:")
+        print(f"  {sys.argv[0]} <video.mp4> [posicao]")
+        print()
+        print("Posições disponíveis:")
+        for pos in WatermarkRemover.SHOPEE_POSITIONS.keys():
+            print(f"  - {pos}")
+        print()
+        print("Exemplo:")
+        print(f"  {sys.argv[0]} shopee_video.mp4 bottom_right")
+        sys.exit(1)
+    
+    video_path = sys.argv[1]
+    position = sys.argv[2] if len(sys.argv) > 2 else 'bottom_right'
+    
+    if not os.path.exists(video_path):
+        print(f"❌ Arquivo não encontrado: {video_path}")
+        sys.exit(1)
+    
+    print(f"📹 Vídeo: {video_path}")
+    print(f"📍 Posição: {position}")
+    print()
+    
+    result = remove_shopee_watermark(video_path, position)
+    
+    if result:
+        print()
+        print("=" * 70)
+        print("✅ SUCESSO!")
+        print("=" * 70)
+        print(f"📹 Vídeo sem marca: {result}")
+        print()
+        print("💡 Dica: Abra o vídeo e verifique se a marca foi removida")
+        print("         Se ainda houver marca, tente outra posição")
+    else:
+        print()
+        print("=" * 70)
+        print("❌ FALHOU")
+        print("=" * 70)
+        print("Verifique se FFmpeg está instalado:")
+        print("  apt-get install ffmpeg")
