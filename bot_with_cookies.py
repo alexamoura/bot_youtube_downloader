@@ -49,6 +49,12 @@ try:
 except ImportError:
     GROQ_AVAILABLE = False
 
+try:
+    import cv2
+    OPENCV_AVAILABLE = True
+except ImportError:
+    OPENCV_AVAILABLE = False
+
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -771,18 +777,14 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         )
         
         # Baixa o vídeo
-        output_path = os.path.join(tmpdir, "shopee_video.mp4")
-        
-        video_response = await asyncio.to_thread(
-            lambda: requests.get(video_url, headers=headers, cookies=cookies_dict, stream=True, timeout=120)
-        )
-        video_response.raise_for_status()
-        
-        total_size = int(video_response.headers.get('content-length', 0))
-        
-from watermark_simple import remove_watermark_simple
-# Caminho do vídeo tratado
-clean_path = os.path.join(tmpdir, "shopee_video_clean.mp4")
+output_path = os.path.join(tmpdir, "shopee_video.mp4")
+
+video_response = await asyncio.to_thread(
+    lambda: requests.get(video_url, headers=headers, cookies=cookies_dict, stream=True, timeout=120)
+)
+video_response.raise_for_status()
+
+total_size = int(video_response.headers.get('content-length', 0))
 
 # Salva o vídeo original
 with open(output_path, 'wb') as f:
@@ -790,26 +792,50 @@ with open(output_path, 'wb') as f:
         if chunk:
             f.write(chunk)
 
-# Aplica a remoção da marca d'água
-try:
-    remove_watermark_simple(output_path, clean_path)
-    final_path = clean_path
-except Exception as e:
-    LOG.error(f"Erro ao remover marca d'água: {e}")
-    final_path = output_path  # fallback para o vídeo original
+# Aplica a remoção da marca d'água com OpenCV
+if OPENCV_AVAILABLE:
+    try:
+        from watermark_simple import remove_watermark_simple
+        clean_path = os.path.join(tmpdir, "shopee_video_clean.mp4")
+        remove_watermark_simple(output_path, clean_path)
+        final_path = clean_path
+    except Exception as e:
+        LOG.error(f"Erro ao remover marca d'água com OpenCV: {e}")
+        final_path = output_path  # fallback para o vídeo original
+# Verifica tamanho antes de baixar
+if total_size > MAX_FILE_SIZE:
+    LOG.warning("Vídeo da Shopee excede 50 MB: %d bytes", total_size)
+    await application.bot.edit_message_text(
+        text=MESSAGES["file_too_large"],
+        chat_id=pm["chat_id"],
+        message_id=pm["message_id"],
+        parse_mode="HTML"
+    )
+    return  # Interrompe o fluxo se o vídeo for muito grande
 
-# Envie final_path para o usuário
+# Salva o vídeo original
+with open(output_path, 'wb') as f:
+    for chunk in video_response.iter_content(chunk_size=8192):
+        if chunk:
+            f.write(chunk)
+
+# Aplica a remoção da marca d'água com OpenCV
+if OPENCV_AVAILABLE:
+    try:
+        from watermark_simple import remove_watermark_simple
+        clean_path = os.path.join(tmpdir, "shopee_video_clean.mp4")
+        remove_watermark_simple(output_path, clean_path)
+        final_path = clean_path
+    except Exception as e:
+        LOG.error(f"Erro ao remover marca d'água com OpenCV: {e}")
+        final_path = output_path  # fallback
+else:
+    LOG.warning("OpenCV não está disponível. Enviando vídeo original.")
+    final_path = output_path
+
+# Envia o vídeo final para o usuário
 with open(final_path, "rb") as fh:
     await application.bot.send_video(chat_id=chat_id, video=fh, caption="🎬 Shopee Video (limpo)")
-        # Verifica tamanho antes de baixar
-        if total_size > MAX_FILE_SIZE:
-            LOG.warning("Vídeo da Shopee excede 50 MB: %d bytes", total_size)
-            await application.bot.edit_message_text(
-                text=MESSAGES["file_too_large"],
-                chat_id=pm["chat_id"],
-                message_id=pm["message_id"],
-                parse_mode="HTML"
-            )
             return
         
         downloaded = 0
