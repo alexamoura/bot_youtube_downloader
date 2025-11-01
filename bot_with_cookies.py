@@ -78,6 +78,93 @@ class ShopeeVideoExtractor:
                 return (match.group(1), match.group(2))
         return None
     
+    def remove_watermark_pattern(self, video_url: str) -> str:
+        """
+        Remove padrão de marca d'água da URL
+        Padrão: .123.456.mp4 → .mp4
+        """
+        if not video_url:
+            return None
+        
+        # Remove .NUMERO.NUMERO antes de .mp4
+        clean_url = re.sub(r'\.\d+\.\d+(?=\.mp4)', '', video_url)
+        
+        if clean_url != video_url:
+            LOG.info("✨ Marca d'água removida da URL")
+            LOG.debug("   Original: %s", video_url[:80])
+            LOG.debug("   Limpa: %s", clean_url[:80])
+        
+        return clean_url
+    
+    def extract_from_next_data(self, url: str):
+        """
+        Extrai vídeo do __NEXT_DATA__ (técnica Next.js)
+        Esta é a técnica DEFINITIVA para remover marca d'água!
+        """
+        if not REQUESTS_AVAILABLE or not self.session:
+            return None
+        
+        try:
+            LOG.info("🎯 Usando técnica __NEXT_DATA__ (SEM marca d'água garantido!)")
+            
+            # Busca HTML da página
+            response = self.session.get(url, timeout=10)
+            html = response.text
+            
+            # Extrai __NEXT_DATA__ script tag
+            pattern = r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>'
+            match = re.search(pattern, html, re.DOTALL)
+            
+            if not match:
+                LOG.warning("⚠️ __NEXT_DATA__ não encontrado")
+                return None
+            
+            # Parse JSON
+            import json
+            data = json.loads(match.group(1))
+            LOG.info("✅ __NEXT_DATA__ extraído com sucesso!")
+            
+            # Navega no JSON para encontrar vídeo
+            # Caminho: props.pageProps.mediaInfo.video.watermarkVideoUrl
+            video_data = data.get('props', {}).get('pageProps', {}).get('mediaInfo', {}).get('video', {})
+            
+            if not video_data:
+                # Tenta caminho alternativo
+                video_data = data.get('props', {}).get('pageProps', {}).get('item', {})
+            
+            # Pega URL com marca
+            watermark_url = video_data.get('watermarkVideoUrl')
+            
+            if not watermark_url:
+                # Tenta outros campos
+                watermark_url = video_data.get('url') or video_data.get('video_url')
+            
+            if watermark_url:
+                # Remove padrão de marca d'água
+                clean_url = self.remove_watermark_pattern(watermark_url)
+                
+                # Extrai título
+                title = video_data.get('title')
+                if not title:
+                    title = data.get('props', {}).get('pageProps', {}).get('item', {}).get('name', 'Vídeo da Shopee')
+                
+                LOG.info("🎬 Vídeo SEM marca d'água extraído!")
+                
+                return {
+                    'url': clean_url,
+                    'url_with_watermark': watermark_url,
+                    'title': title,
+                    'uploader': 'Shopee',
+                    'no_watermark': True,  # Flag importante!
+                }
+            
+            LOG.warning("⚠️ URL do vídeo não encontrada no __NEXT_DATA__")
+            return None
+            
+        except Exception as e:
+            LOG.error("❌ Erro ao extrair do __NEXT_DATA__: %s", e)
+            return None
+    
     def extract_video_from_html(self, url: str):
         """Extrai vídeo diretamente do HTML para URLs sv.shopee.com.br"""
         if not REQUESTS_AVAILABLE or not self.session:
@@ -114,25 +201,34 @@ class ShopeeVideoExtractor:
             return None
     
     def get_video(self, url: str):
-        """Extrai vídeo da Shopee sem marca d'água via API"""
+        """Extrai vídeo da Shopee sem marca d'água - PRIORIZA __NEXT_DATA__"""
         if not REQUESTS_AVAILABLE or not self.session:
             return None
         
         try:
-            # Se for URL de vídeo (sv.shopee.com.br), usa extração HTML
+            # 🎯 MÉTODO 1 (PRIORITÁRIO): __NEXT_DATA__ - SEM marca d'água GARANTIDO!
+            LOG.info("🎯 MÉTODO 1: Tentando __NEXT_DATA__ (técnica definitiva)...")
+            next_data_result = self.extract_from_next_data(url)
+            
+            if next_data_result:
+                LOG.info("🎉 __NEXT_DATA__ funcionou - SEM marca d'água!")
+                return next_data_result
+            
+            LOG.info("⚠️ __NEXT_DATA__ falhou, tentando outros métodos...")
+            
+            # 🔧 MÉTODO 2: Se for URL de vídeo (sv.shopee.com.br), usa extração HTML
             if 'sv.shopee' in url.lower() or 'share-video' in url.lower():
-                LOG.info("🎬 Detectado URL de vídeo direto (sv.shopee.com.br)")
+                LOG.info("🎬 MÉTODO 2: URL de vídeo direto (sv.shopee.com.br)")
                 return self.extract_video_from_html(url)
             
-            # Senão, tenta API normal
+            # 🔧 MÉTODO 3: API /item/get
             ids = self.extract_ids(url)
             if not ids:
-                LOG.warning("⚠️ Não foi possível extrair IDs da URL")
-                # Tenta HTML como fallback
+                LOG.warning("⚠️ Não foi possível extrair IDs, tentando HTML...")
                 return self.extract_video_from_html(url)
             
             shop_id, item_id = ids
-            LOG.info("🔑 IDs extraídos - Shop: %s, Item: %s", shop_id, item_id)
+            LOG.info("🔧 MÉTODO 3: API /item/get - Shop: %s, Item: %s", shop_id, item_id)
             
             api_url = "https://shopee.com.br/api/v4/item/get"
             params = {'itemid': item_id, 'shopid': shop_id}
@@ -141,34 +237,39 @@ class ShopeeVideoExtractor:
             data = response.json()
             
             if 'data' not in data:
-                LOG.warning("⚠️ API não retornou dados")
+                LOG.warning("⚠️ API falhou, tentando HTML...")
                 return self.extract_video_from_html(url)
             
             item = data['data']
             
-            # Tenta extrair vídeo
+            # Tenta extrair vídeo da API
             if 'video_info_list' in item and item['video_info_list']:
                 video = item['video_info_list'][0]
                 if 'default_format' in video:
-                    LOG.info("✅ Vídeo encontrado em video_info_list")
+                    video_url = video['default_format'].get('url')
+                    # Remove marca d'água se tiver padrão
+                    clean_url = self.remove_watermark_pattern(video_url)
+                    
+                    LOG.info("✅ Vídeo da API (marca removida se presente)")
                     return {
-                        'url': video['default_format'].get('url'),
+                        'url': clean_url,
                         'title': item.get('name', 'Vídeo da Shopee'),
                         'uploader': item.get('shop_name', 'Desconhecido'),
                     }
             
             if 'video' in item and item['video']:
-                LOG.info("✅ Vídeo encontrado em campo video")
+                video_url = item['video'].get('url')
+                clean_url = self.remove_watermark_pattern(video_url)
+                
+                LOG.info("✅ Vídeo da API campo video (marca removida)")
                 return {
-                    'url': item['video'].get('url'),
+                    'url': clean_url,
                     'title': item.get('name', 'Vídeo da Shopee'),
                     'uploader': item.get('shop_name', 'Desconhecido'),
                 }
             
-            LOG.warning("⚠️ Nenhum vídeo na resposta da API, tentando HTML...")
+            LOG.warning("⚠️ API sem vídeo, tentando HTML...")
             return self.extract_video_from_html(url)
-            
-            return None
             
         except Exception as e:
             LOG.error("Erro no ShopeeVideoExtractor: %s", e)
