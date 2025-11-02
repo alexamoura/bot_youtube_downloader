@@ -453,7 +453,7 @@ ACTIVE_DOWNLOADS = {}  # Rastreamento de downloads ativos
 MESSAGES = {
     "welcome": (
         "🎥 <b>Bem-vindo ao Serviço de Downloads</b>\n\n"
-        "Envie um link de vídeo de YouTube, Instagram ou Shopee e eu processarei o download para você.\n\n"
+        "Envie um link de vídeo do TikTok, Instagram ou Shopee e eu processarei o download para você.\n\n"
         "📊 <b>Planos disponíveis:</b>\n"
         "• Gratuito: {free_limit} downloads/mês\n"
         "• Premium: Downloads ilimitados\n\n"
@@ -1469,9 +1469,10 @@ async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 - Não forneça detalhes que não estejam listados abaixo.
 - Se o usuário quiser assinar o plano, peça para digitar /premium.
 - Este bot não faz download de músicas e não permite escolher qualidade de vídeos.
+- Não responda sobre assuntos que não sejam relacionados ao que esse assistente faz
 
 Funcionalidades:
-- Download de vídeos (YouTube, Instagram, TikTok, Twitter, etc.)
+- Download de vídeos (Shopee, Instagram, TikTok, Twitter, etc.)
 - Plano gratuito: 10 downloads/mês
 - Plano premium: downloads ilimitados (R$9,90/mês)
 - Se o usuário falar para você baixar algum vídeo, incentive ele a te enviar um link
@@ -1530,9 +1531,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 - Não forneça detalhes que não estejam listados abaixo.
 - Se o usuário quiser assinar o plano, peça para digitar /premium.
 - Este bot não faz download de músicas e não permite escolher qualidade de vídeos.
+- Não responda sobre assuntos que não sejam relacionados ao que esse assistente faz
 
 Funcionalidades:
-- Download de vídeos (YouTube, Instagram, TikTok, Twitter, etc.)
+- Download de vídeos (Shopee, Instagram, TikTok, Twitter, etc.)
 - Plano gratuito: 10 downloads/mês
 - Plano premium: downloads ilimitados (R$9,90/mês)
 - Se o usuário falar para você baixar algum vídeo, incentive ele a te enviar um link
