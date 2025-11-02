@@ -624,16 +624,31 @@ def get_user_download_stats(user_id: int) -> dict:
             c = conn.cursor()
             
             # Busca ou cria registro do usuário
-            c.execute("SELECT downloads_count, is_premium, last_reset FROM user_downloads WHERE user_id=?", (user_id,))
+            c.execute("SELECT downloads_count, is_premium, last_reset, premium_expires FROM user_downloads WHERE user_id=?", (user_id,))
             row = c.fetchone()
             
             current_month = time.strftime("%Y-%m")
+            today = time.strftime("%Y-%m-%d")
             
             if row:
-                downloads_count, is_premium, last_reset = row
+                downloads_count, is_premium, last_reset, premium_expires = row
                 
-                # Reseta contador se mudou o mês
-                if last_reset != current_month and not is_premium:
+                # ✅ VERIFICA SE PREMIUM EXPIROU
+                if is_premium and premium_expires:
+                    if today > premium_expires:
+                        # Premium expirou! Volta para plano gratuito
+                        LOG.info(f"🔔 Premium expirou para usuário {user_id} (expirou em {premium_expires})")
+                        is_premium = 0
+                        downloads_count = 0  # Reseta contador
+                        c.execute("""
+                            UPDATE user_downloads 
+                            SET is_premium=0, downloads_count=0, last_reset=? 
+                            WHERE user_id=?
+                        """, (current_month, user_id))
+                        conn.commit()
+                
+                # Reseta contador se mudou o mês (apenas para plano gratuito)
+                elif last_reset != current_month and not is_premium:
                     downloads_count = 0
                     c.execute("UPDATE user_downloads SET downloads_count=0, last_reset=? WHERE user_id=?", 
                              (current_month, user_id))
@@ -1380,7 +1395,27 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     stats = get_user_download_stats(user_id)
     
-    premium_info = "✅ Plano: <b>Premium Ativo</b>" if stats["is_premium"] else "📦 Plano: <b>Gratuito</b>"
+    # Verifica data de expiração se for premium
+    premium_info = ""
+    if stats["is_premium"]:
+        # Busca data de expiração
+        try:
+            with DB_LOCK:
+                conn = sqlite3.connect(DB_FILE, timeout=5)
+                c = conn.cursor()
+                c.execute("SELECT premium_expires FROM user_downloads WHERE user_id=?", (user_id,))
+                row = c.fetchone()
+                conn.close()
+                
+                if row and row[0]:
+                    expires_date = row[0]
+                    premium_info = f"✅ Plano: <b>Premium Ativo</b>\n📅 Expira em: <b>{expires_date}</b>"
+                else:
+                    premium_info = "✅ Plano: <b>Premium Ativo</b>"
+        except:
+            premium_info = "✅ Plano: <b>Premium Ativo</b>"
+    else:
+        premium_info = "📦 Plano: <b>Gratuito</b>"
     
     status_text = MESSAGES["status"].format(
         user_id=user_id,
