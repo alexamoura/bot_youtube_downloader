@@ -411,7 +411,7 @@ SPLIT_SIZE = 45 * 1024 * 1024
 
 # Constantes de Controle de Downloads
 FREE_DOWNLOADS_LIMIT = 10
-MAX_CONCURRENT_DOWNLOADS = 2  # Até 3 downloads simultâneos
+MAX_CONCURRENT_DOWNLOADS = 3  # Até 3 downloads simultâneos
 
 # Configuração do Mercado Pago
 MERCADOPAGO_ACCESS_TOKEN = os.getenv("MERCADOPAGO_ACCESS_TOKEN")
@@ -1075,9 +1075,15 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         video_info = SHOPEE_EXTRACTOR.get_video(url)
         
         video_url = None
+        url_already_clean = False  # Flag para saber se URL já está sem marca
+        
         if video_info and video_info.get('url'):
             LOG.info("✅ Vídeo extraído via ShopeeVideoExtractor!")
             video_url = video_info['url']
+            # Verifica se a marca já foi removida na URL
+            url_already_clean = video_info.get('no_watermark', False)
+            if url_already_clean:
+                LOG.info("✨ URL já está SEM marca d'água - FFmpeg não necessário!")
         else:
             LOG.warning("⚠️ ShopeeVideoExtractor falhou, tentando método HTML...")
             
@@ -1159,9 +1165,14 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
 
         LOG.info("✅ Vídeo da Shopee baixado com sucesso: %s", output_path)
 
-        # ✅ Remove marca d'água antes do envio
-        if WATERMARK_REMOVER.is_available():
-            LOG.info("✨ Removendo marca d'água do vídeo Shopee...")
+        # ✅ Remove marca d'água SOMENTE se necessário
+        if url_already_clean:
+            # Marca já foi removida na URL - FFmpeg não necessário!
+            LOG.info("✅ Vídeo baixado já SEM marca d'água (removida na URL)")
+            caption = "🛍️ Shopee Video\n✨ Marca d'água removida (método URL)"
+        elif WATERMARK_REMOVER.is_available():
+            # Marca ainda presente - usar FFmpeg
+            LOG.info("🎬 Marca d'água ainda presente - usando FFmpeg...")
             await application.bot.edit_message_text(
                 text="✨ Removendo marca d'água...",
                 chat_id=pm["chat_id"],
@@ -1178,8 +1189,10 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
                         break
 
             output_path = cleaned_path if os.path.exists(cleaned_path) else output_path
+            caption = "🛍️ Shopee Video\n✨ Marca d'água removida (método FFmpeg)"
         else:
             LOG.warning("⚠️ FFmpeg não disponível, enviando vídeo original.")
+            caption = "🛍️ Shopee Video"
 
         # Envia o vídeo
         await application.bot.edit_message_text(
@@ -1189,7 +1202,6 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         )
 
         with open(output_path, "rb") as fh:
-            caption = "🛍️ Shopee Video\n✨ Marca d'água removida" if WATERMARK_REMOVER.is_available() else "🛍️ Shopee Video"
             await application.bot.send_video(chat_id=chat_id, video=fh, caption=caption)
 
         # Mensagem de sucesso
