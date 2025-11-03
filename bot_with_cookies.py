@@ -889,7 +889,7 @@ def get_format_for_url(url: str) -> str:
     # Shopee: melhor qualidade disponível (geralmente já é pequeno)
     if 'shopee' in url_lower or 'shope.ee' in url_lower:
         LOG.info("🛍️ Formato Shopee: best (otimizado)")
-        return "best[ext=mp4]/best"
+        return "best[ext=mp4][filesize<=50M]/best[ext=mp4]/best"
     
     # Instagram: formato único já otimizado
     elif 'instagram' in url_lower or 'insta' in url_lower:
