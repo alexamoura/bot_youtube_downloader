@@ -404,7 +404,7 @@ logging.basicConfig(
     ]
 )
 LOG = logging.getLogger("ytbot")
-LOG.setLevel(logging.INFO)  # WARNING em produção economiza memória
+LOG.setLevel(logging.WARNING)  # WARNING em produção economiza memória
 
 
 # Token do Bot
