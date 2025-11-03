@@ -896,11 +896,11 @@ def get_format_for_url(url: str) -> str:
         LOG.info("📸 Formato Instagram: best (otimizado)")
         return "best[ext=mp4]/best"
     
-    # YouTube: 1080p ou 720p, formato já combinado para evitar cortes
+    # YouTube: 720p ou 480p, formato já combinado para evitar cortes
     elif 'youtube' in url_lower or 'youtu.be' in url_lower:
         LOG.info("🎥 Formato YouTube: até 1080p (otimizado, sem cortes)")
         # Prioriza formatos já combinados (evita cortes) e limita tamanho
-        return "best[height<=1080][ext=mp4]/best[height<=720][ext=mp4]/best[ext=mp4]/best"
+        return "best[height<=720][ext=mp4]/best[height<=480][ext=mp4]/best[ext=mp4]/best"
     
     # Outras plataformas: formato otimizado
     else:
