@@ -10,6 +10,7 @@ import tempfile
 import asyncio
 import base64
 import logging
+import logging.handlers
 import threading
 import uuid
 import re
@@ -388,9 +389,23 @@ from telegram.ext import (
     filters,
 )
 
-# Configuração de Logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# Configuração de Logging Otimizada
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(),  # Console
+        logging.handlers.RotatingFileHandler(
+            'bot.log',
+            maxBytes=5*1024*1024,  # 5MB máximo
+            backupCount=2,  # Mantém apenas 2 arquivos de backup
+            encoding='utf-8'
+        ) if os.path.exists('/tmp') else logging.StreamHandler()
+    ]
+)
 LOG = logging.getLogger("ytbot")
+LOG.setLevel(logging.INFO)  # WARNING em produção economiza memória
+
 
 # Token do Bot
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -885,7 +900,7 @@ def get_format_for_url(url: str) -> str:
     elif 'youtube' in url_lower or 'youtu.be' in url_lower:
         LOG.info("🎥 Formato YouTube: até 1080p (otimizado, sem cortes)")
         # Prioriza formatos já combinados (evita cortes) e limita tamanho
-        return "best[height<=720][ext=mp4]/best[height<=480][ext=mp4]/best[ext=mp4]/best"
+        return "best[height<=1080][ext=mp4]/best[height<=720][ext=mp4]/best[ext=mp4]/best"
     
     # Outras plataformas: formato otimizado
     else:
