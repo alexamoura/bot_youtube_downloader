@@ -389,31 +389,23 @@ from telegram.ext import (
     filters,
 )
 
-# Define nível de log com base em variável de ambiente (opcional)
-log_level = logging.DEBUG if os.getenv("DEBUG_MODE") == "1" else logging.WARNING
-
 # Configuração de Logging Otimizada
 logging.basicConfig(
-    level=log_level,
+    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(),  # Console
         logging.handlers.RotatingFileHandler(
             'bot.log',
-            maxBytes=5 * 1024 * 1024,  # 5MB máximo
+            maxBytes=5*1024*1024,  # 5MB máximo
             backupCount=2,  # Mantém apenas 2 arquivos de backup
             encoding='utf-8'
         ) if os.path.exists('/tmp') else logging.StreamHandler()
     ]
 )
+LOG = logging.getLogger("ytbot")
+LOG.setLevel(logging.WARNING)  # WARNING em produção economiza memória
 
-# Aplica nível de log global
-logging.getLogger().setLevel(log_level)
-
-# Configura loggers específicos (opcional)
-logging.getLogger("ytbot").setLevel(log_level)
-logging.getLogger("yt_dlp").setLevel(log_level)
-logging.getLogger("telegram").setLevel(log_level)
 
 # Token do Bot
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
