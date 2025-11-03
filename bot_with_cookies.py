@@ -2,7 +2,7 @@
 """
 bot_with_cookies_melhorado.py - Versão Profissional
 
-Telegram bot (webhook) com sistema de controle de downloads e suporte a pagamento PIX
+Telegram bot IA (webhook) com sistema de controle de downloads e suporte a pagamento PIX
 """
 import os
 import sys
