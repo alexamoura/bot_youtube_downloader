@@ -2789,14 +2789,16 @@ def render_webhook():
 
     payload = request.get_json(silent=True) or {}
 
-    event_type = payload.get("type", "Evento desconhecido")
-    timestamp_utc = payload.get("timestamp")
-    data = payload.get("data", {})
+    # Valida se é um payload do Render
+    event_type = payload.get("type")
+    data = payload.get("data") or {}
 
-    service_name = data.get("serviceName", "Serviço não informado")
-    status = data.get("status")
+    if not event_type or "serviceName" not in data:
+        # Ignora requisições que não são eventos do Render
+        print(f"[IGNORADO] Requisição sem tipo válido: {payload}")
+        return {"message": "Ignorado: payload sem tipo ou serviceName"}, 200
 
-    # === 🔹 FILTRO DE EVENTOS RELEVANTES ===
+    # Eventos relevantes
     eventos_relevantes = [
         "deploy_ended",
         "service_unhealthy",
@@ -2804,11 +2806,13 @@ def render_webhook():
         "service_started",
         "server_started"
     ]
+
     if event_type not in eventos_relevantes:
-        # Ignora eventos irrelevantes (como pings ou health checks)
+        print(f"[IGNORADO] Evento irrelevante: {event_type}")
         return {"message": f"Evento ignorado: {event_type}"}, 200
 
-    # === 🔹 Converte UTC → Horário de Brasília (sem precisar do pytz) ===
+    # Converte UTC → Horário de Brasília
+    timestamp_utc = payload.get("timestamp")
     if timestamp_utc:
         try:
             dt_utc = datetime.fromisoformat(timestamp_utc.replace("Z", "+00:00"))
@@ -2820,7 +2824,10 @@ def render_webhook():
     else:
         timestamp = "Hora não informada"
 
-    # === 🔹 Define mensagem conforme o tipo de evento ===
+    service_name = data.get("serviceName", "Serviço não informado")
+    status = data.get("status")
+
+    # Define mensagem conforme tipo de evento
     if event_type == "deploy_ended":
         event_emoji = "🚀"
         status_text = "Deploy finalizado"
@@ -2838,7 +2845,7 @@ def render_webhook():
         status_text = f"Evento: {event_type}"
         status_emoji = "⚠️"
 
-    # === 🔹 Monta mensagem para Discord ===
+    # Monta mensagem
     message = (
         f"{event_emoji} **Render Alert**\n"
         f"📌 **Evento:** {event_type}\n"
@@ -2848,19 +2855,15 @@ def render_webhook():
         f"🔗 https://dashboard.render.com"
     )
 
-    if not DISCORD_WEBHOOK_URL:
-        return {"error": "Webhook do Discord não configurado"}, 500
-
-    # === 🔹 Envia mensagem pro Discord ===
+    # Envia pro Discord
     try:
         import requests
         response = requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
-        if response.status_code != 204:
-            print(f"Erro ao enviar alerta: {response.text}")
+        print(f"[DISCORD] Enviado ({response.status_code}): {event_type}")
         return {"discord_status": response.status_code}, 200
-    except ImportError:
-        print("Biblioteca requests não disponível. Alerta não enviado.")
-        return {"error": "requests não disponível"}, 500
+    except Exception as e:
+        print(f"Erro ao enviar alerta: {e}")
+        return {"error": str(e)}, 500
 
 # ============================
 # MAIN
