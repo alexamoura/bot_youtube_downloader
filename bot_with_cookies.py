@@ -2732,63 +2732,6 @@ def health():
     status = 200 if checks["bot"] == "ok" and checks["db"] == "ok" else 503
     return checks, status
 
-# Alertas Discord
-import requests
-
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/SEU_ID_AQUI"
-
-@app.route("/render-webhook", methods=["POST"])
-def render_webhook():
-    payload = request.json or {}
-
-    # Extrai dados principais
-    event_type = payload.get("type", "Evento desconhecido")
-    timestamp = payload.get("timestamp", "Hora não informada")
-    data = payload.get("data", {})
-
-    service_name = data.get("serviceName", "Serviço não informado")
-    status = data.get("status", "Status não informado")
-
-    # Define emoji e título com base no status
-    if status == "succeeded":
-        status_emoji = "✅"
-        status_text = "Deploy concluído com sucesso"
-    elif status == "failed":
-        status_emoji = "❌"
-        status_text = "Falha no deploy"
-    elif status == "unhealthy":
-        status_emoji = "🔴"
-        status_text = "Serviço caiu"
-    elif status == "started":
-        status_emoji = "🔄"
-        status_text = "Serviço reiniciado"
-    else:
-        status_emoji = "⚠️"
-        status_text = f"Status: {status}"
-
-    # Define emoji para tipo de evento
-    if event_type == "deploy_ended":
-        event_emoji = "🚀"
-    elif event_type == "service_unhealthy":
-        event_emoji = "🔴"
-    elif event_type == "service_started":
-        event_emoji = "🔄"
-    else:
-        event_emoji = "⚠️"
-
-    # Monta mensagem para Discord
-    message = (
-        f"{event_emoji} **Render Alert**\n"
-        f"📌 **Evento:** {event_type}\n"
-        f"🖥️ **Serviço:** {service_name}\n"
-        f"{status_emoji} **{status_text}**\n"
-        f"⏰ **Hora:** {timestamp}\n"
-        f"🔗 [Abrir Render Dashboard](https://dashboard.render.com)"
-scord
-    response = requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
-
-    return {"discord_status": response.status_code}, 200
-    
 # ============================
 # MERCADOPAGO
 # ============================
