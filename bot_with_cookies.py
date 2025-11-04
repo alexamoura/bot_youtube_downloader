@@ -2780,9 +2780,6 @@ from flask import Flask, request
 from datetime import datetime, timezone, timedelta
 import os
 
-# Se você já tem o Flask inicializado em outro lugar, pode remover esta linha:
-app = Flask(__name__)
-
 DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1435259548255518813/JA9d0SJD8n8SWtnjWMLJUr5kA9jLdQyVn5fOi5lYWULKYB2Nv94rD37wF_d8RiGGt5-Z"  # Substitua pela URL do Discord
 
 @app.route("/render-webhook", methods=["GET", "POST"])
