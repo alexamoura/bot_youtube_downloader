@@ -2826,3 +2826,61 @@ async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.edit_message_text("❌ Erro ao criar pagamento. Tente novamente mais tarde.")
     except Exception as e:
         await query.edit_message_text(f"❌ Falha interna: {e}")
+
+# Alertas Discord
+
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/SEU_ID_AQUI"  # Substitua pela URL do Discord
+
+@app.route("/render-webhook", methods=["POST"])
+def render_webhook():
+    payload = request.json or {}
+
+    # Extrai dados do Render
+    event_type = payload.get("type", "Evento desconhecido")
+    timestamp = payload.get("timestamp", "Hora não informada")
+    data = payload.get("data", {})
+
+    service_name = data.get("serviceName", "Serviço não informado")
+    status = data.get("status", "Status não informado")
+
+    # Emojis dinâmicos para status
+    if status == "succeeded":
+        status_emoji = "✅"
+        status_text = "Deploy concluído com sucesso"
+    elif status == "failed":
+        status_emoji = "❌"
+        status_text = "Falha no deploy"
+    elif status == "unhealthy":
+        status_emoji = "🔴"
+        status_text = "Serviço caiu"
+    elif status == "started":
+        status_emoji = "🔄"
+        status_text = "Serviço reiniciado"
+    else:
+        status_emoji = "⚠️"
+        status_text = f"Status: {status}"
+
+    # Emojis para tipo de evento
+    if event_type == "deploy_ended":
+        event_emoji = "🚀"
+    elif event_type == "service_unhealthy":
+        event_emoji = "🔴"
+    elif event_type == "service_started":
+        event_emoji = "🔄"
+    else:
+        event_emoji = "⚠️"
+
+    # Monta mensagem para Discord
+    message = (
+        f"{event_emoji} **Render Alert**\n"
+        f"📌 **Evento:** {event_type}\n"
+        f"🖥️ **Serviço:** {service_name}\n"
+        f"{status_emoji} **{status_text}**\n"
+        f"⏰ **Hora:** {timestamp}\n"
+        f"🔗 https://dashboard.render.com"
+    )
+
+    # Envia para Discord
+    response = requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
+
+    return {"discord_status": response.status_code}, 200
