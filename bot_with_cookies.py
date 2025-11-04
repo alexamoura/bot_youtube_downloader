@@ -2784,21 +2784,34 @@ def render_webhook():
     payload = request.get_json(silent=True) or {}
 
     event_type = payload.get("type", "Evento desconhecido")
-    timestamp = payload.get("timestamp", "Hora não informada")
+    timestamp_utc = payload.get("timestamp")
     data = payload.get("data", {})
 
     service_name = data.get("serviceName", "Serviço não informado")
     status = data.get("status")
 
+    # === Converte UTC -> Horário de Brasília ===
+    if timestamp_utc:
+        try:
+            dt_utc = datetime.fromisoformat(timestamp_utc.replace("Z", "+00:00"))
+            brasil_tz = pytz.timezone("America/Sao_Paulo")
+            dt_brasil = dt_utc.astimezone(brasil_tz)
+            timestamp = dt_brasil.strftime("%d/%m/%Y %H:%M:%S")
+        except Exception:
+            timestamp = timestamp_utc
+    else:
+        timestamp = "Hora não informada"
+
+    # === Define mensagem conforme o tipo de evento ===
     if event_type == "deploy_ended":
         event_emoji = "🚀"
         status_text = "Deploy finalizado"
         status_emoji = "✅" if status == "succeeded" else "❌"
-    elif event_type == "service_unhealthy":
+    elif event_type == "service_unhealthy" or event_type == "server_unhealthy":
         event_emoji = "🔴"
         status_text = "Serviço ficou instável ou caiu"
         status_emoji = "🔴"
-    elif event_type == "service_started":
+    elif event_type == "service_started" or event_type == "server_started":
         event_emoji = "🔄"
         status_text = "Serviço reiniciado"
         status_emoji = "🔄"
@@ -2807,12 +2820,13 @@ def render_webhook():
         status_text = f"Evento: {event_type}"
         status_emoji = "⚠️"
 
+    # === Monta mensagem pro Discord ===
     message = (
         f"{event_emoji} **Render Alert**\n"
         f"📌 **Evento:** {event_type}\n"
         f"🖥️ **Serviço:** {service_name}\n"
         f"{status_emoji} **{status_text}**\n"
-        f"⏰ **Hora:** {timestamp}\n"
+        f"⏰ **Hora (Brasília):** {timestamp}\n"
         f"🔗 https://dashboard.render.com"
     )
 
