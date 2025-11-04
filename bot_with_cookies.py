@@ -2735,23 +2735,23 @@ def health():
 # Alertas Discord
 import requests
 
-# URL do webhook do Discord (copie do app do Discord)
 DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1435259548255518813/JA9d0SJD8n8SWtnjWMLJUr5kA9jLdQyVn5fOi5lYWULKYB2Nv94rD37wF_d8RiGGt5-Z"
 
 @app.route("/render-webhook", methods=["POST"])
 def render_webhook():
-    data = request.json or {}
+    payload = request.json or {}
 
-    # Extrai informações do evento do Render
-    event = data.get("event", "Evento desconhecido")
-    service_name = data.get("service", {}).get("name", "Serviço não informado")
+    event_type = payload.get("type", "Evento desconhecido")
+    timestamp = payload.get("timestamp", "Hora não informada")
+    data = payload.get("data", {})
+
+    service_name = data.get("serviceName", "Serviço não informado")
     status = data.get("status", "Status não informado")
-    timestamp = data.get("created_at", "Hora não informada")
 
-    # Personaliza mensagem para Discord
+    # Mensagem personalizada para Discord
     message = (
         f"⚠️ **Alerta do Render**\n"
-        f"📌 **Evento:** {event}\n"
+        f"📌 **Evento:** {event_type}\n"
         f"🖥️ **Serviço:** {service_name}\n"
         f"✅ **Status:** {status}\n"
         f"⏰ **Hora:** {timestamp}\n"
