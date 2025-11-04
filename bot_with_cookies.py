@@ -2820,6 +2820,8 @@ def render_webhook():
 
     response = requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
 
+    return {"discord_status": response.status_code}, 200
+
 # ============================
 # MAIN
 # ============================
