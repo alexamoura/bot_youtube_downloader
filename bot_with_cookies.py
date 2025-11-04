@@ -2789,7 +2789,8 @@ def render_webhook():
 
     payload = request.get_json(silent=True) or {}
 
-    event_type = payload.get("type", "Evento desconhecido")
+    # Padroniza tipo do evento para minúsculas
+    event_type = (payload.get("type") or "evento_desconhecido").lower()
     timestamp_utc = payload.get("timestamp")
     data = payload.get("data", {})
 
@@ -2798,6 +2799,7 @@ def render_webhook():
 
     # === 🔹 FILTRO DE EVENTOS RELEVANTES ===
     eventos_relevantes = [
+        "deploy_started",
         "deploy_ended",
         "service_unhealthy",
         "server_unhealthy",
@@ -2821,10 +2823,19 @@ def render_webhook():
         timestamp = "Hora não informada"
 
     # === 🔹 Define mensagem conforme o tipo de evento ===
-    if event_type == "deploy_ended":
+    if event_type == "deploy_started":
+        event_emoji = "🚀"
+        status_text = "Deploy iniciado"
+        status_emoji = "🔄"
+    elif event_type == "deploy_ended":
         event_emoji = "🚀"
         status_text = "Deploy finalizado"
-        status_emoji = "✅" if status == "succeeded" else "❌"
+        if status == "succeeded":
+            status_emoji = "✅"
+        elif status == "failed":
+            status_emoji = "❌"
+        else:
+            status_emoji = "⚠️"
     elif event_type in ["service_unhealthy", "server_unhealthy"]:
         event_emoji = "🔴"
         status_text = "Serviço ficou instável ou caiu"
