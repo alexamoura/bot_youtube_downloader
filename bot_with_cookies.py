@@ -2776,17 +2776,14 @@ def webhook_pix():
 
 DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1435259548255518813/JA9d0SJD8n8SWtnjWMLJUr5kA9jLdQyVn5fOi5lYWULKYB2Nv94rD37wF_d8RiGGt5-Z"  # Substitua pela URL do Discord
 
-@app.route("/render-webhook", methods=["POST"])
-def render_webhook():
-    payload = request.json or {}
-
 @app.route("/render-webhook", methods=["GET", "POST"])
 def render_webhook():
     if request.method == "GET":
         return "Webhook ativo", 200
 
+    # Para POST (Render envia aqui)
+    payload = request.json or {}
 
-    # Extrai dados do Render
     event_type = payload.get("type", "Evento desconhecido")
     timestamp = payload.get("timestamp", "Hora não informada")
     data = payload.get("data", {})
@@ -2835,7 +2832,7 @@ def render_webhook():
     response = requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
 
     return {"discord_status": response.status_code}, 200
-
+    
 # ============================
 # MAIN
 # ============================
