@@ -2796,7 +2796,19 @@ def render_webhook():
     service_name = data.get("serviceName", "Serviço não informado")
     status = data.get("status")
 
-    # === Converte UTC → Horário de Brasília (sem precisar do pytz) ===
+    # === 🔹 FILTRO DE EVENTOS RELEVANTES ===
+    eventos_relevantes = [
+        "deploy_ended",
+        "service_unhealthy",
+        "server_unhealthy",
+        "service_started",
+        "server_started"
+    ]
+    if event_type not in eventos_relevantes:
+        # Ignora eventos irrelevantes (como pings ou health checks)
+        return {"message": f"Evento ignorado: {event_type}"}, 200
+
+    # === 🔹 Converte UTC → Horário de Brasília (sem precisar do pytz) ===
     if timestamp_utc:
         try:
             dt_utc = datetime.fromisoformat(timestamp_utc.replace("Z", "+00:00"))
@@ -2808,7 +2820,7 @@ def render_webhook():
     else:
         timestamp = "Hora não informada"
 
-    # === Define mensagem conforme o tipo de evento ===
+    # === 🔹 Define mensagem conforme o tipo de evento ===
     if event_type == "deploy_ended":
         event_emoji = "🚀"
         status_text = "Deploy finalizado"
@@ -2826,7 +2838,7 @@ def render_webhook():
         status_text = f"Evento: {event_type}"
         status_emoji = "⚠️"
 
-    # === Monta mensagem para Discord ===
+    # === 🔹 Monta mensagem para Discord ===
     message = (
         f"{event_emoji} **Render Alert**\n"
         f"📌 **Evento:** {event_type}\n"
@@ -2839,7 +2851,7 @@ def render_webhook():
     if not DISCORD_WEBHOOK_URL:
         return {"error": "Webhook do Discord não configurado"}, 500
 
-    # Envia mensagem pro Discord (só se 'requests' estiver disponível)
+    # === 🔹 Envia mensagem pro Discord ===
     try:
         import requests
         response = requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
