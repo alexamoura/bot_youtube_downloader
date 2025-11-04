@@ -2774,6 +2774,12 @@ def webhook_pix():
 
 # Alertas Discord
 
+from flask import Flask, request
+import pytz
+import os
+
+app = Flask(__name__)
+
 DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1435259548255518813/JA9d0SJD8n8SWtnjWMLJUr5kA9jLdQyVn5fOi5lYWULKYB2Nv94rD37wF_d8RiGGt5-Z"  # Substitua pela URL do Discord
 
 @app.route("/render-webhook", methods=["GET", "POST"])
