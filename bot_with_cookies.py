@@ -2788,7 +2788,7 @@ def render_webhook():
         return "Webhook ativo", 200
 
     payload = request.get_json(silent=True) or {}
-
+    
     # Padroniza tipo do evento para minúsculas
     event_type = (payload.get("type") or "evento_desconhecido").lower()
     timestamp_utc = payload.get("timestamp")
@@ -2806,11 +2806,13 @@ def render_webhook():
         "service_started",
         "server_started"
     ]
+    
     if event_type not in eventos_relevantes:
-        # Ignora eventos irrelevantes (como pings ou health checks)
+        # Apenas log temporário para verificação
+        print(f"Ignorado: {event_type}")
         return {"message": f"Evento ignorado: {event_type}"}, 200
 
-    # === 🔹 Converte UTC → Horário de Brasília (sem precisar do pytz) ===
+    # === 🔹 Converte UTC → Horário de Brasília ===
     if timestamp_utc:
         try:
             dt_utc = datetime.fromisoformat(timestamp_utc.replace("Z", "+00:00"))
@@ -2864,14 +2866,15 @@ def render_webhook():
 
     # === 🔹 Envia mensagem pro Discord ===
     try:
-        import requests
         response = requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
         if response.status_code != 204:
             print(f"Erro ao enviar alerta: {response.text}")
+        else:
+            print(f"Mensagem enviada: {message}")
         return {"discord_status": response.status_code}, 200
-    except ImportError:
-        print("Biblioteca requests não disponível. Alerta não enviado.")
-        return {"error": "requests não disponível"}, 500
+    except Exception as e:
+        print(f"Erro ao enviar alerta: {e}")
+        return {"error": str(e)}, 500
 
 # ============================
 # MAIN
