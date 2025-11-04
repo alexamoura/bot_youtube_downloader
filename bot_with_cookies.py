@@ -2771,61 +2771,6 @@ def webhook_pix():
     except Exception as e:
         LOG.exception("Erro no webhook PIX: %s", e)
         return "erro", 500
-        
-# ============================
-# MAIN
-# ============================
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    LOG.info("Iniciando servidor Flask na porta %d", port)
-    app.run(host="0.0.0.0", port=port)
-
-
-from telegram.constants import ParseMode
-import mercadopago
-
-async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = update.effective_user.id
-
-    try:
-        reference = create_pix_payment(user_id, 9.90)
-        sdk = mercadopago.SDK(os.getenv("MERCADOPAGO_ACCESS_TOKEN"))
-
-        payment_data = {
-            "transaction_amount": 9.90,
-            "description": "Plano Premium",
-            "payment_method_id": "pix",
-            "payer": {"email": f"user{user_id}@example.com"},
-            "external_reference": reference
-        }
-
-        result = sdk.payment().create(payment_data)
-        response = result.get("response", {})
-
-        if response.get("status") == "pending":
-            qr_code_base64 = response["point_of_interaction"]["transaction_data"]["qr_code_base64"]
-            qr_code_text = response["point_of_interaction"]["transaction_data"]["qr_code"]
-
-            await query.edit_message_text(
-                (
-                    f"✅ Pedido criado!\n\n"
-                    f"<code>{qr_code_text}</code>\n\n"
-                    "🖼️ Escaneie o QR Code abaixo para pagar:"
-                ),
-                parse_mode=ParseMode.HTML
-            )
-
-            await context.bot.send_photo(
-                chat_id=query.message.chat_id,
-                photo=f"data:image/png;base64,{qr_code_base64}"
-            )
-        else:
-            await query.edit_message_text("❌ Erro ao criar pagamento. Tente novamente mais tarde.")
-    except Exception as e:
-        await query.edit_message_text(f"❌ Falha interna: {e}")
 
 # Alertas Discord
 
@@ -2884,3 +2829,58 @@ def render_webhook():
     response = requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
 
     return {"discord_status": response.status_code}, 200
+
+# ============================
+# MAIN
+# ============================
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    LOG.info("Iniciando servidor Flask na porta %d", port)
+    app.run(host="0.0.0.0", port=port)
+
+
+from telegram.constants import ParseMode
+import mercadopago
+
+async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+
+    try:
+        reference = create_pix_payment(user_id, 9.90)
+        sdk = mercadopago.SDK(os.getenv("MERCADOPAGO_ACCESS_TOKEN"))
+
+        payment_data = {
+            "transaction_amount": 9.90,
+            "description": "Plano Premium",
+            "payment_method_id": "pix",
+            "payer": {"email": f"user{user_id}@example.com"},
+            "external_reference": reference
+        }
+
+        result = sdk.payment().create(payment_data)
+        response = result.get("response", {})
+
+        if response.get("status") == "pending":
+            qr_code_base64 = response["point_of_interaction"]["transaction_data"]["qr_code_base64"]
+            qr_code_text = response["point_of_interaction"]["transaction_data"]["qr_code"]
+
+            await query.edit_message_text(
+                (
+                    f"✅ Pedido criado!\n\n"
+                    f"<code>{qr_code_text}</code>\n\n"
+                    "🖼️ Escaneie o QR Code abaixo para pagar:"
+                ),
+                parse_mode=ParseMode.HTML
+            )
+
+            await context.bot.send_photo(
+                chat_id=query.message.chat_id,
+                photo=f"data:image/png;base64,{qr_code_base64}"
+            )
+        else:
+            await query.edit_message_text("❌ Erro ao criar pagamento. Tente novamente mais tarde.")
+    except Exception as e:
+        await query.edit_message_text(f"❌ Falha interna: {e}")
