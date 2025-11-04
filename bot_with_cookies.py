@@ -2772,12 +2772,15 @@ def webhook_pix():
         LOG.exception("Erro no webhook PIX: %s", e)
         return "erro", 500
 
-# Alertas Discord
+# ======================
+# ALERTAS DISCORD (Render)
+# ======================
 
 from flask import Flask, request
-import pytz
+from datetime import datetime, timezone, timedelta
 import os
 
+# Se você já tem o Flask inicializado em outro lugar, pode remover esta linha:
 app = Flask(__name__)
 
 DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1435259548255518813/JA9d0SJD8n8SWtnjWMLJUr5kA9jLdQyVn5fOi5lYWULKYB2Nv94rD37wF_d8RiGGt5-Z"  # Substitua pela URL do Discord
@@ -2796,11 +2799,11 @@ def render_webhook():
     service_name = data.get("serviceName", "Serviço não informado")
     status = data.get("status")
 
-    # === Converte UTC -> Horário de Brasília ===
+    # === Converte UTC → Horário de Brasília (sem precisar do pytz) ===
     if timestamp_utc:
         try:
             dt_utc = datetime.fromisoformat(timestamp_utc.replace("Z", "+00:00"))
-            brasil_tz = pytz.timezone("America/Sao_Paulo")
+            brasil_tz = timezone(timedelta(hours=-3))
             dt_brasil = dt_utc.astimezone(brasil_tz)
             timestamp = dt_brasil.strftime("%d/%m/%Y %H:%M:%S")
         except Exception:
@@ -2813,11 +2816,11 @@ def render_webhook():
         event_emoji = "🚀"
         status_text = "Deploy finalizado"
         status_emoji = "✅" if status == "succeeded" else "❌"
-    elif event_type == "service_unhealthy" or event_type == "server_unhealthy":
+    elif event_type in ["service_unhealthy", "server_unhealthy"]:
         event_emoji = "🔴"
         status_text = "Serviço ficou instável ou caiu"
         status_emoji = "🔴"
-    elif event_type == "service_started" or event_type == "server_started":
+    elif event_type in ["service_started", "server_started"]:
         event_emoji = "🔄"
         status_text = "Serviço reiniciado"
         status_emoji = "🔄"
@@ -2826,7 +2829,7 @@ def render_webhook():
         status_text = f"Evento: {event_type}"
         status_emoji = "⚠️"
 
-    # === Monta mensagem pro Discord ===
+    # === Monta mensagem para Discord ===
     message = (
         f"{event_emoji} **Render Alert**\n"
         f"📌 **Evento:** {event_type}\n"
@@ -2839,12 +2842,16 @@ def render_webhook():
     if not DISCORD_WEBHOOK_URL:
         return {"error": "Webhook do Discord não configurado"}, 500
 
-    response = requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
-
-    if response.status_code != 204:
-        print(f"Erro ao enviar mensagem para o Discord: {response.text}")
-
-    return {"discord_status": response.status_code}, 200
+    # Envia mensagem pro Discord (só se 'requests' estiver disponível)
+    try:
+        import requests
+        response = requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
+        if response.status_code != 204:
+            print(f"Erro ao enviar alerta: {response.text}")
+        return {"discord_status": response.status_code}, 200
+    except ImportError:
+        print("Biblioteca requests não disponível. Alerta não enviado.")
+        return {"error": "requests não disponível"}, 500
 
 # ============================
 # MAIN
