@@ -2781,16 +2781,15 @@ def render_webhook():
     if request.method == "GET":
         return "Webhook ativo", 200
 
-    payload = request.json or {}
+    payload = request.get_json(silent=True) or {}
 
     event_type = payload.get("type", "Evento desconhecido")
     timestamp = payload.get("timestamp", "Hora não informada")
     data = payload.get("data", {})
 
     service_name = data.get("serviceName", "Serviço não informado")
-    status = data.get("status")  # Pode ser None
+    status = data.get("status")
 
-    # Define mensagem baseada no evento
     if event_type == "deploy_ended":
         event_emoji = "🚀"
         status_text = "Deploy finalizado"
@@ -2808,7 +2807,6 @@ def render_webhook():
         status_text = f"Evento: {event_type}"
         status_emoji = "⚠️"
 
-    # Monta mensagem para Discord
     message = (
         f"{event_emoji} **Render Alert**\n"
         f"📌 **Evento:** {event_type}\n"
@@ -2818,7 +2816,13 @@ def render_webhook():
         f"🔗 https://dashboard.render.com"
     )
 
+    if not DISCORD_WEBHOOK_URL:
+        return {"error": "Webhook do Discord não configurado"}, 500
+
     response = requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
+
+    if response.status_code != 204:
+        print(f"Erro ao enviar mensagem para o Discord: {response.text}")
 
     return {"discord_status": response.status_code}, 200
 
