@@ -2781,7 +2781,6 @@ def render_webhook():
     if request.method == "GET":
         return "Webhook ativo", 200
 
-    # Para POST (Render envia aqui)
     payload = request.json or {}
 
     event_type = payload.get("type", "Evento desconhecido")
@@ -2789,34 +2788,25 @@ def render_webhook():
     data = payload.get("data", {})
 
     service_name = data.get("serviceName", "Serviço não informado")
-    status = data.get("status", "Status não informado")
+    status = data.get("status")  # Pode ser None
 
-    # Emojis dinâmicos para status
-    if status == "succeeded":
-        status_emoji = "✅"
-        status_text = "Deploy concluído com sucesso"
-    elif status == "failed":
-        status_emoji = "❌"
-        status_text = "Falha no deploy"
-    elif status == "unhealthy":
-        status_emoji = "🔴"
-        status_text = "Serviço caiu"
-    elif status == "started":
-        status_emoji = "🔄"
-        status_text = "Serviço reiniciado"
-    else:
-        status_emoji = "⚠️"
-        status_text = f"Status: {status}"
-
-    # Emojis para tipo de evento
+    # Define mensagem baseada no evento
     if event_type == "deploy_ended":
         event_emoji = "🚀"
+        status_text = "Deploy finalizado"
+        status_emoji = "✅" if status == "succeeded" else "❌"
     elif event_type == "service_unhealthy":
         event_emoji = "🔴"
+        status_text = "Serviço ficou instável ou caiu"
+        status_emoji = "🔴"
     elif event_type == "service_started":
         event_emoji = "🔄"
+        status_text = "Serviço reiniciado"
+        status_emoji = "🔄"
     else:
         event_emoji = "⚠️"
+        status_text = f"Evento: {event_type}"
+        status_emoji = "⚠️"
 
     # Monta mensagem para Discord
     message = (
@@ -2828,11 +2818,8 @@ def render_webhook():
         f"🔗 https://dashboard.render.com"
     )
 
-    # Envia para Discord
     response = requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
 
-    return {"discord_status": response.status_code}, 200
-    
 # ============================
 # MAIN
 # ============================
