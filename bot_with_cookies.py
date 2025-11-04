@@ -2780,6 +2780,12 @@ DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1435259548255518813/JA9d
 def render_webhook():
     payload = request.json or {}
 
+@app.route("/render-webhook", methods=["GET", "POST"])
+def render_webhook():
+    if request.method == "GET":
+        return "Webhook ativo", 200
+
+
     # Extrai dados do Render
     event_type = payload.get("type", "Evento desconhecido")
     timestamp = payload.get("timestamp", "Hora não informada")
