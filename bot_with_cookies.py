@@ -28,6 +28,27 @@ import yt_dlp
 try:
     import requests
     from bs4 import BeautifulSoup
+import psutil
+# Watchdog para reiniciar se a thread do loop morrer
+def watchdog_loop(loop_thread):
+    while True:
+        if not loop_thread.is_alive():
+            if DISCORD_WEBHOOK_URL:
+                requests.post(DISCORD_WEBHOOK_URL, json={"content": "🚨 Loop principal do bot morreu. Reiniciando..."})
+            os.execv(sys.executable, ['python'] + sys.argv)
+        time.sleep(60)
+
+# Monitor de memória para reiniciar se ultrapassar 450MB
+def monitor_memory():
+    process = psutil.Process(os.getpid())
+    while True:
+        mem = process.memory_info().rss / (1024 * 1024)
+        if mem > 450:
+            if DISCORD_WEBHOOK_URL:
+                requests.post(DISCORD_WEBHOOK_URL, json={"content": f"🚨 Memória alta detectada: {mem:.2f}MB. Reiniciando..."})
+            os.execv(sys.executable, ['python'] + sys.argv)
+        time.sleep(60)
+
     REQUESTS_AVAILABLE = True
 except ImportError:
     REQUESTS_AVAILABLE = False
@@ -552,6 +573,8 @@ def _start_loop(loop):
 LOG.info("Iniciando event loop de background...")
 loop_thread = threading.Thread(target=_start_loop, args=(APP_LOOP,), daemon=True)
 loop_thread.start()
+threading.Thread(target=watchdog_loop, args=(loop_thread,), daemon=True).start()
+threading.Thread(target=monitor_memory, daemon=True).start()
 
 try:
     fut = asyncio.run_coroutine_threadsafe(application.initialize(), APP_LOOP)
