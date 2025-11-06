@@ -1787,14 +1787,6 @@ def generate_bar_chart(value: int, max_value: int, length: int = 10) -> str:
     bar = "█" * filled + "░" * (length - filled)
     return bar
     
-ADMINS = [6766920288]  # Seus IDs aqui
-   
-   if update.effective_user.id not in ADMINS:
-       await update.message.reply_text(
-           "🔒 Acesso negado. Comando apenas para admins."
-       )
-       return
-       
 async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handler para o comando /mensal - Relatório detalhado de assinantes premium
@@ -1808,6 +1800,17 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     - Lista de últimos assinantes
     """
     user_id = update.effective_user.id
+    
+    # 🔒 CONTROLE DE ACESSO - Apenas admins
+    ADMINS = [6766920288]  # Seu ID aqui
+    
+    if user_id not in ADMINS:
+        await update.message.reply_text(
+            "🔒 <b>Acesso Negado</b>\n\n"
+            "Este comando é restrito a administradores.",
+            parse_mode="HTML"
+        )
+        return
     
     LOG.info("📊 Comando /mensal executado por usuário %d", user_id)
     
