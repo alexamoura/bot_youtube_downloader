@@ -18,7 +18,9 @@ import time
 import sqlite3
 import shutil
 import subprocess
-from collections import OrderedDict
+import gc
+import glob
+from collections import OrderedDict, deque
 from contextlib import contextmanager
 from urllib.parse import urlparse, parse_qs, unquote
 from datetime import datetime, timedelta
@@ -51,6 +53,110 @@ except ImportError:
     GROQ_AVAILABLE = False
 
 # ============================================================
+# OTIMIZAÇÕES DE MEMÓRIA
+# ============================================================
+
+class LimitedCache:
+    """Cache com tamanho máximo - evita crescimento infinito de memória"""
+    def __init__(self, max_size=500):
+        self.cache = OrderedDict()
+        self.max_size = max_size
+    
+    def set(self, key, value):
+        """Adiciona item e remove o mais antigo se exceder limite"""
+        if key in self.cache:
+            self.cache.move_to_end(key)
+        self.cache[key] = value
+        if len(self.cache) > self.max_size:
+            self.cache.popitem(last=False)
+    
+    def get(self, key):
+        """Busca item e marca como recentemente usado"""
+        if key in self.cache:
+            self.cache.move_to_end(key)
+            return self.cache[key]
+        return None
+    
+    def clear(self):
+        """Limpa todo o cache"""
+        self.cache.clear()
+
+# Sessão HTTP compartilhada (singleton) - economiza memória
+_GLOBAL_HTTP_SESSION = None
+_SESSION_LOCK = threading.Lock()
+
+def get_shared_http_session():
+    """Retorna sessão HTTP compartilhada para reutilização"""
+    global _GLOBAL_HTTP_SESSION
+    if _GLOBAL_HTTP_SESSION is None:
+        with _SESSION_LOCK:
+            if _GLOBAL_HTTP_SESSION is None and REQUESTS_AVAILABLE:
+                _GLOBAL_HTTP_SESSION = requests.Session()
+                _GLOBAL_HTTP_SESSION.headers.update({
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept': 'application/json',
+                })
+    return _GLOBAL_HTTP_SESSION
+
+@contextmanager
+def temp_file_guaranteed_cleanup(suffix='', prefix='ytdl_'):
+    """Context manager que SEMPRE limpa arquivo temporário"""
+    temp_path = None
+    try:
+        fd, temp_path = tempfile.mkstemp(suffix=suffix, prefix=prefix)
+        os.close(fd)
+        yield temp_path
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
+
+def cleanup_and_gc_routine():
+    """
+    Thread daemon que executa periodicamente:
+    1. Limpeza de arquivos temporários antigos
+    2. Garbage collection forçado
+    """
+    while True:
+        time.sleep(600)  # 10 minutos
+        
+        try:
+            # Garbage collection
+            collected = gc.collect()
+            if collected > 0:
+                print(f"🗑️ GC: {collected} objetos coletados")
+            
+            # Limpeza de arquivos temporários
+            temp_patterns = [
+                '/tmp/*.mp4',
+                '/tmp/*.jpg', 
+                '/tmp/*.jpeg',
+                '/tmp/*.webm',
+                '/tmp/*.png',
+                '/tmp/ytdl_*',
+            ]
+            
+            one_hour_ago = time.time() - 3600
+            cleaned_count = 0
+            
+            for pattern in temp_patterns:
+                for filepath in glob.glob(pattern):
+                    try:
+                        if os.path.getmtime(filepath) < one_hour_ago:
+                            os.unlink(filepath)
+                            cleaned_count += 1
+                    except Exception:
+                        pass
+            
+            if cleaned_count > 0:
+                print(f"🧹 Limpeza: {cleaned_count} arquivos temporários removidos")
+                
+        except Exception as e:
+            print(f"❌ Erro na rotina de limpeza: {e}")
+
+# ============================================================
 # SHOPEE VIDEO EXTRACTOR - SEM MARCA D'ÁGUA
 # ============================================================
 
@@ -58,11 +164,10 @@ class ShopeeVideoExtractor:
     """Extrator de vídeos da Shopee sem marca d'água usando API interna"""
     
     def __init__(self):
-        self.session = requests.Session() if REQUESTS_AVAILABLE else None
-        if self.session:
+        self.session = get_shared_http_session() if REQUESTS_AVAILABLE else None
+        if self.session and REQUESTS_AVAILABLE:
+            # Apenas atualiza Referer específico da Shopee
             self.session.headers.update({
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'application/json',
                 'Referer': 'https://shopee.com.br/',
             })
     
@@ -390,8 +495,9 @@ from telegram.ext import (
 )
 
 # Configuração de Logging Otimizada
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()  # Configurável via env
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(),  # Console
@@ -404,7 +510,7 @@ logging.basicConfig(
     ]
 )
 LOG = logging.getLogger("ytbot")
-LOG.setLevel(logging.WARNING)  # WARNING em produção economiza memória
+LOG.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))  # Usa mesma config
 
 
 # Token do Bot
@@ -459,10 +565,30 @@ else:
         LOG.warning("⚠️ GROQ_API_KEY não configurado - IA desativada")
 
 # Estado Global
-PENDING = OrderedDict()
+PENDING = LimitedCache(max_size=1000)  # Era: OrderedDict() - agora com limite de memória
 DB_LOCK = threading.Lock()
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)  # Controle de fila
 ACTIVE_DOWNLOADS = {}  # Rastreamento de downloads ativos
+DOWNLOAD_HISTORY = deque(maxlen=100)  # Histórico limitado aos últimos 100 downloads
+USER_LAST_DOWNLOAD = {}  # Último download por usuário (OK manter assim)
+
+@contextmanager
+def get_db_connection():
+    """Context manager para conexões DB com garantia de fechamento"""
+    conn = None
+    try:
+        with DB_LOCK:
+            conn = sqlite3.connect(DB_FILE, timeout=5)
+            yield conn
+            conn.commit()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        LOG.error(f"Erro no banco de dados: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()
 
 # Mensagens Profissionais do Bot
 MESSAGES = {
@@ -1658,13 +1784,13 @@ Comandos:
         )
         
         # Armazena informações pendentes
-        PENDING[token] = {
+        PENDING.set(token, {
             "url": url,
             "user_id": user_id,
             "chat_id": update.effective_chat.id,
             "message_id": processing_msg.message_id,
             "timestamp": time.time(),
-        }
+        })
         
         # Remove requisições antigas
         _cleanup_pending()
@@ -1711,13 +1837,13 @@ Comandos:
         )
         
         # Armazena informações pendentes
-        PENDING[token] = {
+        PENDING.set(token, {
             "url": url,
             "user_id": user_id,
             "chat_id": update.effective_chat.id,
             "message_id": processing_msg.message_id,
             "timestamp": time.time(),
-        }
+        })
         
         # Remove requisições antigas
         _cleanup_pending()
@@ -2314,11 +2440,11 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     action, token = data.split(":", 1)
     
-    if token not in PENDING:
+    if token not in PENDING.cache:
         await query.edit_message_text(MESSAGES["error_expired"])
         return
     
-    pm = PENDING[token]
+    pm = PENDING.get(token)
     
     # Verifica se o usuário é o mesmo que solicitou
     if pm["user_id"] != query.from_user.id:
@@ -2326,7 +2452,8 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if action == "cancel":
-        del PENDING[token]
+        # Remove do cache (LimitedCache não tem del, usa cache.pop)
+        PENDING.cache.pop(token, None)
         await query.edit_message_text(MESSAGES["download_cancelled"])
         LOG.info("Download cancelado pelo usuário %d", pm["user_id"])
         return
@@ -2345,7 +2472,7 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(queue_text)
         
         # Remove da lista de pendentes
-        del PENDING[token]
+        PENDING.cache.pop(token, None)
         
         # Adiciona à lista de downloads ativos
         ACTIVE_DOWNLOADS[token] = {
@@ -2652,15 +2779,14 @@ def _cleanup_pending():
     """Remove requisições pendentes expiradas"""
     now = time.time()
     expired = [
-        token for token, pm in PENDING.items()
+        token for token, pm in PENDING.cache.items()
         if now - pm["timestamp"] > PENDING_EXPIRE_SECONDS
     ]
     for token in expired:
-        del PENDING[token]
+        PENDING.cache.pop(token, None)
     
-    # Limita tamanho máximo
-    while len(PENDING) > PENDING_MAX_SIZE:
-        PENDING.popitem(last=False)
+    # LimitedCache já controla tamanho máximo automaticamente
+    # Não precisa mais do while len(PENDING)
 
 # ============================
 # REGISTRO DE HANDLERS
@@ -2881,6 +3007,11 @@ def render_webhook():
 # ============================
 
 if __name__ == "__main__":
+    # Inicia thread de limpeza automática e garbage collection
+    cleanup_thread = threading.Thread(target=cleanup_and_gc_routine, daemon=True)
+    cleanup_thread.start()
+    LOG.info("✅ Thread de limpeza automática e GC iniciada")
+    
     port = int(os.environ.get("PORT", 10000))
     LOG.info("Iniciando servidor Flask na porta %d", port)
     app.run(host="0.0.0.0", port=port)
