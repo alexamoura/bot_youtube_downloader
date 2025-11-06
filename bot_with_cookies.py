@@ -1642,6 +1642,391 @@ Funcionalidades:
     
     LOG.info("Comando /ai executado por usuário %d", update.effective_user.id)
 
+# ═══════════════════════════════════════════════════════════════
+# 📊 SISTEMA DE RELATÓRIOS MENSAIS PREMIUM
+# ═══════════════════════════════════════════════════════════════
+
+def get_premium_monthly_stats() -> dict:
+    """
+    Retorna estatísticas completas de assinantes premium por mês
+    
+    Returns:
+        dict: {
+            'total_active': int,           # Total de assinantes ativos
+            'expires_this_month': int,     # Expiram este mês
+            'expires_next_month': int,     # Expiram próximo mês
+            'revenue_month': float,        # Receita mensal
+            'revenue_total': float,        # Receita total
+            'new_this_month': int,         # Novos este mês
+            'by_expiry_date': list,        # [(data, quantidade), ...]
+            'recent_subscribers': list     # [(user_id, data_ativação), ...]
+        }
+    """
+    try:
+        with get_db_connection() as conn:
+            c = conn.cursor()
+            
+            # Data atual
+            today = datetime.now()
+            current_month = today.strftime("%Y-%m")
+            next_month = (today + timedelta(days=32)).strftime("%Y-%m")
+            
+            # 1. Total de assinantes ativos
+            c.execute("""
+                SELECT COUNT(*) 
+                FROM user_downloads 
+                WHERE is_premium = 1 
+                AND (premium_expires IS NULL OR premium_expires >= date('now'))
+            """)
+            total_active = c.fetchone()[0]
+            
+            # 2. Assinantes que expiram este mês
+            c.execute("""
+                SELECT COUNT(*) 
+                FROM user_downloads 
+                WHERE is_premium = 1 
+                AND strftime('%Y-%m', premium_expires) = ?
+            """, (current_month,))
+            expires_this_month = c.fetchone()[0]
+            
+            # 3. Assinantes que expiram próximo mês
+            c.execute("""
+                SELECT COUNT(*) 
+                FROM user_downloads 
+                WHERE is_premium = 1 
+                AND strftime('%Y-%m', premium_expires) = ?
+            """, (next_month,))
+            expires_next_month = c.fetchone()[0]
+            
+            # 4. Novos assinantes este mês
+            c.execute("""
+                SELECT COUNT(*) 
+                FROM pix_payments 
+                WHERE status = 'confirmed' 
+                AND strftime('%Y-%m', confirmed_at) = ?
+            """, (current_month,))
+            new_this_month = c.fetchone()[0]
+            
+            # 5. Receita mensal (baseado em pagamentos confirmados)
+            c.execute("""
+                SELECT COALESCE(SUM(amount), 0) 
+                FROM pix_payments 
+                WHERE status = 'confirmed' 
+                AND strftime('%Y-%m', confirmed_at) = ?
+            """, (current_month,))
+            revenue_month = c.fetchone()[0]
+            
+            # 6. Receita total
+            c.execute("""
+                SELECT COALESCE(SUM(amount), 0) 
+                FROM pix_payments 
+                WHERE status = 'confirmed'
+            """)
+            revenue_total = c.fetchone()[0]
+            
+            # 7. Distribuição por data de expiração (próximos 60 dias)
+            c.execute("""
+                SELECT 
+                    DATE(premium_expires) as expiry_date,
+                    COUNT(*) as count
+                FROM user_downloads 
+                WHERE is_premium = 1 
+                AND premium_expires BETWEEN date('now') AND date('now', '+60 days')
+                GROUP BY DATE(premium_expires)
+                ORDER BY expiry_date
+            """)
+            by_expiry_date = c.fetchall()
+            
+            # 8. Últimos 10 assinantes
+            c.execute("""
+                SELECT 
+                    p.user_id,
+                    p.confirmed_at,
+                    p.amount
+                FROM pix_payments p
+                WHERE p.status = 'confirmed'
+                ORDER BY p.confirmed_at DESC
+                LIMIT 10
+            """)
+            recent_subscribers = c.fetchall()
+            
+            return {
+                'total_active': total_active,
+                'expires_this_month': expires_this_month,
+                'expires_next_month': expires_next_month,
+                'revenue_month': revenue_month,
+                'revenue_total': revenue_total,
+                'new_this_month': new_this_month,
+                'by_expiry_date': by_expiry_date,
+                'recent_subscribers': recent_subscribers
+            }
+            
+    except Exception as e:
+        LOG.error(f"Erro ao buscar estatísticas premium: {e}")
+        return {
+            'total_active': 0,
+            'expires_this_month': 0,
+            'expires_next_month': 0,
+            'revenue_month': 0.0,
+            'revenue_total': 0.0,
+            'new_this_month': 0,
+            'by_expiry_date': [],
+            'recent_subscribers': []
+        }
+
+def format_currency(value: float) -> str:
+    """Formata valor monetário em BRL"""
+    return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+def generate_bar_chart(value: int, max_value: int, length: int = 10) -> str:
+    """Gera barra de progresso em ASCII"""
+    if max_value == 0:
+        return "░" * length
+    
+    filled = int((value / max_value) * length)
+    bar = "█" * filled + "░" * (length - filled)
+    return bar
+    
+ADMINS = [6766920288]  # Seus IDs aqui
+   
+   if update.effective_user.id not in ADMINS:
+       await update.message.reply_text(
+           "🔒 Acesso negado. Comando apenas para admins."
+       )
+       return
+       
+async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handler para o comando /mensal - Relatório detalhado de assinantes premium
+    
+    Mostra estatísticas completas incluindo:
+    - Total de assinantes ativos
+    - Novos assinantes do mês
+    - Assinantes com renovação próxima
+    - Receita mensal e total
+    - Gráfico de expiração
+    - Lista de últimos assinantes
+    """
+    user_id = update.effective_user.id
+    
+    LOG.info("📊 Comando /mensal executado por usuário %d", user_id)
+    
+    # Mensagem de carregamento
+    loading_msg = await update.message.reply_text(
+        "📊 <b>Gerando Relatório...</b>\n\n"
+        "⏳ Analisando dados dos assinantes premium...",
+        parse_mode="HTML"
+    )
+    
+    try:
+        # Busca estatísticas
+        stats = get_premium_monthly_stats()
+        
+        # Data atual
+        now = datetime.now()
+        month_name = now.strftime("%B/%Y")
+        month_name_pt = {
+            'January': 'Janeiro', 'February': 'Fevereiro', 'March': 'Março',
+            'April': 'Abril', 'May': 'Maio', 'June': 'Junho',
+            'July': 'Julho', 'August': 'Agosto', 'September': 'Setembro',
+            'October': 'Outubro', 'November': 'Novembro', 'December': 'Dezembro'
+        }
+        for en, pt in month_name_pt.items():
+            month_name = month_name.replace(en, pt)
+        
+        # ═══════════════════════════════════════════════════════════
+        # 📊 CABEÇALHO DO RELATÓRIO
+        # ═══════════════════════════════════════════════════════════
+        
+        report = f"""╔══════════════════════════════════════════╗
+║   📊 <b>RELATÓRIO MENSAL PREMIUM</b>         ║
+╚══════════════════════════════════════════╝
+
+📅 <b>Período:</b> {month_name}
+🕐 <b>Gerado em:</b> {now.strftime("%d/%m/%Y às %H:%M")}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+"""
+        
+        # ═══════════════════════════════════════════════════════════
+        # 💎 VISÃO GERAL
+        # ═══════════════════════════════════════════════════════════
+        
+        report += f"""<b>💎 VISÃO GERAL</b>
+
+┌─────────────────────────────────────────┐
+│ 👥 Assinantes Ativos:  <b>{stats['total_active']:>12}</b> │
+│ ✨ Novos este mês:     <b>{stats['new_this_month']:>12}</b> │
+│ ⚠️ Expiram este mês:   <b>{stats['expires_this_month']:>12}</b> │
+│ 📅 Expiram próx. mês:  <b>{stats['expires_next_month']:>12}</b> │
+└─────────────────────────────────────────┘
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+"""
+        
+        # ═══════════════════════════════════════════════════════════
+        # 💰 RECEITA
+        # ═══════════════════════════════════════════════════════════
+        
+        report += f"""<b>💰 RECEITA</b>
+
+┌─────────────────────────────────────────┐
+│ 📈 Mensal:  <b>{format_currency(stats['revenue_month']):>21}</b> │
+│ 💎 Total:   <b>{format_currency(stats['revenue_total']):>21}</b> │
+└─────────────────────────────────────────┘
+
+"""
+        
+        # Calcula média por assinante
+        avg_per_subscriber = stats['revenue_month'] / stats['new_this_month'] if stats['new_this_month'] > 0 else 0
+        report += f"💵 <b>Ticket Médio:</b> {format_currency(avg_per_subscriber)}\n\n"
+        
+        report += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        # ═══════════════════════════════════════════════════════════
+        # 📊 GRÁFICO DE RENOVAÇÕES (próximos 30 dias)
+        # ═══════════════════════════════════════════════════════════
+        
+        if stats['by_expiry_date']:
+            report += "<b>📊 RENOVAÇÕES PRÓXIMAS (30 DIAS)</b>\n\n"
+            
+            # Filtra apenas próximos 30 dias
+            next_30_days = [
+                (date, count) for date, count in stats['by_expiry_date']
+                if datetime.strptime(date, "%Y-%m-%d") <= now + timedelta(days=30)
+            ]
+            
+            if next_30_days:
+                max_count = max(count for _, count in next_30_days)
+                
+                for expiry_date, count in next_30_days[:10]:  # Mostra apenas primeiros 10
+                    date_obj = datetime.strptime(expiry_date, "%Y-%m-%d")
+                    days_until = (date_obj - now).days
+                    
+                    # Formatação da data
+                    date_formatted = date_obj.strftime("%d/%m")
+                    
+                    # Barra de progresso
+                    bar = generate_bar_chart(count, max_count, length=8)
+                    
+                    # Emoji baseado na urgência
+                    if days_until <= 7:
+                        urgency = "🔴"
+                    elif days_until <= 14:
+                        urgency = "🟡"
+                    else:
+                        urgency = "🟢"
+                    
+                    report += f"{urgency} <code>{date_formatted}</code> │{bar}│ <b>{count}</b>\n"
+                
+                if len(next_30_days) > 10:
+                    report += f"\n<i>... e mais {len(next_30_days) - 10} datas</i>\n"
+            else:
+                report += "✅ Nenhuma renovação nos próximos 30 dias\n"
+            
+            report += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        # ═══════════════════════════════════════════════════════════
+        # 👥 ÚLTIMOS ASSINANTES
+        # ═══════════════════════════════════════════════════════════
+        
+        if stats['recent_subscribers']:
+            report += "<b>👥 ÚLTIMOS ASSINANTES</b>\n\n"
+            
+            for user_id_sub, confirmed_at, amount in stats['recent_subscribers'][:5]:
+                # Formata data
+                try:
+                    date_obj = datetime.fromisoformat(confirmed_at.replace('Z', '+00:00'))
+                    date_str = date_obj.strftime("%d/%m/%y %H:%M")
+                except:
+                    date_str = confirmed_at[:16] if len(confirmed_at) >= 16 else confirmed_at
+                
+                # Mascara user_id (primeiros 3 e últimos 3 dígitos)
+                user_id_str = str(user_id_sub)
+                if len(user_id_str) > 6:
+                    masked_id = f"{user_id_str[:3]}***{user_id_str[-3:]}"
+                else:
+                    masked_id = user_id_str
+                
+                report += f"🆔 <code>{masked_id}</code> │ {date_str} │ {format_currency(amount)}\n"
+            
+            if len(stats['recent_subscribers']) > 5:
+                report += f"\n<i>... e mais {len(stats['recent_subscribers']) - 5} assinantes</i>\n"
+            
+            report += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        # ═══════════════════════════════════════════════════════════
+        # 📈 INSIGHTS E ANÁLISES
+        # ═══════════════════════════════════════════════════════════
+        
+        report += "<b>📈 ANÁLISE</b>\n\n"
+        
+        # Taxa de renovação esperada
+        if stats['total_active'] > 0:
+            churn_rate = (stats['expires_this_month'] / stats['total_active']) * 100
+            report += f"📊 <b>Taxa de Vencimento:</b> {churn_rate:.1f}%\n"
+        
+        # Crescimento
+        if stats['new_this_month'] > stats['expires_this_month']:
+            growth = stats['new_this_month'] - stats['expires_this_month']
+            report += f"📈 <b>Crescimento Líquido:</b> +{growth} assinantes\n"
+        elif stats['new_this_month'] < stats['expires_this_month']:
+            decline = stats['expires_this_month'] - stats['new_this_month']
+            report += f"📉 <b>Redução Líquida:</b> -{decline} assinantes\n"
+        else:
+            report += f"➡️ <b>Crescimento:</b> Estável\n"
+        
+        # Projeção próximo mês
+        projected_active = stats['total_active'] - stats['expires_this_month'] + stats['expires_this_month']
+        report += f"\n🔮 <b>Projeção próx. mês:</b> {projected_active} ativos\n"
+        
+        report += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        # ═══════════════════════════════════════════════════════════
+        # 🎯 AÇÕES RECOMENDADAS
+        # ═══════════════════════════════════════════════════════════
+        
+        report += "<b>🎯 AÇÕES RECOMENDADAS</b>\n\n"
+        
+        if stats['expires_this_month'] > 0:
+            report += f"⚠️ <b>{stats['expires_this_month']}</b> assinaturas expiram este mês\n"
+            report += "   → Enviar lembrete de renovação\n\n"
+        
+        if stats['expires_next_month'] > 0:
+            report += f"📅 <b>{stats['expires_next_month']}</b> assinaturas expiram próx. mês\n"
+            report += "   → Preparar campanha de retenção\n\n"
+        
+        if stats['new_this_month'] == 0:
+            report += "🔴 <b>Nenhum novo assinante este mês</b>\n"
+            report += "   → Iniciar campanha de aquisição\n\n"
+        
+        if not stats['recent_subscribers']:
+            report += "💡 <b>Dica:</b> Considere criar promoções\n\n"
+        
+        # ═══════════════════════════════════════════════════════════
+        # 🔗 RODAPÉ
+        # ═══════════════════════════════════════════════════════════
+        
+        report += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        report += "💡 <i>Use /status para ver dados individuais</i>\n"
+        report += "💳 <i>Use /premium para ver opções de assinatura</i>"
+        
+        # Envia relatório
+        await loading_msg.edit_text(report, parse_mode="HTML")
+        
+        LOG.info("✅ Relatório mensal enviado para usuário %d", user_id)
+        
+    except Exception as e:
+        LOG.exception("❌ Erro ao gerar relatório mensal: %s", e)
+        await loading_msg.edit_text(
+            "❌ <b>Erro ao Gerar Relatório</b>\n\n"
+            "Ocorreu um erro ao processar as estatísticas.\n"
+            "Tente novamente em alguns instantes.",
+            parse_mode="HTML"
+        )
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para mensagens de texto (URLs ou chat com IA)"""
     user_id = update.effective_user.id
@@ -2796,7 +3181,8 @@ application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("stats", stats_cmd))
 application.add_handler(CommandHandler("status", status_cmd))
 application.add_handler(CommandHandler("premium", premium_cmd))
-application.add_handler(CommandHandler("ai", ai_cmd))  # ← Novo comando
+application.add_handler(CommandHandler("ai", ai_cmd))  # ← Comando IA
+application.add_handler(CommandHandler("mensal", mensal_cmd))  # ← Comando relatório mensal
 application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
 application.add_handler(CallbackQueryHandler(callback_buy_premium, pattern=r"^subscribe:"))
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
