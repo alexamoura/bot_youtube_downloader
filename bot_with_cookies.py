@@ -52,9 +52,190 @@ try:
 except ImportError:
     GROQ_AVAILABLE = False
 
-# ============================================================
+# ════════════════════════════════════════════════════════════════
+# 🔄 SISTEMA DE AUTO-RECUPERAÇÃO E KEEPALIVE
+# ════════════════════════════════════════════════════════════════
+
+import requests
+from datetime import datetime
+
+# Configurações do sistema de keepalive
+KEEPALIVE_ENABLED = os.getenv("KEEPALIVE_ENABLED", "true").lower() == "true"
+KEEPALIVE_INTERVAL = int(os.getenv("KEEPALIVE_INTERVAL", "300"))  # 5 minutos
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # URL do seu bot no Render
+LAST_ACTIVITY = {"telegram": time.time(), "flask": time.time()}
+INACTIVITY_THRESHOLD = 600  # 10 minutos sem atividade = problema
+
+class BotHealthMonitor:
+    """Monitor de saúde do bot com auto-recuperação"""
+    
+    def __init__(self):
+        self.last_telegram_update = time.time()
+        self.last_health_check = time.time()
+        self.webhook_errors = 0
+        self.max_errors_before_restart = 3
+        self.is_healthy = True
+        
+    def record_activity(self, source: str = "telegram"):
+        """Registra atividade do bot"""
+        LAST_ACTIVITY[source] = time.time()
+        if source == "telegram":
+            self.last_telegram_update = time.time()
+            self.webhook_errors = 0  # Reset contador de erros
+    
+    def check_health(self) -> dict:
+        """Verifica saúde do bot"""
+        now = time.time()
+        telegram_inactive = now - LAST_ACTIVITY["telegram"]
+        flask_inactive = now - LAST_ACTIVITY["flask"]
+        
+        status = {
+            "healthy": True,
+            "telegram_inactive_seconds": int(telegram_inactive),
+            "flask_inactive_seconds": int(flask_inactive),
+            "webhook_errors": self.webhook_errors,
+            "uptime": int(now - self.last_health_check),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Verifica se está inativo por muito tempo
+        if telegram_inactive > INACTIVITY_THRESHOLD:
+            status["healthy"] = False
+            status["issue"] = "telegram_inactive"
+            LOG.warning("⚠️ Bot inativo por %d segundos!", telegram_inactive)
+        
+        if self.webhook_errors >= self.max_errors_before_restart:
+            status["healthy"] = False
+            status["issue"] = "webhook_errors"
+            LOG.error("🔴 Muitos erros no webhook: %d", self.webhook_errors)
+        
+        self.is_healthy = status["healthy"]
+        return status
+    
+    def record_error(self):
+        """Registra erro no webhook"""
+        self.webhook_errors += 1
+        LOG.warning("⚠️ Erro no webhook registrado (total: %d)", self.webhook_errors)
+
+# Instância global do monitor
+health_monitor = BotHealthMonitor()
+
+def keepalive_routine():
+    """
+    Rotina de keepalive que:
+    1. Faz ping no próprio bot a cada 5 minutos
+    2. Verifica saúde do webhook
+    3. Tenta reconfigurar webhook se necessário
+    """
+    if not KEEPALIVE_ENABLED:
+        LOG.info("⚠️ Keepalive desabilitado")
+        return
+    
+    while True:
+        try:
+            time.sleep(KEEPALIVE_INTERVAL)
+            
+            # 1. Verifica saúde
+            health = health_monitor.check_health()
+            
+            if not health["healthy"]:
+                LOG.error("🔴 Bot não está saudável: %s", health)
+                
+                # Tenta recuperar webhook
+                if WEBHOOK_URL:
+                    try:
+                        LOG.info("🔧 Tentando reconfigurar webhook...")
+                        webhook_set = asyncio.run_coroutine_threadsafe(
+                            application.bot.set_webhook(
+                                url=f"{WEBHOOK_URL}/{TOKEN}",
+                                drop_pending_updates=False
+                            ),
+                            APP_LOOP
+                        )
+                        result = webhook_set.result(timeout=10)
+                        LOG.info("✅ Webhook reconfigurado: %s", result)
+                    except Exception as e:
+                        LOG.error("❌ Falha ao reconfigurar webhook: %s", e)
+            
+            # 2. Self-ping (mantém Render acordado)
+            if WEBHOOK_URL:
+                try:
+                    response = requests.get(
+                        f"{WEBHOOK_URL}/health",
+                        timeout=10
+                    )
+                    if response.status_code == 200:
+                        LOG.debug("✅ Self-ping OK (status: %d)", response.status_code)
+                    else:
+                        LOG.warning("⚠️ Self-ping retornou: %d", response.status_code)
+                except Exception as e:
+                    LOG.error("❌ Falha no self-ping: %s", e)
+            
+            # 3. Log de status
+            LOG.info(
+                "💓 Keepalive: Telegram=%ds, Erros=%d, Saúde=%s",
+                health["telegram_inactive_seconds"],
+                health["webhook_errors"],
+                "OK" if health["healthy"] else "PROBLEMA"
+            )
+            
+        except Exception as e:
+            LOG.exception("❌ Erro na rotina de keepalive: %s", e)
+
+def webhook_watchdog():
+    """
+    Watchdog que monitora o webhook e força reconexão se necessário
+    """
+    while True:
+        try:
+            time.sleep(60)  # Verifica a cada 1 minuto
+            
+            now = time.time()
+            last_telegram = LAST_ACTIVITY["telegram"]
+            inactive_time = now - last_telegram
+            
+            # Se passar 15 minutos sem receber updates do Telegram
+            if inactive_time > 900 and WEBHOOK_URL:  # 15 minutos
+                LOG.warning("🔴 Webhook pode estar inativo! Última atividade: %d segundos atrás", inactive_time)
+                
+                # Verifica se webhook está configurado
+                try:
+                    webhook_info = asyncio.run_coroutine_threadsafe(
+                        application.bot.get_webhook_info(),
+                        APP_LOOP
+                    ).result(timeout=10)
+                    
+                    LOG.info("📊 Webhook Info: URL=%s, Pending=%d", 
+                            webhook_info.url, 
+                            webhook_info.pending_update_count)
+                    
+                    # Se webhook não está configurado ou está diferente
+                    expected_url = f"{WEBHOOK_URL}/{TOKEN}"
+                    if webhook_info.url != expected_url:
+                        LOG.error("🔴 Webhook incorreto! Esperado: %s, Atual: %s", 
+                                expected_url, webhook_info.url)
+                        
+                        # Reconfigura
+                        asyncio.run_coroutine_threadsafe(
+                            application.bot.set_webhook(
+                                url=expected_url,
+                                drop_pending_updates=False
+                            ),
+                            APP_LOOP
+                        ).result(timeout=10)
+                        
+                        LOG.info("✅ Webhook reconfigurado!")
+                        LAST_ACTIVITY["telegram"] = time.time()
+                        
+                except Exception as e:
+                    LOG.error("❌ Erro no watchdog: %s", e)
+                    
+        except Exception as e:
+            LOG.exception("❌ Erro crítico no watchdog: %s", e)
+
+# ════════════════════════════════════════════════════════════════
 # OTIMIZAÇÕES DE MEMÓRIA
-# ============================================================
+# ════════════════════════════════════════════════════════════════
 
 class LimitedCache:
     """Cache com tamanho máximo - evita crescimento infinito de memória"""
@@ -1786,7 +1967,7 @@ def generate_bar_chart(value: int, max_value: int, length: int = 10) -> str:
     filled = int((value / max_value) * length)
     bar = "█" * filled + "░" * (length - filled)
     return bar
-    
+
 async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handler para o comando /mensal - Relatório detalhado de assinantes premium
@@ -1800,17 +1981,6 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     - Lista de últimos assinantes
     """
     user_id = update.effective_user.id
-    
-    # 🔒 CONTROLE DE ACESSO - Apenas admins
-    ADMINS = [6766920288]  # Seu ID aqui
-    
-    if user_id not in ADMINS:
-        await update.message.reply_text(
-            "🔒 <b>Acesso Negado</b>\n\n"
-            "Este comando é restrito a administradores.",
-            parse_mode="HTML"
-        )
-        return
     
     LOG.info("📊 Comando /mensal executado por usuário %d", user_id)
     
@@ -3198,11 +3368,18 @@ application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle
 def webhook():
     """Endpoint webhook para receber updates do Telegram"""
     try:
+        # 📊 Registra atividade
+        health_monitor.record_activity("telegram")
+        LAST_ACTIVITY["flask"] = time.time()
+        
         update_data = request.get_json(force=True)
         update = Update.de_json(update_data, application.bot)
         asyncio.run_coroutine_threadsafe(application.process_update(update), APP_LOOP)
+        
     except Exception as e:
         LOG.exception("Falha ao processar webhook: %s", e)
+        health_monitor.record_error()
+    
     return "ok"
 
 @app.route("/")
@@ -3210,13 +3387,87 @@ def index():
     """Rota principal"""
     return "🤖 Bot de Download Ativo"
 
+@app.route("/diagnostics")
+def diagnostics():
+    """Endpoint de diagnóstico completo"""
+    now = time.time()
+    
+    diagnostics_data = {
+        "status": "operational",
+        "timestamp": datetime.now().isoformat(),
+        "system": {
+            "uptime_seconds": int(now - health_monitor.last_health_check),
+            "python_version": sys.version,
+            "pid": os.getpid()
+        },
+        "telegram": {
+            "last_update": datetime.fromtimestamp(LAST_ACTIVITY["telegram"]).isoformat(),
+            "inactive_seconds": int(now - LAST_ACTIVITY["telegram"]),
+            "webhook_errors": health_monitor.webhook_errors,
+            "is_healthy": health_monitor.is_healthy
+        },
+        "flask": {
+            "last_request": datetime.fromtimestamp(LAST_ACTIVITY["flask"]).isoformat(),
+            "inactive_seconds": int(now - LAST_ACTIVITY["flask"])
+        },
+        "downloads": {
+            "active": len(ACTIVE_DOWNLOADS),
+            "pending": len(PENDING.cache) if hasattr(PENDING, 'cache') else 0,
+            "max_concurrent": MAX_CONCURRENT_DOWNLOADS,
+            "queue_available": MAX_CONCURRENT_DOWNLOADS - len(ACTIVE_DOWNLOADS)
+        },
+        "database": {
+            "file": DB_FILE,
+            "exists": os.path.exists(DB_FILE),
+            "size_bytes": os.path.getsize(DB_FILE) if os.path.exists(DB_FILE) else 0
+        },
+        "features": {
+            "keepalive_enabled": KEEPALIVE_ENABLED,
+            "keepalive_interval": KEEPALIVE_INTERVAL,
+            "groq_available": GROQ_AVAILABLE and bool(GROQ_API_KEY),
+            "mercadopago_available": MERCADOPAGO_AVAILABLE and bool(MERCADOPAGO_ACCESS_TOKEN)
+        },
+        "cookies": {
+            "youtube": bool(COOKIE_YT),
+            "shopee": bool(COOKIE_SHOPEE),
+            "instagram": bool(COOKIE_IG)
+        }
+    }
+    
+    # Testa webhook do Telegram
+    try:
+        webhook_info = application.bot.get_me()
+        diagnostics_data["telegram"]["bot_username"] = webhook_info.username
+        diagnostics_data["telegram"]["bot_id"] = webhook_info.id
+    except Exception as e:
+        diagnostics_data["telegram"]["error"] = str(e)
+        diagnostics_data["status"] = "degraded"
+    
+    # Testa banco de dados
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM user_downloads")
+            total_users = cursor.fetchone()[0]
+            diagnostics_data["database"]["total_users"] = total_users
+    except Exception as e:
+        diagnostics_data["database"]["error"] = str(e)
+        diagnostics_data["status"] = "degraded"
+    
+    return diagnostics_data, 200
+
 @app.route("/health")
 def health():
-    """Endpoint de health check"""
+    """Endpoint de health check avançado"""
+    # Registra atividade do Flask
+    LAST_ACTIVITY["flask"] = time.time()
+    
+    # Informações básicas
     checks = {
+        "status": "healthy",
         "bot": "ok",
         "db": "ok",
-        "pending_count": len(PENDING),
+        "pending_count": len(PENDING.cache) if hasattr(PENDING, 'cache') else 0,
         "active_downloads": len(ACTIVE_DOWNLOADS),
         "max_concurrent": MAX_CONCURRENT_DOWNLOADS,
         "queue_available": MAX_CONCURRENT_DOWNLOADS - len(ACTIVE_DOWNLOADS),
@@ -3225,9 +3476,19 @@ def health():
             "shopee": bool(COOKIE_SHOPEE),
             "instagram": bool(COOKIE_IG)
         },
-        "timestamp": time.time()
+        "timestamp": datetime.now().isoformat(),
+        "uptime_seconds": int(time.time() - health_monitor.last_health_check)
     }
     
+    # Adiciona informações do monitor
+    health_status = health_monitor.check_health()
+    checks.update({
+        "monitor": health_status,
+        "last_telegram_activity": datetime.fromtimestamp(LAST_ACTIVITY["telegram"]).isoformat(),
+        "last_flask_activity": datetime.fromtimestamp(LAST_ACTIVITY["flask"]).isoformat()
+    })
+    
+    # Testa banco de dados
     try:
         with DB_LOCK:
             conn = sqlite3.connect(DB_FILE, timeout=5)
@@ -3235,17 +3496,27 @@ def health():
             conn.close()
     except Exception as e:
         checks["db"] = f"error: {str(e)}"
+        checks["status"] = "unhealthy"
         LOG.error("Health check DB falhou: %s", e)
     
+    # Testa bot
     try:
         bot_info = application.bot.get_me()
         checks["bot_username"] = bot_info.username
+        checks["bot_id"] = bot_info.id
     except Exception as e:
         checks["bot"] = f"error: {str(e)}"
+        checks["status"] = "unhealthy"
         LOG.error("Health check bot falhou: %s", e)
     
-    status = 200 if checks["bot"] == "ok" and checks["db"] == "ok" else 503
-    return checks, status
+    # Define status HTTP
+    if checks["status"] == "unhealthy" or not health_status["healthy"]:
+        status_code = 503  # Service Unavailable
+        checks["status"] = "unhealthy"
+    else:
+        status_code = 200
+    
+    return checks, status_code
 
 # ============================
 # MERCADOPAGO
@@ -3401,8 +3672,50 @@ if __name__ == "__main__":
     cleanup_thread.start()
     LOG.info("✅ Thread de limpeza automática e GC iniciada")
     
+    # 🔄 Inicia sistema de auto-recuperação e keepalive
+    if KEEPALIVE_ENABLED:
+        keepalive_thread = threading.Thread(target=keepalive_routine, daemon=True)
+        keepalive_thread.start()
+        LOG.info("✅ Thread de keepalive iniciada (intervalo: %d segundos)", KEEPALIVE_INTERVAL)
+        
+        watchdog_thread = threading.Thread(target=webhook_watchdog, daemon=True)
+        watchdog_thread.start()
+        LOG.info("✅ Thread de watchdog iniciada")
+    else:
+        LOG.warning("⚠️ Sistema de keepalive desabilitado")
+    
+    # Configura webhook se URL estiver definida
+    if WEBHOOK_URL:
+        try:
+            webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
+            LOG.info("🔗 Configurando webhook: %s", webhook_url)
+            
+            # Configura webhook de forma síncrona
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            webhook_info = loop.run_until_complete(application.bot.get_webhook_info())
+            LOG.info("📊 Webhook atual: %s", webhook_info.url)
+            
+            if webhook_info.url != webhook_url:
+                result = loop.run_until_complete(
+                    application.bot.set_webhook(url=webhook_url, drop_pending_updates=False)
+                )
+                LOG.info("✅ Webhook configurado: %s", result)
+            else:
+                LOG.info("✅ Webhook já está configurado corretamente")
+            
+            loop.close()
+            
+        except Exception as e:
+            LOG.error("❌ Erro ao configurar webhook: %s", e)
+    else:
+        LOG.warning("⚠️ WEBHOOK_URL não definida - bot não receberá updates!")
+    
     port = int(os.environ.get("PORT", 10000))
-    LOG.info("Iniciando servidor Flask na porta %d", port)
+    LOG.info("🚀 Iniciando servidor Flask na porta %d", port)
+    LOG.info("🤖 Bot: @%s", application.bot.username if hasattr(application.bot, 'username') else 'desconhecido')
     app.run(host="0.0.0.0", port=port)
 
 
