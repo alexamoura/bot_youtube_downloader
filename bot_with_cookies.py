@@ -56,7 +56,6 @@ except ImportError:
 # 🔄 SISTEMA DE AUTO-RECUPERAÇÃO E KEEPALIVE
 # ════════════════════════════════════════════════════════════════
 
-import requests
 from datetime import datetime
 
 # Configurações do sistema de keepalive
@@ -3685,76 +3684,27 @@ def render_webhook():
         return {"status": "error", "message": str(e)}, 200
 
 # ============================
-# MAIN
+# CALLBACKS DE PAGAMENTO (ANTES DO APP.RUN)
 # ============================
 
-if __name__ == "__main__":
-    # Inicia thread de limpeza automática e garbage collection
-    cleanup_thread = threading.Thread(target=cleanup_and_gc_routine, daemon=True)
-    cleanup_thread.start()
-    LOG.info("✅ Thread de limpeza automática e GC iniciada")
-    
-    # 🔄 Inicia sistema de auto-recuperação e keepalive
-    if KEEPALIVE_ENABLED:
-        keepalive_thread = threading.Thread(target=keepalive_routine, daemon=True)
-        keepalive_thread.start()
-        LOG.info("✅ Thread de keepalive iniciada (intervalo: %d segundos)", KEEPALIVE_INTERVAL)
-        
-        watchdog_thread = threading.Thread(target=webhook_watchdog, daemon=True)
-        watchdog_thread.start()
-        LOG.info("✅ Thread de watchdog iniciada")
-    else:
-        LOG.warning("⚠️ Sistema de keepalive desabilitado")
-    
-    # Configura webhook se URL estiver definida
-    if WEBHOOK_URL:
-        try:
-            webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
-            LOG.info("🔗 Configurando webhook: %s", webhook_url)
-            
-            # Configura webhook de forma síncrona
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            webhook_info = loop.run_until_complete(application.bot.get_webhook_info())
-            LOG.info("📊 Webhook atual: %s", webhook_info.url)
-            
-            if webhook_info.url != webhook_url:
-                result = loop.run_until_complete(
-                    application.bot.set_webhook(url=webhook_url, drop_pending_updates=False)
-                )
-                LOG.info("✅ Webhook configurado: %s", result)
-            else:
-                LOG.info("✅ Webhook já está configurado corretamente")
-            
-            loop.close()
-            
-        except Exception as e:
-            LOG.error("❌ Erro ao configurar webhook: %s", e)
-    else:
-        LOG.warning("⚠️ WEBHOOK_URL não definida - bot não receberá updates!")
-    
-    port = int(os.environ.get("PORT", 10000))
-    LOG.info("🚀 Iniciando servidor Flask na porta %d", port)
-    LOG.info("🤖 Bot: @%s", application.bot.username if hasattr(application.bot, 'username') else 'desconhecido')
-    app.run(host="0.0.0.0", port=port)
-
-
 from telegram.constants import ParseMode
-import mercadopago
 
 async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler para callback de assinatura premium"""
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
 
     try:
-        reference = create_pix_payment(user_id, 9.90)
-        sdk = mercadopago.SDK(os.getenv("MERCADOPAGO_ACCESS_TOKEN"))
+        if not MERCADOPAGO_AVAILABLE or not MERCADOPAGO_ACCESS_TOKEN:
+            await query.edit_message_text("❌ Sistema de pagamentos não configurado.")
+            return
+            
+        reference = create_pix_payment(user_id, PREMIUM_PRICE)
+        sdk = mercadopago.SDK(MERCADOPAGO_ACCESS_TOKEN)
 
         payment_data = {
-            "transaction_amount": 9.90,
+            "transaction_amount": PREMIUM_PRICE,
             "description": "Plano Premium",
             "payment_method_id": "pix",
             "payer": {"email": f"user{user_id}@example.com"},
@@ -3784,4 +3734,82 @@ async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         else:
             await query.edit_message_text("❌ Erro ao criar pagamento. Tente novamente mais tarde.")
     except Exception as e:
+        LOG.error("Erro no subscribe_callback: %s", e)
         await query.edit_message_text(f"❌ Falha interna: {e}")
+
+# ============================
+# MAIN
+# ============================
+
+if __name__ == "__main__":
+    # Inicia thread de limpeza automática e garbage collection
+    cleanup_thread = threading.Thread(target=cleanup_and_gc_routine, daemon=True)
+    cleanup_thread.start()
+    LOG.info("✅ Thread de limpeza automática e GC iniciada")
+    
+    # 🔄 Inicia sistema de auto-recuperação e keepalive
+    if KEEPALIVE_ENABLED:
+        keepalive_thread = threading.Thread(target=keepalive_routine, daemon=True)
+        keepalive_thread.start()
+        LOG.info("✅ Thread de keepalive iniciada (intervalo: %d segundos)", KEEPALIVE_INTERVAL)
+        
+        watchdog_thread = threading.Thread(target=webhook_watchdog, daemon=True)
+        watchdog_thread.start()
+        LOG.info("✅ Thread de watchdog iniciada")
+    else:
+        LOG.warning("⚠️ Sistema de keepalive desabilitado")
+    
+    # Configura webhook se URL estiver definida
+    if WEBHOOK_URL:
+        try:
+            webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
+            LOG.info("🔗 Configurando webhook: %s", webhook_url)
+            
+            # CORREÇÃO: Remove webhook antigo PRIMEIRO para evitar erros 502
+            LOG.info("🗑️ Removendo webhook antigo...")
+            delete_future = asyncio.run_coroutine_threadsafe(
+                application.bot.delete_webhook(drop_pending_updates=True),
+                APP_LOOP
+            )
+            delete_future.result(timeout=10)
+            LOG.info("✅ Webhook antigo removido")
+            
+            # Aguarda um pouco para Telegram processar
+            time.sleep(2)
+            
+            # Agora configura o novo webhook
+            LOG.info("🔗 Configurando novo webhook...")
+            set_future = asyncio.run_coroutine_threadsafe(
+                application.bot.set_webhook(
+                    url=webhook_url,
+                    drop_pending_updates=False,
+                    max_connections=100
+                ),
+                APP_LOOP
+            )
+            result = set_future.result(timeout=10)
+            
+            if result:
+                LOG.info("✅ Webhook configurado com sucesso!")
+                
+                # Verifica webhook
+                info_future = asyncio.run_coroutine_threadsafe(
+                    application.bot.get_webhook_info(),
+                    APP_LOOP
+                )
+                webhook_info = info_future.result(timeout=10)
+                LOG.info("📊 Webhook Info: URL=%s, Pending=%d", 
+                        webhook_info.url, 
+                        webhook_info.pending_update_count)
+            else:
+                LOG.error("❌ Falha ao configurar webhook")
+            
+        except Exception as e:
+            LOG.error("❌ Erro ao configurar webhook: %s", e)
+    else:
+        LOG.warning("⚠️ WEBHOOK_URL não definida - bot não receberá updates!")
+    
+    port = int(os.environ.get("PORT", 10000))
+    LOG.info("🚀 Iniciando servidor Flask na porta %d", port)
+    LOG.info("🤖 Bot: @%s", application.bot.username if hasattr(application.bot, 'username') else 'desconhecido')
+    app.run(host="0.0.0.0", port=port)
