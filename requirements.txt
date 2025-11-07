@@ -16,3 +16,5 @@ Pillow==10.1.0
 
 # IA APIs
 groq>=0.11.0             # Groq (gratuito)
+
+werkzeug==3.0.1
