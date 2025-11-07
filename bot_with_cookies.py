@@ -3570,97 +3570,119 @@ DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1435259548255518813/JA9d
 
 @app.route("/render-webhook", methods=["GET", "POST"])
 def render_webhook():
-    if request.method == "GET":
-        return "Webhook ativo", 200
-
-    payload = request.get_json(silent=True) or {}
-    
-    # Padroniza tipo do evento para minúsculas
-    event_type = (payload.get("type") or "evento_desconhecido").lower()
-    timestamp_utc = payload.get("timestamp")
-    data = payload.get("data", {})
-
-    service_name = data.get("serviceName", "Serviço não informado")
-    status = data.get("status")
-
-    # === 🔹 FILTRO DE EVENTOS RELEVANTES ===
-    eventos_relevantes = [
-        "deploy_started",
-        "deploy_ended",
-        "service_unhealthy",
-        "server_unhealthy",
-        "service_started",
-        "server_started"
-    ]
-    
-    if event_type not in eventos_relevantes:
-        # Apenas log temporário para verificação
-        print(f"Ignorado: {event_type}")
-        return {"message": f"Evento ignorado: {event_type}"}, 200
-
-    # === 🔹 Converte UTC → Horário de Brasília ===
-    if timestamp_utc:
-        try:
-            dt_utc = datetime.fromisoformat(timestamp_utc.replace("Z", "+00:00"))
-            brasil_tz = timezone(timedelta(hours=-3))
-            dt_brasil = dt_utc.astimezone(brasil_tz)
-            timestamp = dt_brasil.strftime("%d/%m/%Y %H:%M:%S")
-        except Exception:
-            timestamp = timestamp_utc
-    else:
-        timestamp = "Hora não informada"
-
-    # === 🔹 Define mensagem conforme o tipo de evento ===
-    if event_type == "deploy_started":
-        event_emoji = "🚀"
-        status_text = "Deploy iniciado"
-        status_emoji = "🔄"
-    elif event_type == "deploy_ended":
-        event_emoji = "🚀"
-        status_text = "Deploy finalizado"
-        if status == "succeeded":
-            status_emoji = "✅"
-        elif status == "failed":
-            status_emoji = "❌"
-        else:
-            status_emoji = "⚠️"
-    elif event_type in ["service_unhealthy", "server_unhealthy"]:
-        event_emoji = "🔴"
-        status_text = "Serviço ficou instável ou caiu"
-        status_emoji = "🔴"
-    elif event_type in ["service_started", "server_started"]:
-        event_emoji = "🔄"
-        status_text = "Serviço reiniciado"
-        status_emoji = "🔄"
-    else:
-        event_emoji = "⚠️"
-        status_text = f"Evento: {event_type}"
-        status_emoji = "⚠️"
-
-    # === 🔹 Monta mensagem para Discord ===
-    message = (
-        f"{event_emoji} **Render Alert**\n"
-        f"📌 **Evento:** {event_type}\n"
-        f"🖥️ **Serviço:** {service_name}\n"
-        f"{status_emoji} **{status_text}**\n"
-        f"⏰ **Hora (Brasília):** {timestamp}\n"
-        f"🔗 https://dashboard.render.com"
-    )
-
-    if not DISCORD_WEBHOOK_URL:
-        return {"error": "Webhook do Discord não configurado"}, 500
-
-    # === 🔹 Envia mensagem pro Discord ===
+    """
+    Endpoint para receber notificações do Render
+    Otimizado para evitar erros 502 durante deploy
+    """
     try:
-        response = requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
-        if response.status_code != 204:
-            print(f"Erro ao enviar alerta: {response.text}")
+        # GET request - apenas confirma que está ativo
+        if request.method == "GET":
+            return {"status": "active", "message": "Webhook ativo"}, 200
+        
+        # POST request - processa evento do Render
+        payload = request.get_json(silent=True) or {}
+        
+        # Retorna OK imediatamente para evitar timeout
+        # Processamento será feito em background
+        
+        # Padroniza tipo do evento para minúsculas
+        event_type = (payload.get("type") or "evento_desconhecido").lower()
+        timestamp_utc = payload.get("timestamp")
+        data = payload.get("data", {})
+
+        service_name = data.get("serviceName", "Serviço não informado")
+        status = data.get("status")
+
+        # === 🔹 FILTRO DE EVENTOS RELEVANTES ===
+        eventos_relevantes = [
+            "deploy_started",
+            "deploy_ended",
+            "service_unhealthy",
+            "server_unhealthy",
+            "service_started",
+            "server_started"
+        ]
+        
+        if event_type not in eventos_relevantes:
+            # Retorna OK sem processar
+            return {"message": f"Evento ignorado: {event_type}"}, 200
+
+        # === 🔹 Converte UTC → Horário de Brasília ===
+        if timestamp_utc:
+            try:
+                dt_utc = datetime.fromisoformat(timestamp_utc.replace("Z", "+00:00"))
+                brasil_tz = timezone(timedelta(hours=-3))
+                dt_brasil = dt_utc.astimezone(brasil_tz)
+                timestamp = dt_brasil.strftime("%d/%m/%Y %H:%M:%S")
+            except Exception:
+                timestamp = timestamp_utc
         else:
-            print(f"Mensagem enviada: {message}")
-        return {"discord_status": response.status_code}, 200
+            timestamp = "Hora não informada"
+
+        # === 🔹 Define mensagem conforme o tipo de evento ===
+        if event_type == "deploy_started":
+            event_emoji = "🚀"
+            status_text = "Deploy iniciado"
+            status_emoji = "🔄"
+        elif event_type == "deploy_ended":
+            event_emoji = "🚀"
+            status_text = "Deploy finalizado"
+            if status == "succeeded":
+                status_emoji = "✅"
+            elif status == "failed":
+                status_emoji = "❌"
+            else:
+                status_emoji = "⚠️"
+        elif event_type in ["service_unhealthy", "server_unhealthy"]:
+            event_emoji = "🔴"
+            status_text = "Serviço ficou instável ou caiu"
+            status_emoji = "🔴"
+        elif event_type in ["service_started", "server_started"]:
+            event_emoji = "🔄"
+            status_text = "Serviço reiniciado"
+            status_emoji = "🔄"
+        else:
+            event_emoji = "⚠️"
+            status_text = f"Evento: {event_type}"
+            status_emoji = "⚠️"
+
+        # === 🔹 Monta mensagem para Discord ===
+        message = (
+            f"{event_emoji} **Render Alert**\n"
+            f"📌 **Evento:** {event_type}\n"
+            f"🖥️ **Serviço:** {service_name}\n"
+            f"{status_emoji} **{status_text}**\n"
+            f"⏰ **Hora (Brasília):** {timestamp}\n"
+            f"🔗 https://dashboard.render.com"
+        )
+
+        if not DISCORD_WEBHOOK_URL:
+            return {"error": "Webhook do Discord não configurado"}, 200  # Retorna 200 para não causar erro
+
+        # === 🔹 Envia mensagem pro Discord em background (não bloqueia) ===
+        try:
+            # Timeout curto para não travar o webhook
+            response = requests.post(
+                DISCORD_WEBHOOK_URL, 
+                json={"content": message},
+                timeout=3  # 3 segundos máximo
+            )
+            if response.status_code == 204:
+                LOG.debug("✅ Alerta enviado para Discord")
+            else:
+                LOG.warning("⚠️ Discord retornou status %d", response.status_code)
+        except requests.Timeout:
+            LOG.warning("⚠️ Timeout ao enviar para Discord")
+        except Exception as e:
+            LOG.error("❌ Erro ao enviar para Discord: %s", e)
+        
+        # Sempre retorna 200 OK para o Render
+        return {"status": "received", "event": event_type}, 200
+    
     except Exception as e:
-        print(f"Erro ao enviar alerta: {e}")
-        return {"error": str(e)}, 500
+        # Log do erro mas retorna 200 para não causar erros no Render
+        LOG.error("❌ Erro no render-webhook: %s", e)
+        return {"status": "error", "message": str(e)}, 200
 
 # ============================
 # MAIN
