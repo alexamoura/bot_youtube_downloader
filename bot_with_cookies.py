@@ -3495,13 +3495,13 @@ def diagnostics():
     
     # Testa webhook do Telegram
     try:
-    future = asyncio.run_coroutine_threadsafe(application.bot.get_me(), APP_LOOP)
-    webhook_info = future.result(timeout=10)
-    diagnostics_data["telegram"]["bot_username"] = webhook_info.username
-    diagnostics_data["telegram"]["bot_id"] = webhook_info.id
+        future = asyncio.run_coroutine_threadsafe(application.bot.get_me(), APP_LOOP)
+        webhook_info = future.result(timeout=10)
+        diagnostics_data["telegram"]["bot_username"] = webhook_info.username
+        diagnostics_data["telegram"]["bot_id"] = webhook_info.id
     except Exception as e:
-    diagnostics_data["telegram"]["error"] = str(e)
-    diagnostics_data["status"] = "degraded"
+        diagnostics_data["telegram"]["error"] = str(e)
+        diagnostics_data["status"] = "degraded"
     
     # Testa banco de dados
     try:
