@@ -86,10 +86,10 @@ class BotHealthMonitor:
             self.consecutive_errors = 0  # Reset erros consecutivos
     
     def check_health(self) -> dict:
-    """Verifica saúde do bot e gera logs visuais"""
-    now = time.time()
-    telegram_inactive = now - LAST_ACTIVITY["telegram"]
-    flask_inactive = now - LAST_ACTIVITY["flask"]
+        """Verifica saúde do bot e gera logs visuais"""
+        now = time.time()
+        telegram_inactive = now - LAST_ACTIVITY["telegram"]
+        flask_inactive = now - LAST_ACTIVITY["flask"]
 
     status = {
         "healthy": True,
