@@ -63,7 +63,7 @@ KEEPALIVE_ENABLED = os.getenv("KEEPALIVE_ENABLED", "true").lower() == "true"
 KEEPALIVE_INTERVAL = int(os.getenv("KEEPALIVE_INTERVAL", "300"))  # 5 minutos
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # URL do seu bot no Render
 LAST_ACTIVITY = {"telegram": time.time(), "flask": time.time()}
-INACTIVITY_THRESHOLD = 600  # 10 minutos sem atividade = problema
+INACTIVITY_THRESHOLD = 1800  # 10 minutos sem atividade = problema
 
 class BotHealthMonitor:
     """Monitor de saúde do bot com auto-recuperação"""
@@ -104,7 +104,7 @@ class BotHealthMonitor:
         if telegram_inactive > INACTIVITY_THRESHOLD:
             status["healthy"] = False
             status["issue"] = "telegram_inactive"
-            LOG.warning("⚠️ Bot inativo por %d segundos!", telegram_inactive)
+            LOG.info("ℹ️ Bot inativo há %d segundos (sem problemas).", telegram_inactive)
         
         if self.webhook_errors >= self.max_errors_before_restart:
             status["healthy"] = False
