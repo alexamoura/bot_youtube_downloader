@@ -3495,12 +3495,13 @@ def diagnostics():
     
     # Testa webhook do Telegram
     try:
-        webhook_info = application.bot.get_me()
-        diagnostics_data["telegram"]["bot_username"] = webhook_info.username
-        diagnostics_data["telegram"]["bot_id"] = webhook_info.id
+    future = asyncio.run_coroutine_threadsafe(application.bot.get_me(), APP_LOOP)
+    webhook_info = future.result(timeout=10)
+    diagnostics_data["telegram"]["bot_username"] = webhook_info.username
+    diagnostics_data["telegram"]["bot_id"] = webhook_info.id
     except Exception as e:
-        diagnostics_data["telegram"]["error"] = str(e)
-        diagnostics_data["status"] = "degraded"
+    diagnostics_data["telegram"]["error"] = str(e)
+    diagnostics_data["status"] = "degraded"
     
     # Testa banco de dados
     try:
@@ -3560,12 +3561,13 @@ def health():
     
     # Testa bot
     try:
-        bot_info = application.bot.get_me()
-        checks["bot_username"] = bot_info.username
-        checks["bot_id"] = bot_info.id
+    future = asyncio.run_coroutine_threadsafe(application.bot.get_me(), APP_LOOP)
+    bot_info = future.result(timeout=10)
+    checks["bot_username"] = bot_info.username
+    checks["bot_id"] = bot_info.id
     except Exception as e:
-        checks["bot"] = f"error: {str(e)}"
-        checks["status"] = "unhealthy"
+    checks["bot"] = f"error: {str(e)}"
+    checks["status"] = "unhealthy"
         LOG.error("Health check bot falhou: %s", e)
     
     # Define status HTTP
