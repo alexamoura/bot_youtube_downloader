@@ -63,7 +63,7 @@ KEEPALIVE_ENABLED = os.getenv("KEEPALIVE_ENABLED", "true").lower() == "true"
 KEEPALIVE_INTERVAL = int(os.getenv("KEEPALIVE_INTERVAL", "300"))  # 5 minutos
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # URL do seu bot no Render
 LAST_ACTIVITY = {"telegram": time.time(), "flask": time.time()}
-INACTIVITY_THRESHOLD = 1800  # 10 minutos sem atividade = problema
+INACTIVITY_THRESHOLD = 1800  # 30 minutos sem atividade = aviso
 
 class BotHealthMonitor:
     """Monitor de saúde do bot com auto-recuperação"""
@@ -91,55 +91,56 @@ class BotHealthMonitor:
         telegram_inactive = now - LAST_ACTIVITY["telegram"]
         flask_inactive = now - LAST_ACTIVITY["flask"]
 
-    status = {
-        "healthy": True,
-        "telegram_inactive_seconds": int(telegram_inactive),
-        "flask_inactive_seconds": int(flask_inactive),
-        "webhook_errors": self.webhook_errors,
-        "uptime": int(now - self.last_health_check),
-        "timestamp": datetime.now().isoformat()
-    }
+        status = {
+            "healthy": True,
+            "telegram_inactive_seconds": int(telegram_inactive),
+            "flask_inactive_seconds": int(flask_inactive),
+            "webhook_errors": self.webhook_errors,
+            "uptime": int(now - self.last_health_check),
+            "timestamp": datetime.now().isoformat()
+        }
 
-    # 🟢 Estado inicial
-    health_emoji = "🟢"
-    health_msg = "Tudo OK"
+        # 🟢 Estado inicial
+        health_emoji = "🟢"
+        health_msg = "Tudo OK"
 
-    # Verifica inatividade do Telegram
-    if telegram_inactive > INACTIVITY_THRESHOLD:
-        status["healthy"] = False
-        status["issue"] = "telegram_inactive"
-        health_emoji = "🟡"
-        health_msg = f"Inativo há {int(telegram_inactive)}s"
-        LOG.warning("⚠️ %s Bot inativo há %d segundos", health_emoji, telegram_inactive)
+        # Verifica inatividade do Telegram
+        if telegram_inactive > INACTIVITY_THRESHOLD:
+            status["healthy"] = False
+            status["issue"] = "telegram_inactive"
+            health_emoji = "🟡"
+            health_msg = f"Inativo há {int(telegram_inactive)}s"
+            LOG.warning("⚠️ %s Bot inativo há %d segundos", health_emoji, telegram_inactive)
 
-    # Verifica erros acumulados de webhook
-    elif self.webhook_errors >= self.max_errors_before_restart:
-        status["healthy"] = False
-        status["issue"] = "webhook_errors"
-        health_emoji = "🔴"
-        health_msg = f"{self.webhook_errors} erros de webhook"
-        LOG.error("🔴 Muitos erros de webhook: %d", self.webhook_errors)
+        # Verifica erros acumulados de webhook
+        elif self.webhook_errors >= self.max_errors_before_restart:
+            status["healthy"] = False
+            status["issue"] = "webhook_errors"
+            health_emoji = "🔴"
+            health_msg = f"{self.webhook_errors} erros de webhook"
+            LOG.error("🔴 Muitos erros de webhook: %d", self.webhook_errors)
 
-    # Caso normal — tudo saudável
-    else:
-        LOG.info("✅ %s Bot saudável — Telegram ativo há %ds | Flask ativo há %ds",
-                 health_emoji, int(telegram_inactive), int(flask_inactive))
+        # Caso normal — tudo saudável
+        else:
+            LOG.info("✅ %s Bot saudável — Telegram ativo há %ds | Flask ativo há %ds",
+                     health_emoji, int(telegram_inactive), int(flask_inactive))
 
-    self.is_healthy = status["healthy"]
+        self.is_healthy = status["healthy"]
 
-    # Pequeno resumo no log a cada checagem
-    LOG.debug("📊 Status do bot → %s | WebhookErros=%d | Inatividade=%ds",
-              "OK" if status["healthy"] else "PROBLEMA",
-              self.webhook_errors,
-              int(telegram_inactive))
-    return status
+        # Pequeno resumo no log a cada checagem
+        LOG.debug("📊 Status do bot → %s | WebhookErros=%d | Inatividade=%ds",
+                  "OK" if status["healthy"] else "PROBLEMA",
+                  self.webhook_errors,
+                  int(telegram_inactive))
+
+        return status
     
     def record_error(self):
         """Registra erro no webhook"""
         self.webhook_errors += 1
         self.consecutive_errors += 1
         LOG.warning("⚠️ Erro no webhook registrado (consecutivos: %d, total: %d)", 
-                   self.consecutive_errors, self.webhook_errors)
+                    self.consecutive_errors, self.webhook_errors)
     
     def should_reconnect_webhook(self) -> bool:
         """Verifica se deve reconectar o webhook"""
