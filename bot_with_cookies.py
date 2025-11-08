@@ -2,7 +2,7 @@
 """
 bot_with_cookies_melhorado.py - Versão Profissional
 
-Telegram bot IA (webhook) com sistema de controle de downloads e suporte a pagamento PIX - ATUALIZADO EM 05/11/2025 - 10:30HS
+Telegram bot IA (webhook) com sistema de controle de downloads e suporte a pagamento PIX - ATUALIZADO EM 08/11/2025 - 10:30HS
 """
 import os
 import sys
@@ -72,7 +72,9 @@ class BotHealthMonitor:
         self.last_telegram_update = time.time()
         self.last_health_check = time.time()
         self.webhook_errors = 0
+        self.consecutive_errors = 0
         self.max_errors_before_restart = 3
+        self.max_consecutive_errors = 5
         self.is_healthy = True
         
     def record_activity(self, source: str = "telegram"):
@@ -81,6 +83,7 @@ class BotHealthMonitor:
         if source == "telegram":
             self.last_telegram_update = time.time()
             self.webhook_errors = 0  # Reset contador de erros
+            self.consecutive_errors = 0  # Reset erros consecutivos
     
     def check_health(self) -> dict:
         """Verifica saúde do bot"""
@@ -114,10 +117,59 @@ class BotHealthMonitor:
     def record_error(self):
         """Registra erro no webhook"""
         self.webhook_errors += 1
-        LOG.warning("⚠️ Erro no webhook registrado (total: %d)", self.webhook_errors)
+        self.consecutive_errors += 1
+        LOG.warning("⚠️ Erro no webhook registrado (consecutivos: %d, total: %d)", 
+                   self.consecutive_errors, self.webhook_errors)
+    
+    def should_reconnect_webhook(self) -> bool:
+        """Verifica se deve reconectar o webhook"""
+        return self.consecutive_errors >= self.max_consecutive_errors
 
 # Instância global do monitor
 health_monitor = BotHealthMonitor()
+
+async def reconnect_webhook():
+    """Reconecta o webhook do Telegram quando trava"""
+    if not WEBHOOK_URL:
+        LOG.error("❌ WEBHOOK_URL não configurado!")
+        return False
+    
+    try:
+        webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
+        LOG.info("🔧 Reconectando webhook...")
+        
+        # Remove webhook antigo
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        await asyncio.sleep(2)
+        
+        # Configura novo webhook
+        result = await application.bot.set_webhook(
+            url=webhook_url,
+            drop_pending_updates=False,
+            max_connections=100,
+            allowed_updates=["message", "callback_query"]
+        )
+        
+        if result:
+            LOG.info("✅ Webhook reconectado com sucesso!")
+            health_monitor.consecutive_errors = 0
+            return True
+        else:
+            LOG.error("❌ Falha ao reconectar webhook")
+            return False
+            
+    except Exception as e:
+        LOG.error("❌ Erro ao reconectar webhook: %s", e)
+        return False
+
+def reconnect_webhook_sync():
+    """Versão síncrona para chamar de threads"""
+    try:
+        future = asyncio.run_coroutine_threadsafe(reconnect_webhook(), APP_LOOP)
+        return future.result(timeout=15)
+    except Exception as e:
+        LOG.error("❌ Erro na reconexão síncrona: %s", e)
+        return False
 
 def keepalive_routine():
     """
@@ -137,24 +189,18 @@ def keepalive_routine():
             # 1. Verifica saúde
             health = health_monitor.check_health()
             
-            if not health["healthy"]:
-                LOG.error("🔴 Bot não está saudável: %s", health)
-                
-                # Tenta recuperar webhook
+            # Verifica se deve reconectar (após muitos erros consecutivos)
+            if health_monitor.should_reconnect_webhook():
+                LOG.error("🔴 Muitos erros consecutivos detectados!")
                 if WEBHOOK_URL:
                     try:
-                        LOG.info("🔧 Tentando reconfigurar webhook...")
-                        webhook_set = asyncio.run_coroutine_threadsafe(
-                            application.bot.set_webhook(
-                                url=f"{WEBHOOK_URL}/{TOKEN}",
-                                drop_pending_updates=False
-                            ),
-                            APP_LOOP
-                        )
-                        result = webhook_set.result(timeout=10)
-                        LOG.info("✅ Webhook reconfigurado: %s", result)
+                        LOG.info("🔧 Tentando reconectar webhook...")
+                        if reconnect_webhook_sync():
+                            LOG.info("✅ Webhook reconectado com sucesso!")
+                        else:
+                            LOG.error("❌ Falha ao reconectar webhook")
                     except Exception as e:
-                        LOG.error("❌ Falha ao reconfigurar webhook: %s", e)
+                        LOG.error("❌ Erro na reconexão: %s", e)
             
             # 2. Self-ping (mantém Render acordado)
             if WEBHOOK_URL:
@@ -208,23 +254,27 @@ def webhook_watchdog():
                             webhook_info.url, 
                             webhook_info.pending_update_count)
                     
-                    # Se webhook não está configurado ou está diferente
+                    # Se webhook não está configurado, tem muitos pendentes ou tem erros
                     expected_url = f"{WEBHOOK_URL}/{TOKEN}"
-                    if webhook_info.url != expected_url:
-                        LOG.error("🔴 Webhook incorreto! Esperado: %s, Atual: %s", 
-                                expected_url, webhook_info.url)
+                    if (webhook_info.url != expected_url or 
+                        webhook_info.pending_update_count > 100 or
+                        webhook_info.last_error_message):
                         
-                        # Reconfigura
-                        asyncio.run_coroutine_threadsafe(
-                            application.bot.set_webhook(
-                                url=expected_url,
-                                drop_pending_updates=False
-                            ),
-                            APP_LOOP
-                        ).result(timeout=10)
+                        LOG.error("🔴 Webhook com problemas! URL=%s, Pending=%d, Erro=%s", 
+                                webhook_info.url,
+                                webhook_info.pending_update_count,
+                                webhook_info.last_error_message or "Nenhum")
                         
-                        LOG.info("✅ Webhook reconfigurado!")
-                        LAST_ACTIVITY["telegram"] = time.time()
+                        # Tenta reconectar usando a nova função
+                        try:
+                            LOG.info("🔧 Reconectando webhook via watchdog...")
+                            if reconnect_webhook_sync():
+                                LOG.info("✅ Webhook reconectado pelo watchdog!")
+                                LAST_ACTIVITY["telegram"] = time.time()
+                            else:
+                                LOG.error("❌ Watchdog falhou ao reconectar")
+                        except Exception as e:
+                            LOG.error("❌ Erro ao reconectar via watchdog: %s", e)
                         
                 except Exception as e:
                     LOG.error("❌ Erro no watchdog: %s", e)
@@ -663,7 +713,7 @@ class WatermarkRemover:
 WATERMARK_REMOVER = WatermarkRemover()
 
 
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -3372,14 +3422,24 @@ def webhook():
         LAST_ACTIVITY["flask"] = time.time()
         
         update_data = request.get_json(force=True)
+        
+        # Valida se tem dados
+        if not update_data:
+            LOG.warning("⚠️ Webhook recebeu dados vazios")
+            return jsonify({"status": "no_data"}), 200
+        
         update = Update.de_json(update_data, application.bot)
         asyncio.run_coroutine_threadsafe(application.process_update(update), APP_LOOP)
+        
+        # IMPORTANTE: Sempre retorna 200 OK
+        return jsonify({"status": "ok"}), 200
         
     except Exception as e:
         LOG.exception("Falha ao processar webhook: %s", e)
         health_monitor.record_error()
-    
-    return "ok"
+        
+        # CRÍTICO: Retorna 200 mesmo com erro para evitar retry infinito do Telegram
+        return jsonify({"status": "error", "message": str(e)}), 200
 
 @app.route("/")
 def index():
@@ -3783,7 +3843,8 @@ if __name__ == "__main__":
                 application.bot.set_webhook(
                     url=webhook_url,
                     drop_pending_updates=False,
-                    max_connections=100
+                    max_connections=100,
+                    allowed_updates=["message", "callback_query"]
                 ),
                 APP_LOOP
             )
