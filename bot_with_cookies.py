@@ -3561,13 +3561,13 @@ def health():
     
     # Testa bot
     try:
-    future = asyncio.run_coroutine_threadsafe(application.bot.get_me(), APP_LOOP)
-    bot_info = future.result(timeout=10)
-    checks["bot_username"] = bot_info.username
-    checks["bot_id"] = bot_info.id
+        future = asyncio.run_coroutine_threadsafe(application.bot.get_me(), APP_LOOP)
+        bot_info = future.result(timeout=10)
+        checks["bot_username"] = bot_info.username
+        checks["bot_id"] = bot_info.id
     except Exception as e:
-    checks["bot"] = f"error: {str(e)}"
-    checks["status"] = "unhealthy"
+        checks["bot"] = f"error: {str(e)}"
+        checks["status"] = "unhealthy"
         LOG.error("Health check bot falhou: %s", e)
     
     # Define status HTTP
