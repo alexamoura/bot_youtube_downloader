@@ -132,7 +132,6 @@ class BotHealthMonitor:
               "OK" if status["healthy"] else "PROBLEMA",
               self.webhook_errors,
               int(telegram_inactive))
-
     return status
     
     def record_error(self):
