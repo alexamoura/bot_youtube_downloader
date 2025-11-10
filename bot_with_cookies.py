@@ -4062,3 +4062,28 @@ if __name__ == "__main__":
     LOG.info("🚀 Iniciando servidor Flask na porta %d", port)
     LOG.info("🤖 Bot: @%s", application.bot.username if hasattr(application.bot, 'username') else 'desconhecido')
     app.run(host="0.0.0.0", port=port)
+
+
+# Adição: método para contagem de requisições diárias
+    def get_daily_requests(self):
+        from collections import Counter
+        daily_counts = Counter()
+        for log in self.logs:
+            date = log["timestamp"][:10]  # extrai AAAA-MM-DD
+            daily_counts[date] += 1
+        return dict(daily_counts)
+
+# Adição: endpoint Flask para resumo
+@app.route('/api/summary')
+def api_summary():
+    try:
+        logs = metrics_collector.get_logs(limit=10)
+        users = get_monthly_users_count()
+        daily = metrics_collector.get_daily_requests()
+        return jsonify({
+            "last_logs": logs,
+            "monthly_users": users,
+            "daily_requests": daily
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
