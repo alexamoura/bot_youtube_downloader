@@ -991,7 +991,7 @@ class MonthlyStatsCollector:
 # Instância global
 monthly_stats = MonthlyStatsCollector()
 
-,
+# ERRO CORRIGIDO: linha removida
         "downloads": stats["downloads_by_day"].get(today, 0),
         "total_users_month": stats["total_unique_users"]
     })
