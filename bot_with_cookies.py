@@ -991,12 +991,9 @@ class MonthlyStatsCollector:
 # Instância global
 monthly_stats = MonthlyStatsCollector()
 
-,
 "downloads": stats["downloads_by_day"].get(today, 0),
         "total_users_month": stats["total_unique_users"]
     })
-
-
 
 class DashboardLogHandler(logging.Handler):
     def emit(self, record):
