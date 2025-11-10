@@ -2,7 +2,7 @@
 """
 bot_with_cookies_melhorado.py - Versão Profissional
 
-Telegram bot IA (webhook) com sistema de controle de downloads e suporte a pagamento PIX - ATUALIZADO EM 08/11/2025 - 10:30HS
+Telegram bot IA (webhook) com sistema de controle de downloads e suporte a pagamento PIX - ATUALIZADO EM 05/11/2025 - 10:30HS
 """
 import os
 import sys
@@ -63,7 +63,7 @@ KEEPALIVE_ENABLED = os.getenv("KEEPALIVE_ENABLED", "true").lower() == "true"
 KEEPALIVE_INTERVAL = int(os.getenv("KEEPALIVE_INTERVAL", "300"))  # 5 minutos
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # URL do seu bot no Render
 LAST_ACTIVITY = {"telegram": time.time(), "flask": time.time()}
-INACTIVITY_THRESHOLD = 1800  # 30 minutos sem atividade = aviso
+INACTIVITY_THRESHOLD = 600  # 10 minutos sem atividade = problema
 
 class BotHealthMonitor:
     """Monitor de saúde do bot com auto-recuperação"""
@@ -86,11 +86,11 @@ class BotHealthMonitor:
             self.consecutive_errors = 0  # Reset erros consecutivos
     
     def check_health(self) -> dict:
-        """Verifica saúde do bot e gera logs visuais"""
+        """Verifica saúde do bot"""
         now = time.time()
         telegram_inactive = now - LAST_ACTIVITY["telegram"]
         flask_inactive = now - LAST_ACTIVITY["flask"]
-
+        
         status = {
             "healthy": True,
             "telegram_inactive_seconds": int(telegram_inactive),
@@ -99,40 +99,19 @@ class BotHealthMonitor:
             "uptime": int(now - self.last_health_check),
             "timestamp": datetime.now().isoformat()
         }
-
-        # 🟢 Estado inicial
-        health_emoji = "🟢"
-        health_msg = "Tudo OK"
-
-        # Verifica inatividade do Telegram
+        
+        # Verifica se está inativo por muito tempo
         if telegram_inactive > INACTIVITY_THRESHOLD:
             status["healthy"] = False
             status["issue"] = "telegram_inactive"
-            health_emoji = "🟡"
-            health_msg = f"Inativo há {int(telegram_inactive)}s"
-            LOG.warning("⚠️ %s Bot inativo há %d segundos", health_emoji, telegram_inactive)
-
-        # Verifica erros acumulados de webhook
-        elif self.webhook_errors >= self.max_errors_before_restart:
+            LOG.warning("⚠️ Bot inativo por %d segundos!", telegram_inactive)
+        
+        if self.webhook_errors >= self.max_errors_before_restart:
             status["healthy"] = False
             status["issue"] = "webhook_errors"
-            health_emoji = "🔴"
-            health_msg = f"{self.webhook_errors} erros de webhook"
-            LOG.error("🔴 Muitos erros de webhook: %d", self.webhook_errors)
-
-        # Caso normal — tudo saudável
-        else:
-            LOG.info("✅ %s Bot saudável — Telegram ativo há %ds | Flask ativo há %ds",
-                     health_emoji, int(telegram_inactive), int(flask_inactive))
-
+            LOG.error("🔴 Muitos erros no webhook: %d", self.webhook_errors)
+        
         self.is_healthy = status["healthy"]
-
-        # Pequeno resumo no log a cada checagem
-        LOG.debug("📊 Status do bot → %s | WebhookErros=%d | Inatividade=%ds",
-                  "OK" if status["healthy"] else "PROBLEMA",
-                  self.webhook_errors,
-                  int(telegram_inactive))
-
         return status
     
     def record_error(self):
@@ -140,7 +119,7 @@ class BotHealthMonitor:
         self.webhook_errors += 1
         self.consecutive_errors += 1
         LOG.warning("⚠️ Erro no webhook registrado (consecutivos: %d, total: %d)", 
-                    self.consecutive_errors, self.webhook_errors)
+                   self.consecutive_errors, self.webhook_errors)
     
     def should_reconnect_webhook(self) -> bool:
         """Verifica se deve reconectar o webhook"""
@@ -761,118 +740,7 @@ logging.basicConfig(
     ]
 )
 LOG = logging.getLogger("ytbot")
-LOG.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
-# ════════════════════════════════════════════════════════════════
-# 📊 SISTEMA DE LOGS E MÉTRICAS PARA DASHBOARD  
-# ════════════════════════════════════════════════════════════════
-
-class LogMetricsCollector:
-    """Coletor de métricas e logs para dashboard"""
-    
-    def __init__(self, max_logs=500):
-        self.logs = deque(maxlen=max_logs)
-        self.metrics = {
-            "total_requests": 0,
-            "total_errors": 0,
-            "total_downloads": 0,
-            "total_users": set(),
-            "requests_per_minute": deque(maxlen=60),
-            "errors_per_minute": deque(maxlen=60),
-            "response_times": deque(maxlen=100),
-            "active_downloads": 0,
-            "memory_usage_mb": 0,
-            "cpu_percent": 0,
-        }
-        self.start_time = time.time()
-        self.last_minute_requests = 0
-        self.last_minute_errors = 0
-        self.minute_start = time.time()
-        
-    def add_log(self, level, message, timestamp=None):
-        if timestamp is None:
-            timestamp = datetime.now()
-        self.logs.append({
-            "timestamp": timestamp.isoformat(),
-            "level": level,
-            "message": message
-        })
-        if level in ["ERROR", "CRITICAL"]:
-            self.metrics["total_errors"] += 1
-            self.last_minute_errors += 1
-    
-    def add_request(self, user_id=None, response_time=None):
-        self.metrics["total_requests"] += 1
-        self.last_minute_requests += 1
-        if user_id:
-            self.metrics["total_users"].add(user_id)
-        if response_time:
-            self.metrics["response_times"].append(response_time)
-        now = time.time()
-        if now - self.minute_start >= 60:
-            self.metrics["requests_per_minute"].append(self.last_minute_requests)
-            self.metrics["errors_per_minute"].append(self.last_minute_errors)
-            self.last_minute_requests = 0
-            self.last_minute_errors = 0
-            self.minute_start = now
-    
-    def add_download(self):
-        self.metrics["total_downloads"] += 1
-    
-    def set_active_downloads(self, count):
-        self.metrics["active_downloads"] = count
-    
-    def update_system_metrics(self):
-        try:
-            import psutil
-            process = psutil.Process()
-            self.metrics["memory_usage_mb"] = process.memory_info().rss / 1024 / 1024
-            self.metrics["cpu_percent"] = process.cpu_percent(interval=0.1)
-        except:
-            pass
-    
-    def get_metrics(self):
-        uptime = time.time() - self.start_time
-        avg_response_time = 0
-        if self.metrics["response_times"]:
-            avg_response_time = sum(self.metrics["response_times"]) / len(self.metrics["response_times"])
-        return {
-            "uptime_seconds": int(uptime),
-            "uptime_formatted": str(timedelta(seconds=int(uptime))),
-            "total_requests": self.metrics["total_requests"],
-            "total_errors": self.metrics["total_errors"],
-            "total_downloads": self.metrics["total_downloads"],
-            "total_unique_users": len(self.metrics["total_users"]),
-            "active_downloads": self.metrics["active_downloads"],
-            "avg_response_time_ms": round(avg_response_time * 1000, 2),
-            "memory_usage_mb": round(self.metrics["memory_usage_mb"], 2),
-            "cpu_percent": round(self.metrics["cpu_percent"], 2),
-            "error_rate": round((self.metrics["total_errors"] / max(self.metrics["total_requests"], 1)) * 100, 2),
-            "requests_per_minute": list(self.metrics["requests_per_minute"]),
-            "errors_per_minute": list(self.metrics["errors_per_minute"]),
-        }
-    
-    def get_logs(self, limit=100, level=None):
-        logs = list(self.logs)
-        if level:
-            logs = [log for log in logs if log["level"] == level]
-        return logs[-limit:]
-
-metrics_collector = LogMetricsCollector()
-
-class DashboardLogHandler(logging.Handler):
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            level = record.levelname
-            metrics_collector.add_log(level, msg)
-        except:
-            pass
-
-dashboard_handler = DashboardLogHandler()
-dashboard_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-LOG.addHandler(dashboard_handler)
-
-  # Usa mesma config
+LOG.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))  # Usa mesma config
 
 
 # Token do Bot
@@ -3545,17 +3413,6 @@ application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle
 # FLASK ROUTES
 # ============================
 
-
-# ════════════════════════════════════════════════════════════════
-# 🎨 DASHBOARD HTML
-# ════════════════════════════════════════════════════════════════
-
-DASHBOARD_HTML = """<!DOCTYPE html>
-<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bot Monitor Dashboard</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:#0f0f0f;color:#e0e0e0;padding:20px}.container{max-width:1600px;margin:0 auto}.header{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:30px;border-radius:10px;margin-bottom:20px;box-shadow:0 4px 6px rgba(0,0,0,.3)}.header h1{font-size:32px;font-weight:700;margin-bottom:10px}.header .subtitle{font-size:14px;opacity:.9}.status-badge{display:inline-block;padding:6px 16px;border-radius:20px;font-size:12px;font-weight:600;margin-top:10px}.status-healthy{background:#10b981;color:#fff}.status-warning{background:#f59e0b;color:#fff}.status-error{background:#ef4444;color:#fff}.dashboard-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;margin-bottom:20px}.card{background:#1a1a1a;border-radius:10px;padding:20px;box-shadow:0 2px 4px rgba(0,0,0,.2);border:1px solid #2a2a2a}.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:15px}.card-title{font-size:14px;font-weight:600;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px}.metric-value{font-size:36px;font-weight:700;margin-bottom:5px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}.metric-label{font-size:12px;color:#6b7280}.chart-container{height:150px;margin-top:15px}.logs-container{background:#1a1a1a;border-radius:10px;padding:20px;box-shadow:0 2px 4px rgba(0,0,0,.2);border:1px solid #2a2a2a;margin-top:20px}.logs-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px}.logs-filter{display:flex;gap:10px}.filter-btn{padding:6px 12px;border-radius:6px;border:1px solid #3a3a3a;background:#2a2a2a;color:#9ca3af;cursor:pointer;font-size:12px;transition:all .2s}.filter-btn:hover{background:#3a3a3a}.filter-btn.active{background:#667eea;color:#fff;border-color:#667eea}.log-entry{padding:12px;margin-bottom:8px;border-radius:6px;background:#0f0f0f;border-left:3px solid #3a3a3a;font-family:'Courier New',monospace;font-size:12px;line-height:1.6}.log-entry.error{border-left-color:#ef4444;background:rgba(239,68,68,.1)}.log-entry.warning{border-left-color:#f59e0b;background:rgba(245,158,11,.1)}.log-entry.info{border-left-color:#3b82f6;background:rgba(59,130,246,.1)}.log-entry.debug{border-left-color:#6b7280}.log-timestamp{color:#6b7280;margin-right:10px}.log-level{display:inline-block;padding:2px 8px;border-radius:4px;font-weight:600;font-size:10px;margin-right:10px}.log-level.ERROR,.log-level.CRITICAL{background:#ef4444;color:#fff}.log-level.WARNING{background:#f59e0b;color:#fff}.log-level.INFO{background:#3b82f6;color:#fff}.log-level.DEBUG{background:#6b7280;color:#fff}.refresh-indicator{display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;animation:pulse 2s infinite;margin-left:10px}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}.progress-bar{width:100%;height:6px;background:#2a2a2a;border-radius:3px;overflow:hidden;margin-top:10px}.progress-fill{height:100%;background:linear-gradient(90deg,#667eea 0%,#764ba2 100%);transition:width .3s ease}@media (max-width:768px){.dashboard-grid{grid-template-columns:1fr}}</style>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script></head><body><div class="container"><div class="header"><h1>🤖 Bot Monitor Dashboard</h1><div class="subtitle">Monitoramento em tempo real do seu bot Telegram<span class="refresh-indicator"></span></div><div id="status-badge" class="status-badge status-healthy">● Sistema Operacional</div></div><div class="dashboard-grid"><div class="card"><div class="card-header"><span class="card-title">⏱️ Uptime</span></div><div class="metric-value" id="uptime">--</div><div class="metric-label">Tempo ativo</div></div><div class="card"><div class="card-header"><span class="card-title">📊 Requisições</span></div><div class="metric-value" id="total-requests">0</div><div class="metric-label">Total de requisições</div></div><div class="card"><div class="card-header"><span class="card-title">👥 Usuários</span></div><div class="metric-value" id="total-users">0</div><div class="metric-label">Usuários únicos</div></div><div class="card"><div class="card-header"><span class="card-title">⚠️ Taxa de Erros</span></div><div class="metric-value" id="error-rate">0%</div><div class="metric-label">Erros / Total</div><div class="progress-bar"><div id="error-progress" class="progress-fill" style="width:0%"></div></div></div><div class="card"><div class="card-header"><span class="card-title">⏰ Tempo de Resposta</span></div><div class="metric-value" id="avg-response-time">0ms</div><div class="metric-label">Média de resposta</div></div><div class="card"><div class="card-header"><span class="card-title">💾 Memória</span></div><div class="metric-value" id="memory-usage">0 MB</div><div class="metric-label">Uso de memória</div></div><div class="card"><div class="card-header"><span class="card-title">⚡ CPU</span></div><div class="metric-value" id="cpu-usage">0%</div><div class="metric-label">Uso de CPU</div></div><div class="card"><div class="card-header"><span class="card-title">📥 Downloads</span></div><div class="metric-value" id="total-downloads">0</div><div class="metric-label">Downloads realizados</div><div style="margin-top:10px;font-size:14px"><span style="color:#10b981">● <span id="active-downloads">0</span> ativos</span></div></div></div><div class="dashboard-grid"><div class="card" style="grid-column:span 2"><div class="card-header"><span class="card-title">📈 Requisições por Minuto</span></div><div class="chart-container"><canvas id="requests-chart"></canvas></div></div></div><div class="logs-container"><div class="logs-header"><h2 class="card-title">📋 Logs do Sistema</h2><div class="logs-filter"><button class="filter-btn active" onclick="filterLogs('all')">Todos</button><button class="filter-btn" onclick="filterLogs('ERROR')">Erros</button><button class="filter-btn" onclick="filterLogs('WARNING')">Avisos</button><button class="filter-btn" onclick="filterLogs('INFO')">Info</button></div></div><div id="logs-content" style="max-height:500px;overflow-y:auto"><div class="log-entry info"><span class="log-timestamp">Carregando...</span><span class="log-level INFO">INFO</span><span>Aguardando dados do sistema...</span></div></div></div></div><script>let currentFilter='all',requestsChart;function initChart(){const t=document.getElementById("requests-chart").getContext("2d");requestsChart=new Chart(t,{type:"line",data:{labels:[],datasets:[{label:"Requisições",data:[],borderColor:"#667eea",backgroundColor:"rgba(102, 126, 234, 0.1)",tension:.4,fill:!0}]},options:{responsive:!0,maintainAspectRatio:!1,plugins:{legend:{display:!1}},scales:{y:{beginAtZero:!0,grid:{color:"#2a2a2a"},ticks:{color:"#6b7280"}},x:{grid:{color:"#2a2a2a"},ticks:{color:"#6b7280"}}}}})}async function updateDashboard(){try{const t=await fetch("/api/metrics"),e=await t.json();document.getElementById("uptime").textContent=e.uptime_formatted,document.getElementById("total-requests").textContent=e.total_requests.toLocaleString(),document.getElementById("total-users").textContent=e.total_unique_users.toLocaleString(),document.getElementById("error-rate").textContent=e.error_rate+"%",document.getElementById("error-progress").style.width=e.error_rate+"%",document.getElementById("avg-response-time").textContent=e.avg_response_time_ms+"ms",document.getElementById("memory-usage").textContent=e.memory_usage_mb+" MB",document.getElementById("cpu-usage").textContent=e.cpu_percent+"%",document.getElementById("total-downloads").textContent=e.total_downloads.toLocaleString(),document.getElementById("active-downloads").textContent=e.active_downloads;const a=document.getElementById("status-badge");e.error_rate>10?(a.className="status-badge status-error",a.textContent="● Sistema com Erros"):e.error_rate>5?(a.className="status-badge status-warning",a.textContent="● Sistema em Alerta"):(a.className="status-badge status-healthy",a.textContent="● Sistema Operacional"),e.requests_per_minute.length>0&&(requestsChart.data.labels=e.requests_per_minute.map((t,e)=>`-${60-e}min`),requestsChart.data.datasets[0].data=e.requests_per_minute,requestsChart.update())}catch(t){console.error("Erro ao atualizar dashboard:",t)}}async function updateLogs(){try{const t=await fetch("/api/logs?limit=50"),e=await t.json(),a=document.getElementById("logs-content");a.innerHTML="",e.reverse().forEach(t=>{if("all"===currentFilter||currentFilter===t.level){const e=document.createElement("div");e.className=`log-entry ${t.level.toLowerCase()}`;const r=new Date(t.timestamp).toLocaleString("pt-BR");e.innerHTML=`<span class="log-timestamp">${r}</span><span class="log-level ${t.level}">${t.level}</span><span>${escapeHtml(t.message)}</span>`,a.appendChild(e)}})}catch(t){console.error("Erro ao atualizar logs:",t)}}function filterLogs(t){currentFilter=t,document.querySelectorAll(".filter-btn").forEach(t=>{t.classList.remove("active")}),event.target.classList.add("active"),updateLogs()}function escapeHtml(t){const e=document.createElement("div");return e.textContent=t,e.innerHTML}initChart(),updateDashboard(),updateLogs(),setInterval(updateDashboard,3e3),setInterval(updateLogs,5e3)</script></body></html>"""
-
-
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     """Endpoint webhook para receber updates do Telegram"""
@@ -3584,11 +3441,10 @@ def webhook():
         # CRÍTICO: Retorna 200 mesmo com erro para evitar retry infinito do Telegram
         return jsonify({"status": "error", "message": str(e)}), 200
 
-# ROTA ORIGINAL DESABILITADA - AGORA USA A DASHBOARD
-# @app.route("/")
-# def index():
-#     """Rota principal"""
-#     return "🤖 Bot de Download Ativo"
+@app.route("/")
+def index():
+    """Rota principal"""
+    return "🤖 Bot de Download Ativo"
 
 @app.route("/diagnostics")
 def diagnostics():
@@ -3639,8 +3495,7 @@ def diagnostics():
     
     # Testa webhook do Telegram
     try:
-        future = asyncio.run_coroutine_threadsafe(application.bot.get_me(), APP_LOOP)
-        webhook_info = future.result(timeout=10)
+        webhook_info = application.bot.get_me()
         diagnostics_data["telegram"]["bot_username"] = webhook_info.username
         diagnostics_data["telegram"]["bot_id"] = webhook_info.id
     except Exception as e:
@@ -3660,54 +3515,15 @@ def diagnostics():
     
     return diagnostics_data, 200
 
-
-
-# ════════════════════════════════════════════════════════════════
-# 🎨 ROTAS DA DASHBOARD
-# ════════════════════════════════════════════════════════════════
-
-@app.route("/")
-def dashboard():
-    """Rota principal com dashboard de monitoramento"""
-    health_monitor.record_activity("flask")
-    return DASHBOARD_HTML
-
-@app.route("/api/metrics")
-def api_metrics():
-    """API para retornar métricas do sistema"""
-    health_monitor.record_activity("flask")
-    metrics_collector.update_system_metrics()
-    
-    health_status = health_monitor.check_health()
-    metrics = metrics_collector.get_metrics()
-    
-    # Adiciona informações de saúde às métricas
-    metrics["health"] = health_status
-    
-    return jsonify(metrics)
-
-@app.route("/api/logs")
-def api_logs():
-    """API para retornar logs do sistema"""
-    health_monitor.record_activity("flask")
-    
-    limit = request.args.get('limit', 100, type=int)
-    level = request.args.get('level', None)
-    
-    logs = metrics_collector.get_logs(limit=limit, level=level)
-    
-    return jsonify(logs)
-
-
 @app.route("/health")
 def health():
-    """Endpoint de health check simplificado para Render"""
+    """Endpoint de health check avançado"""
     # Registra atividade do Flask
     LAST_ACTIVITY["flask"] = time.time()
-
+    
     # Informações básicas
     checks = {
-        "status": "ok",  # Sempre OK para evitar restart
+        "status": "healthy",
         "bot": "ok",
         "db": "ok",
         "pending_count": len(PENDING.cache) if hasattr(PENDING, 'cache') else 0,
@@ -3722,17 +3538,14 @@ def health():
         "timestamp": datetime.now().isoformat(),
         "uptime_seconds": int(time.time() - health_monitor.last_health_check)
     }
-
-    # Adiciona informações do monitor (somente para diagnóstico interno)
+    
+    # Adiciona informações do monitor
     health_status = health_monitor.check_health()
     checks.update({
         "monitor": health_status,
         "last_telegram_activity": datetime.fromtimestamp(LAST_ACTIVITY["telegram"]).isoformat(),
         "last_flask_activity": datetime.fromtimestamp(LAST_ACTIVITY["flask"]).isoformat()
     })
-
-    # ✅ Sempre retorna 200 OK, mesmo se monitor indicar problema
-    return jsonify(checks), 200
     
     # Testa banco de dados
     try:
@@ -3747,8 +3560,7 @@ def health():
     
     # Testa bot
     try:
-        future = asyncio.run_coroutine_threadsafe(application.bot.get_me(), APP_LOOP)
-        bot_info = future.result(timeout=10)
+        bot_info = application.bot.get_me()
         checks["bot_username"] = bot_info.username
         checks["bot_id"] = bot_info.id
     except Exception as e:
