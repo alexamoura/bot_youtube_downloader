@@ -2,7 +2,7 @@
 """
 bot_with_cookies_melhorado.py - Versão Profissional
 
-Telegram bot IA (webhook) com sistema de controle de downloads e suporte a pagamento PIX - ATUALIZADO EM 10/11/2025 - 15:30HS
+Telegram bot IA (webhook) com sistema de controle de downloads e suporte a pagamento PIX - ATUALIZADO EM 08/11/2025 - 10:30HS
 """
 import os
 import sys
@@ -3584,10 +3584,11 @@ def webhook():
         # CRÍTICO: Retorna 200 mesmo com erro para evitar retry infinito do Telegram
         return jsonify({"status": "error", "message": str(e)}), 200
 
-@app.route("/")
-def index():
-    """Rota principal"""
-    return "🤖 Bot de Download Ativo"
+# ROTA ORIGINAL DESABILITADA - AGORA USA A DASHBOARD
+# @app.route("/")
+# def index():
+#     """Rota principal"""
+#     return "🤖 Bot de Download Ativo"
 
 @app.route("/diagnostics")
 def diagnostics():
