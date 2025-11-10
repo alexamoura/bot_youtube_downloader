@@ -883,13 +883,13 @@ class MonthlyStatsCollector:
     def _load_stats(self):
         """Carrega estatísticas do arquivo"""
         try:
+            import json
             if os.path.exists(self.stats_file):
                 with open(self.stats_file, 'r') as f:
                     return json.load(f)
-        except Exception as e:
-            LOG.error("Erro ao carregar estatísticas: %s", e)
+        except:
+            pass
         
-        # Estrutura padrão
         return {
             "current_month": datetime.now().strftime("%Y-%m"),
             "total_requests": 0,
@@ -904,6 +904,7 @@ class MonthlyStatsCollector:
     def _save_stats(self):
         """Salva estatísticas no arquivo"""
         try:
+            import json
             self.stats["last_update"] = datetime.now().isoformat()
             with open(self.stats_file, 'w') as f:
                 json.dump(self.stats, f)
@@ -986,6 +987,25 @@ class MonthlyStatsCollector:
             "downloads_by_day": self.stats["downloads_by_day"],
             "last_update": self.stats["last_update"]
         }
+
+# Instância global
+monthly_stats = MonthlyStatsCollector()
+
+,
+        "downloads": stats["downloads_by_day"].get(today, 0),
+        "total_users_month": stats["total_unique_users"]
+    })
+
+
+
+class DashboardLogHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            level = record.levelname
+            metrics_collector.add_log(level, msg)
+        except:
+            pass
 
 dashboard_handler = DashboardLogHandler()
 dashboard_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
