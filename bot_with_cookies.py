@@ -6499,29 +6499,6 @@ def register():
 
     return jsonify({'ok': True})
 
-@app.route('/api/recent-activity')
-def api_recent_activity():
-    try:
-        limit = request.args.get('limit', 10, type=int)
-        
-        # Buscar atividades recentes do seu sistema
-        activities = []
-        
-        # Exemplo de como pegar dos seus dados existentes
-        for user_id in list(user_requests.keys())[-limit:]:
-            activities.append({
-                'user_id': user_id,
-                'platform': 'YouTube',  # ou detectar da requisição
-                'action': 'Download',
-                'action_type': 'download',
-                'status': 'success',
-                'timestamp': datetime.now().isoformat()
-            })
-        
-        return jsonify(activities)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route("/api/premium/stats")
 def api_premium_stats():
     """API para estatísticas premium"""
