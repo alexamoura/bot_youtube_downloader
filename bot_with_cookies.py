@@ -5701,23 +5701,170 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             }
         }
 
+        // ===== FUNÇÃO CORRIGIDA PARA ATIVIDADE RECENTE =====
         async function loadActivityTable() {
-            // Simulação - você deve implementar isso no backend
-            const tbody = document.getElementById('activityTable');
-            tbody.innerHTML = `
-                <tr>
-                    <td>#12345</td>
-                    <td>user_***789</td>
-                    <td>Download</td>
-                    <td><i class="fab fa-instagram"></i> Instagram</td>
-                    <td><span class="status-badge active"><span class="status-dot"></span>Concluído</span></td>
-                    <td>${new Date().toLocaleString('pt-BR')}</td>
-                    <td>
-                        <button class="btn btn-secondary btn-icon"><i class="fas fa-eye"></i></button>
-                    </td>
-                </tr>
-            `;
+            try {
+                const tbody = document.getElementById('activityTable');
+                
+                // Mostrar loading
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" style="text-align: center; padding: 40px;">
+                            <i class="fas fa-spinner fa-spin" style="font-size: 24px; color: var(--primary);"></i>
+                            <p style="margin-top: 12px; color: var(--text-secondary);">Carregando atividades...</p>
+                        </td>
+                    </tr>
+                `;
+
+                const response = await fetch('/api/recent-activity?limit=10');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const activities = await response.json();
+
+                if (!activities || activities.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="7" style="text-align: center; padding: 40px;">
+                                <i class="fas fa-inbox" style="font-size: 24px; color: var(--text-secondary);"></i>
+                                <p style="margin-top: 12px; color: var(--text-secondary);">Nenhuma atividade recente</p>
+                            </td>
+                        </tr>
+                    `;
+                    return;
+                }
+
+                tbody.innerHTML = '';
+
+                activities.forEach((activity, index) => {
+                    const row = document.createElement('tr');
+                    
+                    // Mascarar user_id para privacidade
+                    const maskedUserId = activity.user_id ? 
+                        `***${activity.user_id.toString().slice(-3)}` : 'N/A';
+                    
+                    // Determinar ícone da plataforma
+                    let platformIcon = 'fa-globe';
+                    let platformName = activity.platform || 'Desconhecido';
+                    
+                    if (activity.platform) {
+                        const platform = activity.platform.toLowerCase();
+                        if (platform.includes('instagram')) {
+                            platformIcon = 'fab fa-instagram';
+                            platformName = 'Instagram';
+                        } else if (platform.includes('shopee')) {
+                            platformIcon = 'fa-shopping-bag';
+                            platformName = 'Shopee';
+                        } else if (platform.includes('tiktok')) {
+                            platformIcon = 'fab fa-tiktok';
+                            platformName = 'TikTok';
+                        } else if (platform.includes('youtube')) {
+                            platformIcon = 'fab fa-youtube';
+                            platformName = 'YouTube';
+                        }
+                    }
+                    
+                    // Determinar status
+                    let statusClass = 'active';
+                    let statusText = 'Concluído';
+                    
+                    if (activity.status) {
+                        const status = activity.status.toLowerCase();
+                        if (status.includes('error') || status.includes('failed')) {
+                            statusClass = 'expired';
+                            statusText = 'Erro';
+                        } else if (status.includes('processing') || status.includes('pending')) {
+                            statusClass = 'pending';
+                            statusText = 'Processando';
+                        }
+                    }
+                    
+                    // Formatar timestamp
+                    const timestamp = activity.timestamp ? 
+                        new Date(activity.timestamp).toLocaleString('pt-BR', {
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit'
+                        }) : 'N/A';
+                    
+                    // Determinar ação
+                    let actionText = activity.action || 'Download';
+                    if (activity.action_type) {
+                        if (activity.action_type.includes('premium')) {
+                            actionText = '<i class="fas fa-crown" style="color: var(--warning);"></i> Premium';
+                        } else if (activity.action_type.includes('download')) {
+                            actionText = '<i class="fas fa-download"></i> Download';
+                        }
+                    }
+                    
+                    row.innerHTML = `
+                        <td>#${String(index + 1).padStart(5, '0')}</td>
+                        <td>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <i class="fas fa-user-circle" style="color: var(--primary);"></i>
+                                ${maskedUserId}
+                            </div>
+                        </td>
+                        <td>${actionText}</td>
+                        <td>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <i class="${platformIcon}" style="font-size: 16px;"></i>
+                                ${platformName}
+                            </div>
+                        </td>
+                        <td>
+                            <span class="status-badge ${statusClass}">
+                                <span class="status-dot"></span>
+                                ${statusText}
+                            </span>
+                        </td>
+                        <td style="font-size: 13px;">${timestamp}</td>
+                        <td>
+                            <button class="btn btn-secondary btn-icon" onclick="viewActivityDetails(${index})" title="Ver detalhes">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </td>
+                    `;
+                    
+                    tbody.appendChild(row);
+                });
+
+                // Atualizar informações de paginação
+                updatePaginationInfo(activities.length);
+
+            } catch (error) {
+                console.error('Erro ao carregar tabela de atividades:', error);
+                const tbody = document.getElementById('activityTable');
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" style="text-align: center; padding: 40px;">
+                            <i class="fas fa-exclamation-triangle" style="font-size: 24px; color: var(--danger);"></i>
+                            <p style="margin-top: 12px; color: var(--text-secondary);">Erro ao carregar atividades: ${error.message}</p>
+                            <button class="btn btn-primary" onclick="loadActivityTable()" style="margin-top: 12px;">
+                                <i class="fas fa-sync"></i> Tentar Novamente
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }
         }
+
+        function updatePaginationInfo(count) {
+            const paginationInfo = document.querySelector('.pagination-info');
+            if (paginationInfo) {
+                paginationInfo.innerHTML = `Mostrando <strong>1-${count}</strong> de <strong>${count}</strong> registros`;
+            }
+        }
+
+        function viewActivityDetails(index) {
+            showToast('Visualização de detalhes em desenvolvimento', 'info');
+        }
+        // ===== FIM DA FUNÇÃO CORRIGIDA =====
 
         async function loadPremiumData() {
             try {
@@ -5997,6 +6144,29 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 # ════════════════════════════════════════════════════════════════
 # 📊 ROTAS DE ESTATÍSTICAS (ADICIONADAS APÓS app = Flask)
 # ════════════════════════════════════════════════════════════════
+
+@app.route('/api/recent-activity')
+def api_recent_activity():
+    try:
+        limit = request.args.get('limit', 10, type=int)
+        
+        # Buscar atividades recentes do seu sistema
+        activities = []
+        
+        # Exemplo de como pegar dos seus dados existentes
+        for user_id in list(user_requests.keys())[-limit:]:
+            activities.append({
+                'user_id': user_id,
+                'platform': 'YouTube',  # ou detectar da requisição
+                'action': 'Download',
+                'action_type': 'download',
+                'status': 'success',
+                'timestamp': datetime.now().isoformat()
+            })
+        
+        return jsonify(activities)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route("/api/premium/stats")
 def api_premium_stats():
