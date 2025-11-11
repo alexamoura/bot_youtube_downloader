@@ -729,6 +729,8 @@ class WatermarkRemover:
             LOG.error(f"❌ Erro ao remover marca: {e}")
             return video_path
 
+# 🔹 Dicionário global para armazenar as requisições recentes
+user_requests = {}
 
 # Instância global do removedor
 WATERMARK_REMOVER = WatermarkRemover()
