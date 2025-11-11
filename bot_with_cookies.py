@@ -4393,12 +4393,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 # 📊 ROTAS DE ESTATÍSTICAS (ADICIONADAS APÓS app = Flask)
 # ════════════════════════════════════════════════════════════════
 
-from datetime import datetime, timedelta
-from collections import defaultdict
+
 
 # ═══════════════════════════════════════════════════════════════
 # ENDPOINT: Dashboard Principal
 # ═══════════════════════════════════════════════════════════════
+
+from datetime import datetime, timedelta
+from collections import defaultdict
 
 @app.route("/")
 def dashboard():
