@@ -5248,6 +5248,31 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             }
         });
     </script>
+
+<script>
+fetch('/api/logs')
+  .then(response => response.json())
+  .then(data => {
+    const tbody = document.querySelector("#atividade tbody");
+    tbody.innerHTML = "";
+    data.forEach(log => {
+      const row = document.createElement("tr");
+      row.innerHTML = `<td>${log.timestamp}</td><td>${log.level}</td><td>${log.message}</td>`;
+      tbody.appendChild(row);
+    });
+  });
+</script>
+
+<script>
+fetch('/api/premium/stats')
+  .then(response => response.json())
+  .then(stats => {
+    document.getElementById("ativos").textContent = stats.total_active;
+    document.getElementById("novos").textContent = stats.new_this_month;
+    document.getElementById("expirando").textContent = stats.expires_this_month;
+    document.getElementById("receita").textContent = `R$ ${stats.revenue_month.toFixed(2)}`;
+  });
+</script>
 </body>
 </html>"""
 
