@@ -729,9 +729,6 @@ class WatermarkRemover:
             LOG.error(f"❌ Erro ao remover marca: {e}")
             return video_path
 
-# 🔹 Dicionário global para armazenar as requisições recentes
-user_requests = {}
-
 # Instância global do removedor
 WATERMARK_REMOVER = WatermarkRemover()
 
@@ -6184,6 +6181,9 @@ def api_recent_activity():
         })
     
     return jsonify(activities)
+
+if __name__ == '__main__':
+    app.run(debug=True)
 
 @app.route("/api/premium/stats")
 def api_premium_stats():
