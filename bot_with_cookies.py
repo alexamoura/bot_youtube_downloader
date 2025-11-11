@@ -6147,13 +6147,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 # 📊 ROTAS DE ESTATÍSTICAS (ADICIONADAS APÓS app = Flask)
 # ════════════════════════════════════════════════════════════════
 
+from flask import Flask, jsonify, request
+from datetime import datetime
+
+app = Flask(__name__)
+
+# Variável global
+user_requests = {}
+
 @app.route('/api/register', methods=['POST'])
 def register():
     data = request.json
     user_id = data.get('user_id', 'anon')
     platform = data.get('platform', 'Desconhecido')
 
-    # Grava a atividade em memória
     user_requests[user_id] = {
         'platform': platform,
         'action': 'Download',
