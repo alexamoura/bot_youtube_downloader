@@ -3697,16 +3697,1164 @@ application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle
 # ════════════════════════════════════════════════════════════════
 
 DASHBOARD_HTML = """<!DOCTYPE html>
-<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bot Monitor Dashboard</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:#0f0f0f;color:#e0e0e0;padding:20px}.container{max-width:1600px;margin:0 auto}.header{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:30px;border-radius:10px;margin-bottom:20px;box-shadow:0 4px 6px rgba(0,0,0,.3)}.header h1{font-size:32px;font-weight:700;margin-bottom:10px}.header .subtitle{font-size:14px;opacity:.9}.status-badge{display:inline-block;padding:6px 16px;border-radius:20px;font-size:12px;font-weight:600;margin-top:10px}.status-healthy{background:#10b981;color:#fff}.status-warning{background:#f59e0b;color:#fff}.status-error{background:#ef4444;color:#fff}.dashboard-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;margin-bottom:20px}.card{background:#1a1a1a;border-radius:10px;padding:20px;box-shadow:0 2px 4px rgba(0,0,0,.2);border:1px solid #2a2a2a}.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:15px}.card-title{font-size:14px;font-weight:600;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px}.metric-value{font-size:36px;font-weight:700;margin-bottom:5px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}.metric-label{font-size:12px;color:#6b7280}.chart-container{height:150px;margin-top:15px}.logs-container{background:#1a1a1a;border-radius:10px;padding:20px;box-shadow:0 2px 4px rgba(0,0,0,.2);border:1px solid #2a2a2a;margin-top:20px}.logs-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px}.logs-filter{display:flex;gap:10px}.filter-btn{padding:6px 12px;border-radius:6px;border:1px solid #3a3a3a;background:#2a2a2a;color:#9ca3af;cursor:pointer;font-size:12px;transition:all .2s}.filter-btn:hover{background:#3a3a3a}.filter-btn.active{background:#667eea;color:#fff;border-color:#667eea}.log-entry{padding:12px;margin-bottom:8px;border-radius:6px;background:#0f0f0f;border-left:3px solid #3a3a3a;font-family:'Courier New',monospace;font-size:12px;line-height:1.6}.log-entry.error{border-left-color:#ef4444;background:rgba(239,68,68,.1)}.log-entry.warning{border-left-color:#f59e0b;background:rgba(245,158,11,.1)}.log-entry.info{border-left-color:#3b82f6;background:rgba(59,130,246,.1)}.log-entry.debug{border-left-color:#6b7280}.log-timestamp{color:#6b7280;margin-right:10px}.log-level{display:inline-block;padding:2px 8px;border-radius:4px;font-weight:600;font-size:10px;margin-right:10px}.log-level.ERROR,.log-level.CRITICAL{background:#ef4444;color:#fff}.log-level.WARNING{background:#f59e0b;color:#fff}.log-level.INFO{background:#3b82f6;color:#fff}.log-level.DEBUG{background:#6b7280;color:#fff}.refresh-indicator{display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;animation:pulse 2s infinite;margin-left:10px}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}.progress-bar{width:100%;height:6px;background:#2a2a2a;border-radius:3px;overflow:hidden;margin-top:10px}.progress-fill{height:100%;background:linear-gradient(90deg,#667eea 0%,#764ba2 100%);transition:width .3s ease}@media (max-width:768px){.dashboard-grid{grid-template-columns:1fr}}</style>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script></head><body><div class="container"><div class="header"><h1>🤖 Bot Monitor Dashboard</h1><div class="subtitle">Monitoramento em tempo real do seu bot Telegram<span class="refresh-indicator"></span></div><div id="status-badge" class="status-badge status-healthy">● Sistema Operacional</div></div><div class="dashboard-grid"><div class="card"><div class="card-header"><span class="card-title">⏱️ Uptime</span></div><div class="metric-value" id="uptime">--</div><div class="metric-label">Tempo ativo</div></div><div class="card"><div class="card-header"><span class="card-title">📊 Requisições</span></div><div class="metric-value" id="total-requests">0</div><div class="metric-label">Total de requisições</div></div><div class="card"><div class="card-header"><span class="card-title">👥 Usuários</span></div><div class="metric-value" id="total-users">0</div><div class="metric-label">Usuários únicos</div></div><div class="card"><div class="card-header"><span class="card-title">⚠️ Taxa de Erros</span></div><div class="metric-value" id="error-rate">0%</div><div class="metric-label">Erros / Total</div><div class="progress-bar"><div id="error-progress" class="progress-fill" style="width:0%"></div></div></div><div class="card"><div class="card-header"><span class="card-title">⏰ Tempo de Resposta</span></div><div class="metric-value" id="avg-response-time">0ms</div><div class="metric-label">Média de resposta</div></div><div class="card"><div class="card-header"><span class="card-title">💾 Memória</span></div><div class="metric-value" id="memory-usage">0 MB</div><div class="metric-label">Uso de memória</div></div><div class="card"><div class="card-header"><span class="card-title">⚡ CPU</span></div><div class="metric-value" id="cpu-usage">0%</div><div class="metric-label">Uso de CPU</div></div><div class="card"><div class="card-header"><span class="card-title">📥 Downloads</span></div><div class="metric-value" id="total-downloads">0</div><div class="metric-label">Downloads realizados</div><div style="margin-top:10px;font-size:14px"><span style="color:#10b981">● <span id="active-downloads">0</span> ativos</span></div></div></div><div class="dashboard-grid"><div class="card" style="grid-column:span 2"><div class="card-header"><span class="card-title">📈 Requisições por Minuto</span></div><div class="chart-container"><canvas id="requests-chart"></canvas></div></div></div><div class="logs-container"><div class="logs-header"><h2 class="card-title">📋 Logs do Sistema</h2><div class="logs-filter"><button class="filter-btn active" onclick="filterLogs('all')">Todos</button><button class="filter-btn" onclick="filterLogs('ERROR')">Erros</button><button class="filter-btn" onclick="filterLogs('WARNING')">Avisos</button><button class="filter-btn" onclick="filterLogs('INFO')">Info</button></div></div><div id="logs-content" style="max-height:500px;overflow-y:auto"><div class="log-entry info"><span class="log-timestamp">Carregando...</span><span class="log-level INFO">INFO</span><span>Aguardando dados do sistema...</span></div></div></div></div><script>let currentFilter='all',requestsChart;function initChart(){const t=document.getElementById("requests-chart").getContext("2d");requestsChart=new Chart(t,{type:"line",data:{labels:[],datasets:[{label:"Requisições",data:[],borderColor:"#667eea",backgroundColor:"rgba(102, 126, 234, 0.1)",tension:.4,fill:!0}]},options:{responsive:!0,maintainAspectRatio:!1,plugins:{legend:{display:!1}},scales:{y:{beginAtZero:!0,grid:{color:"#2a2a2a"},ticks:{color:"#6b7280"}},x:{grid:{color:"#2a2a2a"},ticks:{color:"#6b7280"}}}}})}async function updateDashboard(){try{const t=await fetch("/api/metrics"),e=await t.json();document.getElementById("uptime").textContent=e.uptime_formatted,document.getElementById("total-requests").textContent=e.total_requests.toLocaleString(),document.getElementById("total-users").textContent=e.total_unique_users.toLocaleString(),document.getElementById("error-rate").textContent=e.error_rate+"%",document.getElementById("error-progress").style.width=e.error_rate+"%",document.getElementById("avg-response-time").textContent=e.avg_response_time_ms+"ms",document.getElementById("memory-usage").textContent=e.memory_usage_mb+" MB",document.getElementById("cpu-usage").textContent=e.cpu_percent+"%",document.getElementById("total-downloads").textContent=e.total_downloads.toLocaleString(),document.getElementById("active-downloads").textContent=e.active_downloads;const a=document.getElementById("status-badge");e.error_rate>10?(a.className="status-badge status-error",a.textContent="● Sistema com Erros"):e.error_rate>5?(a.className="status-badge status-warning",a.textContent="● Sistema em Alerta"):(a.className="status-badge status-healthy",a.textContent="● Sistema Operacional"),e.requests_per_minute.length>0&&(requestsChart.data.labels=e.requests_per_minute.map((t,e)=>`-${60-e}min`),requestsChart.data.datasets[0].data=e.requests_per_minute,requestsChart.update())}catch(t){console.error("Erro ao atualizar dashboard:",t)}}async function updateLogs(){try{const t=await fetch("/api/logs?limit=50"),e=await t.json(),a=document.getElementById("logs-content");a.innerHTML="",e.reverse().forEach(t=>{if("all"===currentFilter||currentFilter===t.level){const e=document.createElement("div");e.className=`log-entry ${t.level.toLowerCase()}`;const r=new Date(t.timestamp).toLocaleString("pt-BR");e.innerHTML=`<span class="log-timestamp">${r}</span><span class="log-level ${t.level}">${t.level}</span><span>${escapeHtml(t.message)}</span>`,a.appendChild(e)}})}catch(t){console.error("Erro ao atualizar logs:",t)}}function filterLogs(t){currentFilter=t,document.querySelectorAll(".filter-btn").forEach(t=>{t.classList.remove("active")}),event.target.classList.add("active"),updateLogs()}function escapeHtml(t){const e=document.createElement("div");return e.textContent=t,e.innerHTML}initChart(),updateDashboard(),updateLogs(),setInterval(updateDashboard,3e3),setInterval(updateLogs,5e3)</script></body></html>"""
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot Analytics Dashboard - Enterprise</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary: #8b5cf6;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --dark: #0f172a;
+            --dark-lighter: #1e293b;
+            --dark-card: #1e293b;
+            --text: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --border: #334155;
+        }
 
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, var(--dark) 0%, #0a0f1e 100%);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            padding: 40px;
+            border-radius: 16px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(99, 102, 241, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 300px;
+            height: 300px;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+            border-radius: 50%;
+            transform: translate(50%, -50%);
+        }
+
+        .header-content {
+            position: relative;
+            z-index: 1;
+        }
+
+        .header h1 {
+            font-size: 36px;
+            font-weight: 800;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .header .subtitle {
+            font-size: 16px;
+            opacity: 0.9;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 20px;
+            border-radius: 30px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-top: 15px;
+            backdrop-filter: blur(10px);
+        }
+
+        .status-healthy {
+            background: rgba(16, 185, 129, 0.2);
+            border: 2px solid var(--success);
+            color: var(--success);
+        }
+
+        .status-warning {
+            background: rgba(245, 158, 11, 0.2);
+            border: 2px solid var(--warning);
+            color: var(--warning);
+        }
+
+        .status-error {
+            background: rgba(239, 68, 68, 0.2);
+            border: 2px solid var(--danger);
+            color: var(--danger);
+        }
+
+        .pulse {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.1); }
+        }
+
+        /* Tabs Navigation */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            padding: 8px;
+            background: var(--dark-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 14px 24px;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .tab-btn:hover {
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--primary);
+        }
+
+        .tab-btn.active {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Cards Grid */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: var(--dark-card);
+            border-radius: 16px;
+            padding: 24px;
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            transform: scaleX(0);
+            transform-origin: left;
+            transition: transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.3);
+            border-color: var(--primary);
+        }
+
+        .card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .card-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        .card-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .metric-value {
+            font-size: 42px;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+            line-height: 1;
+        }
+
+        .metric-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .metric-change {
+            font-size: 13px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 6px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 10px;
+        }
+
+        .metric-change.up {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--success);
+        }
+
+        .metric-change.down {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger);
+        }
+
+        /* Charts */
+        .chart-card {
+            background: var(--dark-card);
+            border-radius: 16px;
+            padding: 28px;
+            border: 1px solid var(--border);
+            margin-bottom: 30px;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .chart-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .chart-container {
+            height: 300px;
+            position: relative;
+        }
+
+        /* Premium Stats Section */
+        .premium-section {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(99, 102, 241, 0.1));
+            border: 2px solid var(--secondary);
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 30px;
+        }
+
+        .premium-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .premium-icon {
+            width: 64px;
+            height: 64px;
+            background: linear-gradient(135deg, var(--secondary), var(--primary));
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+        }
+
+        .premium-title {
+            font-size: 28px;
+            font-weight: 800;
+        }
+
+        .premium-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .premium-stat {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid rgba(139, 92, 246, 0.3);
+        }
+
+        .premium-stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--secondary);
+            margin-bottom: 8px;
+        }
+
+        .premium-stat-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        /* Revenue Chart */
+        .revenue-card {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(5, 150, 105, 0.1));
+            border: 2px solid var(--success);
+            border-radius: 16px;
+            padding: 28px;
+            margin-bottom: 30px;
+        }
+
+        .revenue-value {
+            font-size: 48px;
+            font-weight: 800;
+            color: var(--success);
+            margin-bottom: 8px;
+        }
+
+        /* Renewals Timeline */
+        .renewals-list {
+            max-height: 400px;
+            overflow-y: auto;
+            padding-right: 10px;
+        }
+
+        .renewal-item {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 16px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            border-left: 4px solid var(--primary);
+            margin-bottom: 12px;
+            transition: all 0.3s ease;
+        }
+
+        .renewal-item:hover {
+            background: rgba(99, 102, 241, 0.1);
+            transform: translateX(4px);
+        }
+
+        .renewal-date {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--primary);
+            min-width: 80px;
+        }
+
+        .renewal-bar {
+            flex: 1;
+            height: 8px;
+            background: rgba(99, 102, 241, 0.2);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .renewal-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            transition: width 0.5s ease;
+        }
+
+        .renewal-count {
+            font-size: 18px;
+            font-weight: 700;
+            min-width: 50px;
+            text-align: right;
+        }
+
+        /* Logs Section */
+        .logs-container {
+            background: var(--dark-card);
+            border-radius: 16px;
+            padding: 28px;
+            border: 1px solid var(--border);
+        }
+
+        .logs-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .logs-filter {
+            display: flex;
+            gap: 8px;
+        }
+
+        .filter-btn {
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .filter-btn:hover {
+            background: rgba(99, 102, 241, 0.1);
+            border-color: var(--primary);
+        }
+
+        .filter-btn.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        .logs-content {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            padding: 14px 16px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.2);
+            border-left: 4px solid var(--border);
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            transition: all 0.2s;
+        }
+
+        .log-entry:hover {
+            background: rgba(0, 0, 0, 0.4);
+        }
+
+        .log-entry.error {
+            border-left-color: var(--danger);
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        .log-entry.warning {
+            border-left-color: var(--warning);
+            background: rgba(245, 158, 11, 0.1);
+        }
+
+        .log-entry.info {
+            border-left-color: var(--primary);
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .log-timestamp {
+            color: var(--text-secondary);
+            margin-right: 12px;
+        }
+
+        .log-level {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 11px;
+            margin-right: 12px;
+        }
+
+        .log-level.ERROR,
+        .log-level.CRITICAL {
+            background: var(--danger);
+            color: white;
+        }
+
+        .log-level.WARNING {
+            background: var(--warning);
+            color: white;
+        }
+
+        .log-level.INFO {
+            background: var(--primary);
+            color: white;
+        }
+
+        .log-level.DEBUG {
+            background: var(--text-secondary);
+            color: white;
+        }
+
+        /* Progress Bar */
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: rgba(99, 102, 241, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 12px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            transition: width 0.5s ease;
+            border-radius: 4px;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--dark);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--primary);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--primary-dark);
+        }
+
+        /* Loading Animation */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(99, 102, 241, 0.3);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 28px;
+            }
+
+            .cards-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .tabs {
+                flex-direction: column;
+            }
+
+            .logs-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="header-content">
+                <h1>
+                    <span>🤖</span>
+                    Bot Analytics Dashboard
+                </h1>
+                <div class="subtitle">
+                    Monitoramento Empresarial em Tempo Real
+                    <span class="loading"></span>
+                </div>
+                <div id="status-badge" class="status-badge status-healthy">
+                    <span class="pulse"></span>
+                    Sistema Operacional
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabs Navigation -->
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('overview')">
+                📊 Visão Geral
+            </button>
+            <button class="tab-btn" onclick="switchTab('premium')">
+                💎 Relatório Premium
+            </button>
+            <button class="tab-btn" onclick="switchTab('logs')">
+                📋 Logs do Sistema
+            </button>
+        </div>
+
+        <!-- Overview Tab -->
+        <div id="overview-tab" class="tab-content active">
+            <!-- Metrics Cards -->
+            <div class="cards-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon">⏱️</div>
+                    </div>
+                    <div class="card-title">Uptime do Sistema</div>
+                    <div class="metric-value" id="uptime">--</div>
+                    <div class="metric-label">Tempo ativo</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon">📊</div>
+                    </div>
+                    <div class="card-title">Total de Requisições</div>
+                    <div class="metric-value" id="total-requests">0</div>
+                    <div class="metric-label">Requests processados</div>
+                    <div class="metric-change up">
+                        <span>↗</span>
+                        <span id="requests-change">+12%</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon">👥</div>
+                    </div>
+                    <div class="card-title">Usuários Únicos</div>
+                    <div class="metric-value" id="total-users">0</div>
+                    <div class="metric-label">Usuários ativos</div>
+                    <div class="metric-change up">
+                        <span>↗</span>
+                        <span id="users-change">+8%</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon">⚠️</div>
+                    </div>
+                    <div class="card-title">Taxa de Erros</div>
+                    <div class="metric-value" id="error-rate">0%</div>
+                    <div class="metric-label">Erros / Total</div>
+                    <div class="progress-bar">
+                        <div id="error-progress" class="progress-fill" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon">⏰</div>
+                    </div>
+                    <div class="card-title">Tempo de Resposta</div>
+                    <div class="metric-value" id="avg-response-time">0ms</div>
+                    <div class="metric-label">Média de resposta</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon">💾</div>
+                    </div>
+                    <div class="card-title">Uso de Memória</div>
+                    <div class="metric-value" id="memory-usage">0 MB</div>
+                    <div class="metric-label">RAM utilizada</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon">⚡</div>
+                    </div>
+                    <div class="card-title">Uso de CPU</div>
+                    <div class="metric-value" id="cpu-usage">0%</div>
+                    <div class="metric-label">Processamento</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon">📥</div>
+                    </div>
+                    <div class="card-title">Downloads</div>
+                    <div class="metric-value" id="total-downloads">0</div>
+                    <div class="metric-label">
+                        <span style="color: var(--success)">●</span>
+                        <span id="active-downloads">0</span> ativos
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chart -->
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h3 class="chart-title">📈 Requisições por Minuto</h3>
+                    <span class="metric-label">Últimos 60 minutos</span>
+                </div>
+                <div class="chart-container">
+                    <canvas id="requests-chart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Premium Tab -->
+        <div id="premium-tab" class="tab-content">
+            <!-- Premium Overview -->
+            <div class="premium-section">
+                <div class="premium-header">
+                    <div class="premium-icon">💎</div>
+                    <div>
+                        <h2 class="premium-title">Relatório Premium</h2>
+                        <p class="metric-label">Período: <span id="premium-period">Carregando...</span></p>
+                    </div>
+                </div>
+
+                <div class="premium-grid">
+                    <div class="premium-stat">
+                        <div class="premium-stat-value" id="premium-total">0</div>
+                        <div class="premium-stat-label">Assinantes Ativos</div>
+                    </div>
+                    <div class="premium-stat">
+                        <div class="premium-stat-value" id="premium-new">0</div>
+                        <div class="premium-stat-label">Novos este Mês</div>
+                    </div>
+                    <div class="premium-stat">
+                        <div class="premium-stat-value" id="premium-expires">0</div>
+                        <div class="premium-stat-label">Expiram este Mês</div>
+                    </div>
+                    <div class="premium-stat">
+                        <div class="premium-stat-value" id="premium-next">0</div>
+                        <div class="premium-stat-label">Expiram Próx. Mês</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Revenue Card -->
+            <div class="revenue-card">
+                <div class="chart-header">
+                    <div>
+                        <h3 class="chart-title">💰 Receita</h3>
+                        <div class="revenue-value" id="revenue-month">R$ 0,00</div>
+                        <div class="metric-label">Receita Mensal</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <p class="metric-label">Receita Total</p>
+                        <div style="font-size: 32px; font-weight: 700; color: var(--success);" id="revenue-total">R$ 0,00</div>
+                        <p class="metric-label">Ticket Médio: <span id="avg-ticket">R$ 0,00</span></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Renewals Timeline -->
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h3 class="chart-title">📅 Renovações Próximas (30 dias)</h3>
+                    <span class="metric-label">Timeline de vencimentos</span>
+                </div>
+                <div class="renewals-list" id="renewals-list">
+                    <p class="metric-label" style="text-align: center; padding: 40px;">Carregando dados...</p>
+                </div>
+            </div>
+
+            <!-- Recent Subscribers -->
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h3 class="chart-title">👥 Últimos Assinantes</h3>
+                </div>
+                <div id="recent-subscribers">
+                    <p class="metric-label" style="text-align: center; padding: 40px;">Carregando dados...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Logs Tab -->
+        <div id="logs-tab" class="tab-content">
+            <div class="logs-container">
+                <div class="logs-header">
+                    <h2 class="chart-title">📋 Logs do Sistema</h2>
+                    <div class="logs-filter">
+                        <button class="filter-btn active" onclick="filterLogs('all')">Todos</button>
+                        <button class="filter-btn" onclick="filterLogs('ERROR')">Erros</button>
+                        <button class="filter-btn" onclick="filterLogs('WARNING')">Avisos</button>
+                        <button class="filter-btn" onclick="filterLogs('INFO')">Info</button>
+                    </div>
+                </div>
+                <div class="logs-content" id="logs-content">
+                    <div class="log-entry info">
+                        <span class="log-timestamp">Carregando...</span>
+                        <span class="log-level INFO">INFO</span>
+                        <span>Aguardando dados do sistema...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentFilter = 'all';
+        let requestsChart = null;
+        let currentTab = 'overview';
+
+        // Switch Tabs
+        function switchTab(tab) {
+            currentTab = tab;
+            
+            // Update buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Update content
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.getElementById(tab + '-tab').classList.add('active');
+            
+            // Load data for specific tab
+            if (tab === 'premium') {
+                loadPremiumStats();
+            }
+        }
+
+        // Initialize Chart
+        function initChart() {
+            const ctx = document.getElementById('requests-chart').getContext('2d');
+            requestsChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Requisições',
+                        data: [],
+                        borderColor: '#6366f1',
+                        backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                        tension: 0.4,
+                        fill: true,
+                        borderWidth: 3,
+                        pointRadius: 4,
+                        pointHoverRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                            padding: 12,
+                            cornerRadius: 8,
+                            titleColor: '#e2e8f0',
+                            bodyColor: '#e2e8f0',
+                            borderColor: '#6366f1',
+                            borderWidth: 1
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: '#334155' },
+                            ticks: { color: '#94a3b8' }
+                        },
+                        x: {
+                            grid: { color: '#334155' },
+                            ticks: { color: '#94a3b8' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Update Dashboard
+        async function updateDashboard() {
+            try {
+                const response = await fetch('/api/metrics');
+                const data = await response.json();
+
+                // Update metrics
+                document.getElementById('uptime').textContent = data.uptime_formatted;
+                document.getElementById('total-requests').textContent = data.total_requests.toLocaleString();
+                document.getElementById('total-users').textContent = data.total_unique_users.toLocaleString();
+                document.getElementById('error-rate').textContent = data.error_rate + '%';
+                document.getElementById('error-progress').style.width = data.error_rate + '%';
+                document.getElementById('avg-response-time').textContent = data.avg_response_time_ms + 'ms';
+                document.getElementById('memory-usage').textContent = data.memory_usage_mb + ' MB';
+                document.getElementById('cpu-usage').textContent = data.cpu_percent + '%';
+                document.getElementById('total-downloads').textContent = data.total_downloads.toLocaleString();
+                document.getElementById('active-downloads').textContent = data.active_downloads;
+
+                // Update status badge
+                const badge = document.getElementById('status-badge');
+                if (data.error_rate > 10) {
+                    badge.className = 'status-badge status-error';
+                    badge.innerHTML = '<span class="pulse"></span> Sistema com Erros';
+                } else if (data.error_rate > 5) {
+                    badge.className = 'status-badge status-warning';
+                    badge.innerHTML = '<span class="pulse"></span> Sistema em Alerta';
+                } else {
+                    badge.className = 'status-badge status-healthy';
+                    badge.innerHTML = '<span class="pulse"></span> Sistema Operacional';
+                }
+
+                // Update chart
+                if (data.requests_per_minute.length > 0 && requestsChart) {
+                    requestsChart.data.labels = data.requests_per_minute.map((_, i) => `-${60-i}min`);
+                    requestsChart.data.datasets[0].data = data.requests_per_minute;
+                    requestsChart.update('none');
+                }
+
+            } catch (error) {
+                console.error('Erro ao atualizar dashboard:', error);
+            }
+        }
+
+        // Load Premium Stats
+        async function loadPremiumStats() {
+            try {
+                // Simula chamada - você deve implementar esta rota no backend
+                const response = await fetch('/api/premium/stats');
+                const data = await response.json();
+
+                // Update premium metrics
+                document.getElementById('premium-period').textContent = data.current_month || 'N/A';
+                document.getElementById('premium-total').textContent = data.total_active || 0;
+                document.getElementById('premium-new').textContent = data.new_this_month || 0;
+                document.getElementById('premium-expires').textContent = data.expires_this_month || 0;
+                document.getElementById('premium-next').textContent = data.expires_next_month || 0;
+
+                // Revenue
+                document.getElementById('revenue-month').textContent = formatCurrency(data.revenue_month || 0);
+                document.getElementById('revenue-total').textContent = formatCurrency(data.revenue_total || 0);
+                document.getElementById('avg-ticket').textContent = formatCurrency(data.avg_ticket || 0);
+
+                // Renewals timeline
+                if (data.by_expiry_date && data.by_expiry_date.length > 0) {
+                    const maxCount = Math.max(...data.by_expiry_date.map(item => item[1]));
+                    const renewalsList = document.getElementById('renewals-list');
+                    renewalsList.innerHTML = data.by_expiry_date.slice(0, 10).map(([date, count]) => {
+                        const percentage = (count / maxCount) * 100;
+                        return `
+                            <div class="renewal-item">
+                                <div class="renewal-date">${formatDate(date)}</div>
+                                <div class="renewal-bar">
+                                    <div class="renewal-bar-fill" style="width: ${percentage}%"></div>
+                                </div>
+                                <div class="renewal-count">${count}</div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+
+                // Recent subscribers
+                if (data.recent_subscribers && data.recent_subscribers.length > 0) {
+                    const subscribersList = document.getElementById('recent-subscribers');
+                    subscribersList.innerHTML = data.recent_subscribers.slice(0, 10).map(([userId, date, amount]) => {
+                        return `
+                            <div class="renewal-item">
+                                <div class="renewal-date">ID: ${maskUserId(userId)}</div>
+                                <div style="flex: 1; color: var(--text-secondary);">${formatDateTime(date)}</div>
+                                <div class="renewal-count" style="color: var(--success);">${formatCurrency(amount)}</div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+
+            } catch (error) {
+                console.error('Erro ao carregar stats premium:', error);
+                // Fallback para dados mockados se a rota não existir ainda
+                document.getElementById('premium-total').textContent = '0';
+                document.getElementById('premium-new').textContent = '0';
+                document.getElementById('premium-expires').textContent = '0';
+            }
+        }
+
+        // Update Logs
+        async function updateLogs() {
+            try {
+                const response = await fetch('/api/logs?limit=50');
+                const data = await response.json();
+                const logsContent = document.getElementById('logs-content');
+                
+                logsContent.innerHTML = '';
+                
+                data.reverse().forEach(log => {
+                    if (currentFilter === 'all' || currentFilter === log.level) {
+                        const entry = document.createElement('div');
+                        entry.className = `log-entry ${log.level.toLowerCase()}`;
+                        
+                        const timestamp = new Date(log.timestamp).toLocaleString('pt-BR');
+                        entry.innerHTML = `
+                            <span class="log-timestamp">${timestamp}</span>
+                            <span class="log-level ${log.level}">${log.level}</span>
+                            <span>${escapeHtml(log.message)}</span>
+                        `;
+                        
+                        logsContent.appendChild(entry);
+                    }
+                });
+            } catch (error) {
+                console.error('Erro ao atualizar logs:', error);
+            }
+        }
+
+        // Filter Logs
+        function filterLogs(level) {
+            currentFilter = level;
+            
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+            
+            updateLogs();
+        }
+
+        // Helper Functions
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function formatCurrency(value) {
+            return new Intl.NumberFormat('pt-BR', {
+                style: 'currency',
+                currency: 'BRL'
+            }).format(value);
+        }
+
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        }
+
+        function formatDateTime(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleString('pt-BR', { 
+                day: '2-digit', 
+                month: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        function maskUserId(userId) {
+            const str = String(userId);
+            if (str.length > 6) {
+                return `${str.slice(0, 3)}***${str.slice(-3)}`;
+            }
+            return str;
+        }
+
+        // Initialize
+        initChart();
+        updateDashboard();
+        updateLogs();
+        
+        // Auto-refresh
+        setInterval(updateDashboard, 3000);
+        setInterval(updateLogs, 5000);
+    </script>
+</body>
+</html>"""
 
 # ════════════════════════════════════════════════════════════════
 # 📊 ROTAS DE ESTATÍSTICAS (ADICIONADAS APÓS app = Flask)
 # ════════════════════════════════════════════════════════════════
 
+@app.route("/api/premium/stats")
+def api_premium_stats():
+    """API para estatísticas premium"""
+    try:
+        health_monitor.record_activity("flask")
+        
+        # Usa a função que você já tem no código
+        stats = get_premium_monthly_stats()
+        
+        # Calcula ticket médio
+        avg_ticket = 0
+        if stats.get('new_this_month', 0) > 0:
+            avg_ticket = stats.get('revenue_month', 0) / stats['new_this_month']
+        
+        return jsonify({
+            "current_month": stats.get('current_month', ''),
+            "total_active": stats.get('total_active', 0),
+            "new_this_month": stats.get('new_this_month', 0),
+            "expires_this_month": stats.get('expires_this_month', 0),
+            "expires_next_month": stats.get('expires_next_month', 0),
+            "revenue_month": stats.get('revenue_month', 0),
+            "revenue_total": stats.get('revenue_total', 0),
+            "avg_ticket": avg_ticket,
+            "by_expiry_date": stats.get('by_expiry_date', []),
+            "recent_subscribers": stats.get('recent_subscribers', [])
+        })
+    except Exception as e:
+        LOG.error("Erro em /api/premium/stats: %s", e)
+        return jsonify({"error": str(e)}), 500
+        
 @app.route("/api/stats/monthly")
 def api_stats_monthly():
     """API para estatísticas mensais"""
