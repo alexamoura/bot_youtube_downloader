@@ -3697,13 +3697,14 @@ application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle
 # ════════════════════════════════════════════════════════════════
 
 DASHBOARD_HTML = """<!DOCTYPE html>
+
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bot Analytics Pro - Enterprise Dashboard</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Bot Analytics Pro - Enterprise Dashboard</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet"/>
+<style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 
         * {
@@ -4567,336 +4568,317 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </style>
 </head>
 <body>
-    <!-- Toast Container -->
-    <div class="toast-container" id="toastContainer"></div>
-
-    <!-- Loading Overlay -->
-    <div class="loading-overlay" id="loadingOverlay">
-        <div class="loader"></div>
-    </div>
-
-    <!-- Sidebar -->
-    <aside class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <div class="logo">
-                <i class="fas fa-robot"></i>
-                <span>Bot Analytics</span>
-            </div>
-        </div>
-
-        <nav class="sidebar-menu">
-            <div class="menu-section-title">Principal</div>
-            <a class="menu-item active" onclick="showPage('dashboard')">
-                <i class="fas fa-home"></i>
-                <span>Dashboard</span>
-            </a>
-            <a class="menu-item" onclick="showPage('premium')">
-                <i class="fas fa-crown"></i>
-                <span>Relatório Premium</span>
-            </a>
-            <a class="menu-item" onclick="showPage('logs')">
-                <i class="fas fa-file-alt"></i>
-                <span>Logs</span>
-            </a>
-        </nav>
-    </aside>
-
-    <!-- Main Content -->
-    <div class="main-content" id="mainContent">
-        <!-- Topbar -->
-        <header class="topbar">
-            <div class="topbar-left">
-                <button class="menu-toggle" onclick="toggleSidebar()">
-                    <i class="fas fa-bars"></i>
-                </button>
-                <div class="search-box">
-                    <i class="fas fa-search"></i>
-                    <input type="text" placeholder="Pesquisar..." id="searchInput">
-                </div>
-            </div>
-
-            <div class="topbar-right">
-                <button class="icon-btn" title="Notificações">
-                    <i class="fas fa-bell"></i>
-                    <span class="badge" id="errorBadge">0</span>
-                </button>
-                <button class="icon-btn" onclick="exportData()" title="Exportar">
-                    <i class="fas fa-download"></i>
-                </button>
-                <button class="icon-btn" onclick="refreshAll()" title="Atualizar">
-                    <i class="fas fa-sync-alt"></i>
-                </button>
-            </div>
-        </header>
-
-        <!-- Page Content -->
-        <main class="page-content">
-            <!-- Dashboard Page -->
-            <div id="dashboardPage">
-                <div class="page-header">
-                    <div class="page-title">
-                        <h1><i class="fas fa-chart-pie"></i> Dashboard Geral</h1>
-                        <div class="page-actions">
-                            <button class="btn btn-secondary" onclick="showFilters()">
-                                <i class="fas fa-filter"></i> Filtros
+<!-- Toast Container -->
+<div class="toast-container" id="toastContainer"></div>
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+<div class="loader"></div>
+</div>
+<!-- Sidebar -->
+<aside class="sidebar" id="sidebar">
+<div class="sidebar-header">
+<div class="logo">
+<i class="fas fa-robot"></i>
+<span>Bot Analytics</span>
+</div>
+</div>
+<nav class="sidebar-menu">
+<div class="menu-section-title">Principal</div>
+<a class="menu-item active" onclick="showPage('dashboard')">
+<i class="fas fa-home"></i>
+<span>Dashboard</span>
+</a>
+<a class="menu-item" onclick="showPage('premium')">
+<i class="fas fa-crown"></i>
+<span>Relatório Premium</span>
+</a>
+<a class="menu-item" onclick="showPage('logs')">
+<i class="fas fa-file-alt"></i>
+<span>Logs</span>
+</a>
+</nav>
+</aside>
+<!-- Main Content -->
+<div class="main-content" id="mainContent">
+<!-- Topbar -->
+<header class="topbar">
+<div class="topbar-left">
+<button class="menu-toggle" onclick="toggleSidebar()">
+<i class="fas fa-bars"></i>
+</button>
+<div class="search-box">
+<i class="fas fa-search"></i>
+<input id="searchInput" placeholder="Pesquisar..." type="text"/>
+</div>
+</div>
+<div class="topbar-right">
+<button class="icon-btn" title="Notificações">
+<i class="fas fa-bell"></i>
+<span class="badge" id="errorBadge">0</span>
+</button>
+<button class="icon-btn" onclick="exportData()" title="Exportar">
+<i class="fas fa-download"></i>
+</button>
+<button class="icon-btn" onclick="refreshAll()" title="Atualizar">
+<i class="fas fa-sync-alt"></i>
+</button>
+</div>
+</header>
+<!-- Page Content -->
+<main class="page-content">
+<!-- Dashboard Page -->
+<div id="dashboardPage">
+<div class="page-header">
+<div class="page-title">
+<h1><i class="fas fa-chart-pie"></i> Dashboard Geral</h1>
+<div class="page-actions">
+<button class="btn btn-secondary" onclick="showFilters()">
+<i class="fas fa-filter"></i> Filtros
                             </button>
-                            <button class="btn btn-primary" onclick="exportData()">
-                                <i class="fas fa-file-export"></i> Exportar
+<button class="btn btn-primary" onclick="exportData()">
+<i class="fas fa-file-export"></i> Exportar
                             </button>
+</div>
+</div>
+<p class="page-subtitle">Monitoramento em tempo real do bot</p>
+</div>
+<!-- Filters -->
+<div class="filters-bar">
+<div class="filter-group">
+<label class="filter-label">Período</label>
+<select class="filter-select" id="periodFilter" onchange="applyFilters()">
+<option value="today">Hoje</option>
+<option value="7days">7 dias</option>
+<option selected="" value="30days">30 dias</option>
+<option value="90days">90 dias</option>
+</select>
+</div>
+<div class="filter-group" style="margin-left: auto;">
+<label class="filter-label">Auto-refresh</label>
+<select class="filter-select" id="refreshRate" onchange="setRefreshRate()">
+<option value="0">Manual</option>
+<option value="5">5s</option>
+<option selected="" value="10">10s</option>
+<option value="30">30s</option>
+</select>
+</div>
+</div>
+<!-- Stats Grid -->
+<div class="stats-grid">
+<div class="stat-card">
+<div class="stat-icon"><i class="fas fa-clock"></i></div>
+<div class="stat-title">Uptime</div>
+<div class="stat-value" id="uptime">--</div>
+</div>
+<div class="stat-card">
+<div class="stat-icon"><i class="fas fa-chart-line"></i></div>
+<div class="stat-title">Requisições</div>
+<div class="stat-value" id="requests">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-icon"><i class="fas fa-users"></i></div>
+<div class="stat-title">Usuários</div>
+<div class="stat-value" id="users">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-icon"><i class="fas fa-exclamation-triangle"></i></div>
+<div class="stat-title">Taxa de Erros</div>
+<div class="stat-value" id="errorRate">0%</div>
+</div>
+<div class="stat-card">
+<div class="stat-icon"><i class="fas fa-tachometer-alt"></i></div>
+<div class="stat-title">Resposta</div>
+<div class="stat-value" id="response">0ms</div>
+</div>
+<div class="stat-card">
+<div class="stat-icon"><i class="fas fa-memory"></i></div>
+<div class="stat-title">Memória</div>
+<div class="stat-value" id="memory">0 MB</div>
+</div>
+<div class="stat-card">
+<div class="stat-icon"><i class="fas fa-microchip"></i></div>
+<div class="stat-title">CPU</div>
+<div class="stat-value" id="cpu">0%</div>
+</div>
+<div class="stat-card">
+<div class="stat-icon"><i class="fas fa-download"></i></div>
+<div class="stat-title">Downloads</div>
+<div class="stat-value" id="downloads">0</div>
+<div class="stat-change positive">
+<i class="fas fa-circle" style="font-size: 8px;"></i>
+<span id="activeDownloads">0</span> ativos
                         </div>
-                    </div>
-                    <p class="page-subtitle">Monitoramento em tempo real do bot</p>
-                </div>
-
-                <!-- Filters -->
-                <div class="filters-bar">
-                    <div class="filter-group">
-                        <label class="filter-label">Período</label>
-                        <select class="filter-select" id="periodFilter" onchange="applyFilters()">
-                            <option value="today">Hoje</option>
-                            <option value="7days">7 dias</option>
-                            <option value="30days" selected>30 dias</option>
-                            <option value="90days">90 dias</option>
-                        </select>
-                    </div>
-                    <div class="filter-group" style="margin-left: auto;">
-                        <label class="filter-label">Auto-refresh</label>
-                        <select class="filter-select" id="refreshRate" onchange="setRefreshRate()">
-                            <option value="0">Manual</option>
-                            <option value="5">5s</option>
-                            <option value="10" selected>10s</option>
-                            <option value="30">30s</option>
-                        </select>
-                    </div>
-                </div>
-
-                <!-- Stats Grid -->
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon"><i class="fas fa-clock"></i></div>
-                        <div class="stat-title">Uptime</div>
-                        <div class="stat-value" id="uptime">--</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon"><i class="fas fa-chart-line"></i></div>
-                        <div class="stat-title">Requisições</div>
-                        <div class="stat-value" id="requests">0</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon"><i class="fas fa-users"></i></div>
-                        <div class="stat-title">Usuários</div>
-                        <div class="stat-value" id="users">0</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon"><i class="fas fa-exclamation-triangle"></i></div>
-                        <div class="stat-title">Taxa de Erros</div>
-                        <div class="stat-value" id="errorRate">0%</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon"><i class="fas fa-tachometer-alt"></i></div>
-                        <div class="stat-title">Resposta</div>
-                        <div class="stat-value" id="response">0ms</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon"><i class="fas fa-memory"></i></div>
-                        <div class="stat-title">Memória</div>
-                        <div class="stat-value" id="memory">0 MB</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon"><i class="fas fa-microchip"></i></div>
-                        <div class="stat-title">CPU</div>
-                        <div class="stat-value" id="cpu">0%</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon"><i class="fas fa-download"></i></div>
-                        <div class="stat-title">Downloads</div>
-                        <div class="stat-value" id="downloads">0</div>
-                        <div class="stat-change positive">
-                            <i class="fas fa-circle" style="font-size: 8px;"></i>
-                            <span id="activeDownloads">0</span> ativos
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Charts -->
-                <div class="charts-grid">
-                    <div class="chart-card large">
-                        <div class="chart-header">
-                            <h3 class="chart-title"><i class="fas fa-chart-area"></i> Requisições/Minuto</h3>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="requestsChart"></canvas>
-                        </div>
-                    </div>
-                    <div class="chart-card small">
-                        <div class="chart-header">
-                            <h3 class="chart-title"><i class="fas fa-chart-pie"></i> Status</h3>
-                        </div>
-                        <div class="chart-container small">
-                            <canvas id="statusChart"></canvas>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Activity Table -->
-                <div class="data-table">
-                    <div class="table-header">
-                        <h3 class="table-title"><i class="fas fa-history"></i> Atividade Recente</h3>
-                        <button class="btn btn-secondary" onclick="refreshTable()">
-                            <i class="fas fa-sync"></i> Atualizar
+</div>
+</div>
+<!-- Charts -->
+<div class="charts-grid">
+<div class="chart-card large">
+<div class="chart-header">
+<h3 class="chart-title"><i class="fas fa-chart-area"></i> Requisições/Minuto</h3>
+</div>
+<div class="chart-container">
+<canvas id="requestsChart"></canvas>
+</div>
+</div>
+<div class="chart-card small">
+<div class="chart-header">
+<h3 class="chart-title"><i class="fas fa-chart-pie"></i> Status</h3>
+</div>
+<div class="chart-container small">
+<canvas id="statusChart"></canvas>
+</div>
+</div>
+</div>
+<!-- Activity Table -->
+<div class="data-table">
+<div class="table-header">
+<h3 class="table-title"><i class="fas fa-history"></i> Atividade Recente</h3>
+<button class="btn btn-secondary" onclick="refreshTable()">
+<i class="fas fa-sync"></i> Atualizar
                         </button>
-                    </div>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Timestamp</th>
-                                <th>Tipo</th>
-                                <th>Status</th>
-                                <th>Detalhes</th>
-                            </tr>
-                        </thead>
-                        <tbody id="activityTable">
-                            <tr>
-                                <td colspan="4" style="text-align: center; padding: 40px;">
-                                    <i class="fas fa-spinner fa-spin" style="font-size: 24px;"></i>
-                                    <p style="margin-top: 12px;">Carregando...</p>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Premium Page -->
-            <div id="premiumPage" style="display: none;">
-                <div class="page-header">
-                    <div class="page-title">
-                        <h1><i class="fas fa-crown"></i> Relatório Premium</h1>
-                        <button class="btn btn-primary" onclick="exportPremium()">
-                            <i class="fas fa-file-pdf"></i> Exportar PDF
+</div>
+<table>
+<thead>
+<tr>
+<th>Timestamp</th>
+<th>Tipo</th>
+<th>Status</th>
+<th>Detalhes</th>
+</tr>
+</thead>
+<tbody id="activityTable">
+<tr>
+<td colspan="4" style="text-align: center; padding: 40px;">
+<i class="fas fa-spinner fa-spin" style="font-size: 24px;"></i>
+<p style="margin-top: 12px;">Carregando...</p>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- Premium Page -->
+<div id="premiumPage" style="display: none;">
+<div class="page-header">
+<div class="page-title">
+<h1><i class="fas fa-crown"></i> Relatório Premium</h1>
+<button class="btn btn-primary" onclick="exportPremium()">
+<i class="fas fa-file-pdf"></i> Exportar PDF
                         </button>
-                    </div>
-                </div>
-
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon"><i class="fas fa-users"></i></div>
-                        <div class="stat-title">Assinantes Ativos</div>
-                        <div class="stat-value" id="premiumActive">0</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon"><i class="fas fa-user-plus"></i></div>
-                        <div class="stat-title">Novos este Mês</div>
-                        <div class="stat-value" id="premiumNew">0</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon"><i class="fas fa-calendar-times"></i></div>
-                        <div class="stat-title">Expiram este Mês</div>
-                        <div class="stat-value" id="premiumExpires">0</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon"><i class="fas fa-dollar-sign"></i></div>
-                        <div class="stat-title">Receita Mensal</div>
-                        <div class="stat-value" id="premiumRevenue">R$ 0</div>
-                    </div>
-                </div>
-
-                <div class="chart-card">
-                    <div class="chart-header">
-                        <h3 class="chart-title"><i class="fas fa-chart-line"></i> Crescimento Premium</h3>
-                    </div>
-                    <div class="chart-container">
-                        <canvas id="premiumChart"></canvas>
-                    </div>
-                </div>
-
-                <div id="premiumDetails"></div>
-            </div>
-
-            <!-- Logs Page -->
-            <div id="logsPage" style="display: none;">
-                <div class="page-header">
-                    <div class="page-title">
-                        <h1><i class="fas fa-file-alt"></i> Logs do Sistema</h1>
-                        <div class="page-actions">
-                            <button class="btn btn-secondary" onclick="clearLogsDisplay()">
-                                <i class="fas fa-trash"></i> Limpar
+</div>
+</div>
+<div class="stats-grid">
+<div class="stat-card">
+<div class="stat-icon"><i class="fas fa-users"></i></div>
+<div class="stat-title">Assinantes Ativos</div>
+<div class="stat-value" id="premiumActive">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-icon"><i class="fas fa-user-plus"></i></div>
+<div class="stat-title">Novos este Mês</div>
+<div class="stat-value" id="premiumNew">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-icon"><i class="fas fa-calendar-times"></i></div>
+<div class="stat-title">Expiram este Mês</div>
+<div class="stat-value" id="premiumExpires">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-icon"><i class="fas fa-dollar-sign"></i></div>
+<div class="stat-title">Receita Mensal</div>
+<div class="stat-value" id="premiumRevenue">R$ 0</div>
+</div>
+</div>
+<div class="chart-card">
+<div class="chart-header">
+<h3 class="chart-title"><i class="fas fa-chart-line"></i> Crescimento Premium</h3>
+</div>
+<div class="chart-container">
+<canvas id="premiumChart"></canvas>
+</div>
+</div>
+<div id="premiumDetails"></div>
+</div>
+<!-- Logs Page -->
+<div id="logsPage" style="display: none;">
+<div class="page-header">
+<div class="page-title">
+<h1><i class="fas fa-file-alt"></i> Logs do Sistema</h1>
+<div class="page-actions">
+<button class="btn btn-secondary" onclick="clearLogsDisplay()">
+<i class="fas fa-trash"></i> Limpar
                             </button>
-                            <button class="btn btn-primary" onclick="downloadLogs()">
-                                <i class="fas fa-download"></i> Download
+<button class="btn btn-primary" onclick="downloadLogs()">
+<i class="fas fa-download"></i> Download
                             </button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="filters-bar">
-                    <div class="filter-group">
-                        <label class="filter-label">Nível</label>
-                        <select class="filter-select" id="logLevel" onchange="loadLogs()">
-                            <option value="all">Todos</option>
-                            <option value="ERROR">Erros</option>
-                            <option value="WARNING">Avisos</option>
-                            <option value="INFO">Info</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Limite</label>
-                        <select class="filter-select" id="logLimit" onchange="loadLogs()">
-                            <option value="50">50</option>
-                            <option value="100" selected>100</option>
-                            <option value="500">500</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="chart-card">
-                    <div class="chart-header">
-                        <h3 class="chart-title"><i class="fas fa-terminal"></i> Console</h3>
-                        <span class="status-badge success">
-                            <span class="status-dot"></span> Ativo
+</div>
+</div>
+</div>
+<div class="filters-bar">
+<div class="filter-group">
+<label class="filter-label">Nível</label>
+<select class="filter-select" id="logLevel" onchange="loadLogs()">
+<option value="all">Todos</option>
+<option value="ERROR">Erros</option>
+<option value="WARNING">Avisos</option>
+<option value="INFO">Info</option>
+</select>
+</div>
+<div class="filter-group">
+<label class="filter-label">Limite</label>
+<select class="filter-select" id="logLimit" onchange="loadLogs()">
+<option value="50">50</option>
+<option selected="" value="100">100</option>
+<option value="500">500</option>
+</select>
+</div>
+</div>
+<div class="chart-card">
+<div class="chart-header">
+<h3 class="chart-title"><i class="fas fa-terminal"></i> Console</h3>
+<span class="status-badge success">
+<span class="status-dot"></span> Ativo
                         </span>
-                    </div>
-                    <div id="logsContent" style="max-height: 600px; overflow-y: auto;">
-                        <div style="text-align: center; padding: 40px;">
-                            <i class="fas fa-spinner fa-spin" style="font-size: 24px;"></i>
-                            <p style="margin-top: 12px;">Carregando logs...</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </main>
-    </div>
-
-    <!-- Export Modal -->
-    <div class="modal" id="exportModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3 class="modal-title"><i class="fas fa-file-export"></i> Exportar Dados</h3>
-                <button class="modal-close" onclick="closeModal()">
-                    <i class="fas fa-times"></i>
+</div>
+<div id="logsContent" style="max-height: 600px; overflow-y: auto;">
+<div style="text-align: center; padding: 40px;">
+<i class="fas fa-spinner fa-spin" style="font-size: 24px;"></i>
+<p style="margin-top: 12px;">Carregando logs...</p>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+<!-- Export Modal -->
+<div class="modal" id="exportModal">
+<div class="modal-content">
+<div class="modal-header">
+<h3 class="modal-title"><i class="fas fa-file-export"></i> Exportar Dados</h3>
+<button class="modal-close" onclick="closeModal()">
+<i class="fas fa-times"></i>
+</button>
+</div>
+<div class="modal-body">
+<div class="form-group">
+<label class="form-label">Formato</label>
+<select class="form-input" id="exportFormat">
+<option value="csv">CSV</option>
+<option value="json">JSON</option>
+<option value="pdf">PDF</option>
+</select>
+</div>
+</div>
+<div class="modal-footer">
+<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+<button class="btn btn-primary" onclick="doExport()">
+<i class="fas fa-download"></i> Exportar
                 </button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Formato</label>
-                    <select class="form-input" id="exportFormat">
-                        <option value="csv">CSV</option>
-                        <option value="json">JSON</option>
-                        <option value="pdf">PDF</option>
-                    </select>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-                <button class="btn btn-primary" onclick="doExport()">
-                    <i class="fas fa-download"></i> Exportar
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script>
+</div>
+</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
         // Global vars
         let charts = {};
         let refreshInterval = null;
@@ -5248,31 +5230,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             }
         });
     </script>
-
-<script>
-fetch('/api/logs')
-  .then(response => response.json())
-  .then(data => {
-    const tbody = document.querySelector("#atividade tbody");
-    tbody.innerHTML = "";
-    data.forEach(log => {
-      const row = document.createElement("tr");
-      row.innerHTML = `<td>${log.timestamp}</td><td>${log.level}</td><td>${log.message}</td>`;
-      tbody.appendChild(row);
-    });
-  });
-</script>
-
-<script>
-fetch('/api/premium/stats')
-  .then(response => response.json())
-  .then(stats => {
-    document.getElementById("ativos").textContent = stats.total_active;
-    document.getElementById("novos").textContent = stats.new_this_month;
-    document.getElementById("expirando").textContent = stats.expires_this_month;
-    document.getElementById("receita").textContent = `R$ ${stats.revenue_month.toFixed(2)}`;
-  });
-</script>
 </body>
 </html>"""
 
