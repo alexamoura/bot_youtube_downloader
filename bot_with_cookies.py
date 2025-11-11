@@ -6171,7 +6171,7 @@ def api_metrics():
     health_monitor.record_activity("flask")
     
     try:
-        with get_db_conn() as conn:
+        with get_db_connection() as conn:
             cursor = conn.cursor()
             
             # Total de downloads
@@ -6231,7 +6231,7 @@ def api_platform_activity():
     health_monitor.record_activity("flask")
     
     try:
-        with get_db_conn() as conn:
+        with get_db_connection() as conn:
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -6257,7 +6257,7 @@ def api_recent_activity():
     health_monitor.record_activity("flask")
     
     try:
-        with get_db_conn() as conn:
+        with get_db_connection() as conn:
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -6290,7 +6290,7 @@ def api_revenue():
     filter_type = request.args.get("filter", "day")  # day, month, year
     
     try:
-        with get_db_conn() as conn:
+        with get_db_connection() as conn:
             cursor = conn.cursor()
             
             # Define período baseado no filtro
@@ -6392,7 +6392,7 @@ def api_export_report():
     filter_type = request.args.get("filter", "day")
     
     try:
-        with get_db_conn() as conn:
+        with get_db_connection() as conn:
             cursor = conn.cursor()
             
             # Define período
