@@ -407,6 +407,28 @@ def cleanup_and_gc_routine():
         except Exception as e:
             print(f"❌ Erro na rotina de limpeza: {e}")
 
+def log_activity(user_id, action, platform, status="completed"):
+    """Registra atividade no banco para dashboard"""
+    try:
+        with get_db_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS activity_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    action TEXT,
+                    platform TEXT,
+                    status TEXT,
+                    timestamp TEXT
+                )
+            """)
+            c.execute("""
+                INSERT INTO activity_logs (user_id, action, platform, status, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, action, platform, status, datetime.now().isoformat()))
+            conn.commit()
+    except Exception as e:
+
 # ============================================================
 # SHOPEE VIDEO EXTRACTOR - SEM MARCA D'ÁGUA
 # ============================================================
@@ -6232,17 +6254,24 @@ def api_platform_activity():
 
 @app.route("/api/recent-activity")
 def api_recent_activity():
-    """Retorna os últimos 5 downloads - SEM PAGINAÇÃO"""
-    health_monitor.record_activity("flask")
-    
     try:
-        # Como não temos tabela de logs, retornamos array vazio
-        # Você pode implementar um sistema de logs futuro
-        return jsonify({"downloads": []})
-            
+        with get_db_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT user_id, action, platform, status, timestamp
+                FROM activity_logs
+                ORDER BY timestamp DESC
+                LIMIT 10
+            """)
+            rows = c.fetchall()
+            activities = [
+                {"user_id": r[0], "action": r[1], "platform": r[2], "status": r[3], "timestamp": r[4]}
+                for r in rows
+            ]
+        return jsonify(activities)
     except Exception as e:
         LOG.error("Erro no api_recent_activity: %s", e)
-        return jsonify({"downloads": []})
+        return jsonify([])
 
 @app.route("/api/revenue")
 def api_revenue():
