@@ -6174,50 +6174,37 @@ def api_metrics():
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Total de downloads
-            cursor.execute("SELECT COUNT(*) FROM downloads")
-            total_downloads = cursor.fetchone()[0] if cursor.fetchone() else 0
+            # Total de downloads (soma de todos os usuários)
+            cursor.execute("SELECT SUM(downloads_count) FROM user_downloads")
+            result = cursor.fetchone()
+            total_downloads = int(result[0]) if result[0] else 0
             
-            # Reseta cursor
-            cursor.execute("SELECT COUNT(*) FROM downloads")
-            total_downloads = cursor.fetchone()[0]
-            
-            # Usuários ativos (últimos 30 dias)
-            thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
-            cursor.execute("""
-                SELECT COUNT(DISTINCT user_id) 
-                FROM downloads 
-                WHERE timestamp > ?
-            """, (thirty_days_ago,))
+            # Usuários ativos (total de usuários registrados)
+            cursor.execute("SELECT COUNT(*) FROM user_downloads")
             active_users = cursor.fetchone()[0]
             
             # Usuários premium ativos
+            now = datetime.now().isoformat()
             cursor.execute("""
                 SELECT COUNT(*) 
                 FROM user_downloads 
-                WHERE premium = 1 AND premium_expiry > ?
-            """, (datetime.now().isoformat(),))
+                WHERE is_premium = 1 AND premium_expires > ?
+            """, (now,))
             premium_users = cursor.fetchone()[0]
             
-            # Requisições na última hora
-            one_hour_ago = (datetime.now() - timedelta(hours=1)).isoformat()
-            cursor.execute("""
-                SELECT COUNT(*) 
-                FROM downloads 
-                WHERE timestamp > ?
-            """, (one_hour_ago,))
-            requests_last_hour = cursor.fetchone()[0]
+            # Requisições na última hora (estimativa baseada em atividade)
+            # Como não temos tabela de logs de requisições, retornamos 0
+            requests_last_hour = 0
             
             return jsonify({
                 "total_downloads": total_downloads,
                 "active_users": active_users,
                 "premium_users": premium_users,
-                "requests_per_minute": requests_last_hour  # Frontend converte para hora
+                "requests_per_minute": requests_last_hour
             })
             
     except Exception as e:
         LOG.error("Erro no api_metrics: %s", e)
-        # Retorna valores padrão em caso de erro
         return jsonify({
             "total_downloads": 0,
             "active_users": 0,
@@ -6231,21 +6218,13 @@ def api_platform_activity():
     health_monitor.record_activity("flask")
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT platform, COUNT(*) as count
-                FROM downloads
-                GROUP BY platform
-            """)
-            
-            results = cursor.fetchall()
-            platform_data = {}
-            for row in results:
-                platform_data[row[0]] = row[1]
-            
-            return jsonify(platform_data)
+        # Como não temos tabela de plataforma, retornamos dados básicos
+        # Você pode ajustar esses valores manualmente ou criar uma tabela futura
+        return jsonify({
+            "youtube": 0,
+            "instagram": 0,
+            "shopee": 0
+        })
             
     except Exception as e:
         LOG.error("Erro no api_platform_activity: %s", e)
@@ -6257,26 +6236,9 @@ def api_recent_activity():
     health_monitor.record_activity("flask")
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT user_id, platform, status, timestamp
-                FROM downloads
-                ORDER BY timestamp DESC
-                LIMIT 5
-            """)
-            
-            downloads = []
-            for row in cursor.fetchall():
-                downloads.append({
-                    "user_id": str(row[0]),
-                    "platform": row[1],
-                    "status": row[2],
-                    "timestamp": row[3]
-                })
-            
-            return jsonify({"downloads": downloads})
+        # Como não temos tabela de logs, retornamos array vazio
+        # Você pode implementar um sistema de logs futuro
+        return jsonify({"downloads": []})
             
     except Exception as e:
         LOG.error("Erro no api_recent_activity: %s", e)
@@ -6309,16 +6271,16 @@ def api_revenue():
             # Receita total no período
             cursor.execute("""
                 SELECT COALESCE(SUM(amount), 0)
-                FROM payments
-                WHERE status = 'approved' AND created_at > ?
+                FROM pix_payments
+                WHERE status = 'confirmed' AND created_at > ?
             """, (start_date_str,))
             total_revenue = cursor.fetchone()[0]
             
             # Novas assinaturas no período
             cursor.execute("""
                 SELECT COUNT(*)
-                FROM payments
-                WHERE status = 'approved' AND created_at > ?
+                FROM pix_payments
+                WHERE status = 'confirmed' AND created_at > ?
             """, (start_date_str,))
             new_subscriptions = cursor.fetchone()[0]
             
@@ -6328,8 +6290,8 @@ def api_revenue():
             # Dados para gráfico de receitas
             cursor.execute("""
                 SELECT created_at, amount
-                FROM payments
-                WHERE status = 'approved' AND created_at > ?
+                FROM pix_payments
+                WHERE status = 'confirmed' AND created_at > ?
                 ORDER BY created_at
             """, (start_date_str,))
             
@@ -6411,8 +6373,8 @@ def api_export_report():
             # Coleta dados
             cursor.execute("""
                 SELECT COALESCE(SUM(amount), 0), COUNT(*)
-                FROM payments
-                WHERE status = 'approved' AND created_at > ?
+                FROM pix_payments
+                WHERE status = 'confirmed' AND created_at > ?
             """, (start_date_str,))
             revenue_data = cursor.fetchone()
             
