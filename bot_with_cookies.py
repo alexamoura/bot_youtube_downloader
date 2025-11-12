@@ -5980,46 +5980,6 @@ async function loadPlatformActivity() {
         console.error('Erro ao carregar estatísticas por plataforma:', error);
     }
 }
-
-async function loadDashboardData() {
-    try {
-        const response = await fetch('/api/metrics');
-        const data = await response.json();
-
-        // Update stats
-        document.getElementById('uptimeStat').textContent = data.uptime_formatted;
-        document.getElementById('requestsStat').textContent = data.total_requests.toLocaleString();
-        document.getElementById('usersStat').textContent = data.total_unique_users.toLocaleString();
-        document.getElementById('errorRateStat').textContent = data.error_rate + '%';
-        document.getElementById('responseStat').textContent = data.avg_response_time_ms + 'ms';
-        document.getElementById('memoryStat').textContent = data.memory_usage_mb + ' MB';
-        document.getElementById('cpuStat').textContent = data.cpu_percent + '%';
-        document.getElementById('downloadsStat').textContent = data.total_downloads.toLocaleString();
-        document.getElementById('activeDownloads').textContent = data.active_downloads;
-
-        // Update badges
-        document.getElementById('usersBadge').textContent = data.total_unique_users;
-        document.getElementById('notificationsBadge').textContent = data.total_errors || 0;
-
-        // Update charts
-        if (data.requests_per_minute && data.requests_per_minute.length > 0) {
-            charts.requests.data.labels = data.requests_per_minute.map((_, i) => `-${60-i}min`);
-            charts.requests.data.datasets[0].data = data.requests_per_minute;
-            charts.requests.update('none');
-        }
-
-        // Load activity table
-        loadActivityTable();
-        
-        // Load platform statistics
-        loadPlatformActivity();
-
-    } catch (error) {
-        console.error('Erro ao carregar dados:', error);
-        showToast('Erro ao carregar dados', 'error');
-    }
-}
-
         async function loadPremiumData() {
             try {
                 const response = await fetch('/api/premium/stats');
