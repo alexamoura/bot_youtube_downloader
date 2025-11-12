@@ -6289,7 +6289,7 @@ async function loadDashboardData() {
             }).format(value);
         }
 
-        // Auto-refresh (default: 30s)
+        // Auto-refresh (default: 5s)
         setInterval(loadDashboardData, 30000);
     </script>
 </body>
