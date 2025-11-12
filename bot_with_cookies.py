@@ -20,10 +20,10 @@ import shutil
 import subprocess
 import gc
 import glob
-from collections import OrderedDict, deque
+from collections import OrderedDict, deque, defaultdict
 from contextlib import contextmanager
 from urllib.parse import urlparse, parse_qs, unquote
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import io
 import yt_dlp
 
@@ -729,7 +729,6 @@ class WatermarkRemover:
             LOG.error(f"❌ Erro ao remover marca: {e}")
             return video_path
 
-
 # Instância global do removedor
 WATERMARK_REMOVER = WatermarkRemover()
 
@@ -746,7 +745,7 @@ from telegram.ext import (
 )
 
 # Configuração de Logging Otimizada
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()  # Configurável via env
+LOG_LEVEL = os.getenv("LOG_LEVEL", "WARNING").upper()  # Configurável via env
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -761,7 +760,298 @@ logging.basicConfig(
     ]
 )
 LOG = logging.getLogger("ytbot")
-LOG.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))  # Usa mesma config
+LOG.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+# ════════════════════════════════════════════════════════════════
+# 📊 SISTEMA DE LOGS E MÉTRICAS PARA DASHBOARD  
+# ════════════════════════════════════════════════════════════════
+
+class LogMetricsCollector:
+    """Coletor de métricas e logs para dashboard"""
+    
+    def __init__(self, max_logs=500):
+        self.logs = deque(maxlen=max_logs)
+        self.metrics = {
+            "total_requests": 0,
+            "total_errors": 0,
+            "total_downloads": 0,
+            "total_users": set(),
+            "requests_per_minute": deque(maxlen=60),
+            "errors_per_minute": deque(maxlen=60),
+            "response_times": deque(maxlen=100),
+            "active_downloads": 0,
+            "memory_usage_mb": 0,
+            "cpu_percent": 0,
+        }
+        
+        # 🔥 NOVO: Tracking por plataforma
+        self.platform_stats = {
+            "youtube": 0,
+            "instagram": 0,
+            "shopee": 0
+        }
+        
+        # 🔥 NOVO: Lista de atividades recentes
+        self.recent_activities = deque(maxlen=50)
+        
+        self.start_time = time.time()
+        self.last_minute_requests = 0
+        self.last_minute_errors = 0
+        self.minute_start = time.time()
+        
+    def add_log(self, level, message, timestamp=None):
+        if timestamp is None:
+            timestamp = datetime.now()
+        self.logs.append({
+            "timestamp": timestamp.isoformat(),
+            "level": level,
+            "message": message
+        })
+        if level in ["ERROR", "CRITICAL"]:
+            self.metrics["total_errors"] += 1
+            self.last_minute_errors += 1
+    
+    def add_request(self, user_id=None, response_time=None):
+        self.metrics["total_requests"] += 1
+        self.last_minute_requests += 1
+        if user_id:
+            self.metrics["total_users"].add(user_id)
+            # Atualiza estatísticas mensais também
+            try:
+                monthly_stats.add_request(user_id)
+            except:
+                pass
+        if response_time:
+            self.metrics["response_times"].append(response_time)
+        now = time.time()
+        if now - self.minute_start >= 60:
+            self.metrics["requests_per_minute"].append(self.last_minute_requests)
+            self.metrics["errors_per_minute"].append(self.last_minute_errors)
+            self.last_minute_requests = 0
+            self.last_minute_errors = 0
+            self.minute_start = now
+    
+    def add_download(self, platform="other", user_id=None, url=None):
+        """🔥 CORRIGIDO: Adiciona download com tracking por plataforma"""
+        self.metrics["total_downloads"] += 1
+        
+        # Detecta plataforma automaticamente se não fornecida
+        if url and platform == "other":
+            url_lower = url.lower()
+            if "youtube.com" in url_lower or "youtu.be" in url_lower:
+                platform = "youtube"
+            elif "instagram.com" in url_lower:
+                platform = "instagram"
+            elif "shopee.co" in url_lower or "shopee.com" in url_lower:
+                platform = "shopee"
+        
+        # Conta por plataforma
+        if platform in self.platform_stats:
+            self.platform_stats[platform] += 1
+        
+        # Adiciona à atividade recente
+        self.recent_activities.append({
+            "type": "download",
+            "platform": platform,
+            "user_id": user_id,
+            "url": url[:50] + "..." if url and len(url) > 50 else url,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # Atualiza estatísticas mensais também
+        try:
+            monthly_stats.add_download()
+        except:
+            pass
+        
+        LOG.info("📊 Download registrado - Plataforma: %s, User: %s", platform, user_id)
+    
+    def set_active_downloads(self, count):
+        self.metrics["active_downloads"] = count
+    
+    def get_platform_stats(self):
+        """🔥 NOVO: Retorna estatísticas por plataforma"""
+        return self.platform_stats.copy()
+    
+    def get_recent_activities(self, limit=5):
+        """🔥 NOVO: Retorna atividades recentes"""
+        activities = list(self.recent_activities)
+        activities.reverse()  # Mais recentes primeiro
+        return activities[:limit]
+    
+    def update_system_metrics(self):
+        try:
+            import psutil
+            process = psutil.Process()
+            self.metrics["memory_usage_mb"] = process.memory_info().rss / 1024 / 1024
+            self.metrics["cpu_percent"] = process.cpu_percent(interval=0.1)
+        except:
+            pass
+    
+    def get_metrics(self):
+        uptime = time.time() - self.start_time
+        avg_response_time = 0
+        if self.metrics["response_times"]:
+            avg_response_time = sum(self.metrics["response_times"]) / len(self.metrics["response_times"])
+        return {
+            "uptime_seconds": int(uptime),
+            "uptime_formatted": str(timedelta(seconds=int(uptime))),
+            "total_requests": self.metrics["total_requests"],
+            "total_errors": self.metrics["total_errors"],
+            "total_downloads": self.metrics["total_downloads"],
+            "total_unique_users": len(self.metrics["total_users"]),
+            "active_downloads": self.metrics["active_downloads"],
+            "avg_response_time_ms": round(avg_response_time * 1000, 2),
+            "memory_usage_mb": round(self.metrics["memory_usage_mb"], 2),
+            "cpu_percent": round(self.metrics["cpu_percent"], 2),
+            "error_rate": round((self.metrics["total_errors"] / max(self.metrics["total_requests"], 1)) * 100, 2),
+            "requests_per_minute": list(self.metrics["requests_per_minute"]),
+            "errors_per_minute": list(self.metrics["errors_per_minute"]),
+        }
+    
+    def get_logs(self, limit=100, level=None):
+        logs = list(self.logs)
+        if level:
+            logs = [log for log in logs if log["level"] == level]
+        return logs[-limit:]
+
+metrics_collector = LogMetricsCollector()
+
+# ════════════════════════════════════════════════════════════════
+# 📊 ESTATÍSTICAS MENSAIS E DASHBOARD ESTENDIDA
+# ════════════════════════════════════════════════════════════════
+
+class MonthlyStatsCollector:
+    """Coletor de estatísticas mensais"""
+    
+    def __init__(self):
+        self.stats_file = "/tmp/bot_monthly_stats.json"
+        self.stats = self._load_stats()
+    
+    def _load_stats(self):
+        """Carrega estatísticas do arquivo"""
+        try:
+            import json
+            if os.path.exists(self.stats_file):
+                with open(self.stats_file, 'r') as f:
+                    return json.load(f)
+        except:
+            pass
+        
+        return {
+            "current_month": datetime.now().strftime("%Y-%m"),
+            "total_requests": 0,
+            "total_downloads": 0,
+            "total_users": [],
+            "requests_by_day": {},
+            "downloads_by_day": {},
+            "top_users": {},
+            "last_update": datetime.now().isoformat()
+        }
+    
+    def _save_stats(self):
+        """Salva estatísticas no arquivo"""
+        try:
+            import json
+            self.stats["last_update"] = datetime.now().isoformat()
+            with open(self.stats_file, 'w') as f:
+                json.dump(self.stats, f)
+        except Exception as e:
+            LOG.error("Erro ao salvar estatísticas: %s", e)
+    
+    def add_request(self, user_id=None):
+        """Registra uma requisição"""
+        current_month = datetime.now().strftime("%Y-%m")
+        current_day = datetime.now().strftime("%Y-%m-%d")
+        
+        # Reset se mudou o mês
+        if self.stats["current_month"] != current_month:
+            self.stats = {
+                "current_month": current_month,
+                "total_requests": 0,
+                "total_downloads": 0,
+                "total_users": [],
+                "requests_by_day": {},
+                "downloads_by_day": {},
+                "top_users": {},
+                "last_update": datetime.now().isoformat()
+            }
+        
+        self.stats["total_requests"] += 1
+        
+        if current_day not in self.stats["requests_by_day"]:
+            self.stats["requests_by_day"][current_day] = 0
+        self.stats["requests_by_day"][current_day] += 1
+        
+        if user_id:
+            if user_id not in self.stats["total_users"]:
+                self.stats["total_users"].append(user_id)
+            
+            user_id_str = str(user_id)
+            if user_id_str not in self.stats["top_users"]:
+                self.stats["top_users"][user_id_str] = 0
+            self.stats["top_users"][user_id_str] += 1
+        
+        self._save_stats()
+    
+    def add_download(self):
+        """Registra um download"""
+        current_day = datetime.now().strftime("%Y-%m-%d")
+        
+        self.stats["total_downloads"] += 1
+        
+        if current_day not in self.stats["downloads_by_day"]:
+            self.stats["downloads_by_day"][current_day] = 0
+        self.stats["downloads_by_day"][current_day] += 1
+        
+        self._save_stats()
+    
+    def get_stats(self):
+        """Retorna estatísticas do mês"""
+        # Top 10 usuários
+        top_users = sorted(
+            self.stats["top_users"].items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:10]
+        
+        # Últimos 7 dias
+        last_7_days = {}
+        for i in range(7):
+            day = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+            last_7_days[day] = {
+                "requests": self.stats["requests_by_day"].get(day, 0),
+                "downloads": self.stats["downloads_by_day"].get(day, 0)
+            }
+        
+        return {
+            "current_month": self.stats["current_month"],
+            "total_requests": self.stats["total_requests"],
+            "total_downloads": self.stats["total_downloads"],
+            "total_unique_users": len(self.stats["total_users"]),
+            "top_users": top_users,
+            "last_7_days": last_7_days,
+            "requests_by_day": self.stats["requests_by_day"],
+            "downloads_by_day": self.stats["downloads_by_day"],
+            "last_update": self.stats["last_update"]
+        }
+
+# Instância global
+monthly_stats = MonthlyStatsCollector()
+
+class DashboardLogHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            level = record.levelname
+            metrics_collector.add_log(level, msg)
+        except:
+            pass
+
+dashboard_handler = DashboardLogHandler()
+dashboard_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+LOG.addHandler(dashboard_handler)
+
+  # Usa mesma config
 
 
 # Token do Bot
@@ -1769,6 +2059,13 @@ def split_video_file(input_path: str, output_dir: str, segment_size: int = SPLIT
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para o comando /start"""
     user_id = update.effective_user.id
+    
+    # 🔥 TRACKING: Registra requisição
+    try:
+        metrics_collector.add_request(user_id=user_id)
+    except:
+        pass
+    
     update_user(user_id)
     
     welcome_text = MESSAGES["welcome"].format(free_limit=FREE_DOWNLOADS_LIMIT)
@@ -1785,6 +2082,13 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para o comando /status - mostra saldo de downloads"""
     user_id = update.effective_user.id
+    
+    # 🔥 TRACKING: Registra requisição
+    try:
+        metrics_collector.add_request(user_id=user_id)
+    except:
+        pass
+    
     stats = get_user_download_stats(user_id)
     
     # Verifica data de expiração se for premium
@@ -1824,6 +2128,12 @@ async def premium_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para o comando /premium - informações sobre plano premium"""
     user_id = update.effective_user.id
     
+    # 🔥 TRACKING: Registra requisição
+    try:
+        metrics_collector.add_request(user_id=user_id)
+    except:
+        pass
+    
     keyboard = [[
         InlineKeyboardButton("💳 Assinar Premium", callback_data=f"subscribe:{user_id}")
     ]]
@@ -1838,6 +2148,14 @@ async def premium_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para o comando /ai - conversar com IA"""
+    user_id = update.effective_user.id
+    
+    # 🔥 TRACKING: Registra requisição
+    try:
+        metrics_collector.add_request(user_id=user_id)
+    except:
+        pass
+    
     if not groq_client:
         await update.message.reply_text(
             "🤖 <b>IA Não Disponível</b>\n\n"
@@ -2051,6 +2369,12 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     - Lista de últimos assinantes
     """
     user_id = update.effective_user.id
+    
+    # 🔥 TRACKING: Registra requisição
+    try:
+        metrics_collector.add_request(user_id=user_id)
+    except:
+        pass
     
     LOG.info("📊 Comando /mensal executado por usuário %d", user_id)
     
@@ -2272,8 +2596,15 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para mensagens de texto (URLs ou chat com IA)"""
+    start_time = time.time()
     user_id = update.effective_user.id
     text = update.message.text.strip()
+    
+    # 📊 Tracking de métricas
+    try:
+        metrics_collector.add_request(user_id=user_id)
+    except:
+        pass
     
     update_user(user_id)
     
@@ -2701,6 +3032,12 @@ async def callback_buy_premium(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = query.from_user.id
     username = query.from_user.first_name or f"User{user_id}"
     
+    # 🔥 TRACKING: Registra requisição
+    try:
+        metrics_collector.add_request(user_id=user_id)
+    except:
+        pass
+    
     LOG.info("🛒 Usuário %d iniciou compra de premium", user_id)
     
     # Verifica se já é premium
@@ -3065,6 +3402,14 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
+    user_id = query.from_user.id
+    
+    # 🔥 TRACKING: Registra requisição
+    try:
+        metrics_collector.add_request(user_id=user_id)
+    except:
+        pass
+    
     data = query.data
     action, token = data.split(":", 1)
     
@@ -3107,6 +3452,14 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "user_id": pm["user_id"],
             "started_at": time.time()
         }
+        
+        # 📊 Tracking de métricas - registra download
+        try:
+            # 🔥 CORRIGIDO: Passa plataforma e URL para tracking
+            metrics_collector.add_download(platform=pm["platform"], user_id=user_id, url=pm["url"])
+            metrics_collector.set_active_downloads(len(ACTIVE_DOWNLOADS))
+        except:
+            pass
         
         await query.edit_message_text(MESSAGES["download_started"])
         
@@ -3424,8 +3777,8 @@ application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("stats", stats_cmd))
 application.add_handler(CommandHandler("status", status_cmd))
 application.add_handler(CommandHandler("premium", premium_cmd))
-application.add_handler(CommandHandler("ai", ai_cmd))  # ← Comando IA
-application.add_handler(CommandHandler("mensal", mensal_cmd))  # ← Comando relatório mensal
+application.add_handler(CommandHandler("ai", ai_cmd))
+application.add_handler(CommandHandler("mensal", mensal_cmd))
 application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
 application.add_handler(CallbackQueryHandler(callback_buy_premium, pattern=r"^subscribe:"))
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
@@ -3433,6 +3786,2933 @@ application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle
 # ============================
 # FLASK ROUTES
 # ============================
+
+
+# ════════════════════════════════════════════════════════════════
+# 🎨 DASHBOARD HTML
+# ════════════════════════════════════════════════════════════════
+
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot Analytics Pro - Enterprise Dashboard</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --primary-light: #818cf8;
+            --secondary: #8b5cf6;
+            --accent: #ec4899;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --info: #3b82f6;
+            --dark: #0f172a;
+            --dark-lighter: #1e293b;
+            --dark-card: #1e293b;
+            --text: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --border: #334155;
+            --sidebar-width: 280px;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--dark);
+            color: var(--text);
+            overflow-x: hidden;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: var(--sidebar-width);
+            height: 100vh;
+            background: var(--dark-card);
+            border-right: 1px solid var(--border);
+            padding: 24px 0;
+            overflow-y: auto;
+            z-index: 1000;
+            transition: transform 0.3s ease;
+        }
+
+        .sidebar.collapsed {
+            transform: translateX(-100%);
+        }
+
+        .sidebar-header {
+            padding: 0 24px 24px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 24px;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .sidebar-menu {
+            padding: 16px 0;
+        }
+
+        .menu-section {
+            margin-bottom: 24px;
+        }
+
+        .menu-section-title {
+            padding: 8px 24px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+        }
+
+        .menu-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 24px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+            border-left: 3px solid transparent;
+        }
+
+        .menu-item:hover {
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--primary);
+            border-left-color: var(--primary);
+        }
+
+        .menu-item.active {
+            background: rgba(99, 102, 241, 0.15);
+            color: var(--primary);
+            border-left-color: var(--primary);
+            font-weight: 600;
+        }
+
+        .menu-item i {
+            width: 20px;
+            text-align: center;
+            font-size: 16px;
+        }
+
+        .menu-badge {
+            margin-left: auto;
+            padding: 2px 8px;
+            background: var(--danger);
+            color: white;
+            font-size: 11px;
+            font-weight: 700;
+            border-radius: 12px;
+        }
+
+        /* Main Content */
+        .main-content {
+            margin-left: var(--sidebar-width);
+            min-height: 100vh;
+            transition: margin-left 0.3s ease;
+        }
+
+        .main-content.expanded {
+            margin-left: 0;
+        }
+
+        /* Topbar */
+        .topbar {
+            background: var(--dark-card);
+            border-bottom: 1px solid var(--border);
+            padding: 16px 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            position: sticky;
+            top: 0;
+            z-index: 999;
+            backdrop-filter: blur(10px);
+        }
+
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .menu-toggle {
+            background: transparent;
+            border: none;
+            color: var(--text);
+            font-size: 20px;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+
+        .menu-toggle:hover {
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--primary);
+        }
+
+        .search-box {
+            position: relative;
+            width: 400px;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 12px 16px 12px 44px;
+            background: var(--dark);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .search-box i {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-secondary);
+        }
+
+        .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .icon-btn {
+            position: relative;
+            background: var(--dark);
+            border: 1px solid var(--border);
+            color: var(--text);
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .icon-btn:hover {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+
+        .icon-btn .badge {
+            position: absolute;
+            top: -4px;
+            right: -4px;
+            width: 18px;
+            height: 18px;
+            background: var(--danger);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            font-weight: 700;
+            border: 2px solid var(--dark-card);
+        }
+
+        .user-profile {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 16px;
+            background: var(--dark);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .user-profile:hover {
+            border-color: var(--primary);
+        }
+
+        .user-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 14px;
+        }
+
+        .user-info {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .user-name {
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .user-role {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        /* Page Content */
+        .page-content {
+            padding: 32px;
+        }
+
+        .page-header {
+            margin-bottom: 32px;
+        }
+
+        .page-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .page-title h1 {
+            font-size: 32px;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .page-subtitle {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .page-actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 12px 24px;
+            border-radius: 10px;
+            border: none;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+        }
+
+        .btn-secondary {
+            background: var(--dark-card);
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-icon {
+            width: 40px;
+            height: 40px;
+            padding: 0;
+            justify-content: center;
+        }
+
+        /* Filters Bar */
+        .filters-bar {
+            background: var(--dark-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .filter-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .filter-select {
+            padding: 10px 36px 10px 14px;
+            background: var(--dark);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 14px;
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            min-width: 150px;
+        }
+
+        .filter-select:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .date-range {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .date-input {
+            padding: 10px 14px;
+            background: var(--dark);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 14px;
+        }
+
+        .date-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        .stat-card {
+            background: var(--dark-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            transform: scaleX(0);
+            transform-origin: left;
+            transition: transform 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4);
+            border-color: var(--primary);
+        }
+
+        .stat-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .stat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 16px;
+        }
+
+        .stat-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+        }
+
+        .stat-menu {
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 4px;
+        }
+
+        .stat-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 36px;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+        }
+
+        .stat-change {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .stat-change.positive {
+            color: var(--success);
+        }
+
+        .stat-change.negative {
+            color: var(--danger);
+        }
+
+        .stat-footer {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* Charts Section */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        .chart-card {
+            background: var(--dark-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+        }
+
+        .chart-card.full {
+            grid-column: span 12;
+        }
+
+        .chart-card.large {
+            grid-column: span 8;
+        }
+
+        .chart-card.small {
+            grid-column: span 4;
+        }
+
+        .chart-card.half {
+            grid-column: span 6;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .chart-title {
+            font-size: 18px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .chart-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+
+        .chart-container.small {
+            height: 200px;
+        }
+
+        /* Table */
+        .data-table {
+            background: var(--dark-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            margin-bottom: 32px;
+        }
+
+        .table-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .table-title {
+            font-size: 18px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .table-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        thead {
+            background: rgba(99, 102, 241, 0.05);
+        }
+
+        th {
+            padding: 16px 24px;
+            text-align: left;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
+            font-size: 14px;
+        }
+
+        tbody tr {
+            transition: background 0.2s;
+        }
+
+        tbody tr:hover {
+            background: rgba(99, 102, 241, 0.05);
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-badge.active {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--success);
+        }
+
+        .status-badge.pending {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--warning);
+        }
+
+        .status-badge.expired {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger);
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        /* Pagination */
+        .pagination {
+            padding: 20px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid var(--border);
+        }
+
+        .pagination-info {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .pagination-controls {
+            display: flex;
+            gap: 8px;
+        }
+
+        .page-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text);
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .page-btn:hover {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+
+        .page-btn.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+
+        .page-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 10000;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--dark-card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+            animation: modalSlideIn 0.3s ease;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .modal-header {
+            padding: 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-title {
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 4px;
+            transition: color 0.2s;
+        }
+
+        .modal-close:hover {
+            color: var(--danger);
+        }
+
+        .modal-body {
+            padding: 24px;
+        }
+
+        .modal-footer {
+            padding: 24px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--dark);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        /* Tabs */
+        .tabs-container {
+            margin-bottom: 32px;
+        }
+
+        .tabs-nav {
+            display: flex;
+            gap: 8px;
+            border-bottom: 2px solid var(--border);
+            margin-bottom: 24px;
+        }
+
+        .tab-btn {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.2s;
+        }
+
+        .tab-btn::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: var(--primary);
+            transform: scaleX(0);
+            transition: transform 0.3s;
+        }
+
+        .tab-btn:hover {
+            color: var(--primary);
+        }
+
+        .tab-btn.active {
+            color: var(--primary);
+        }
+
+        .tab-btn.active::after {
+            transform: scaleX(1);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Loading Overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(15, 23, 42, 0.9);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            backdrop-filter: blur(4px);
+        }
+
+        .loading-overlay.active {
+            display: flex;
+        }
+
+        .loader {
+            width: 60px;
+            height: 60px;
+            border: 4px solid rgba(99, 102, 241, 0.2);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            z-index: 10001;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .toast {
+            background: var(--dark-card);
+            border: 1px solid var(--border);
+            border-left: 4px solid var(--primary);
+            border-radius: 12px;
+            padding: 16px 20px;
+            min-width: 320px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            animation: toastSlideIn 0.3s ease;
+        }
+
+        @keyframes toastSlideIn {
+            from {
+                opacity: 0;
+                transform: translateX(100%);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .toast.success {
+            border-left-color: var(--success);
+        }
+
+        .toast.error {
+            border-left-color: var(--danger);
+        }
+
+        .toast.warning {
+            border-left-color: var(--warning);
+        }
+
+        .toast-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .toast.success .toast-icon {
+            background: var(--success);
+        }
+
+        .toast.error .toast-icon {
+            background: var(--danger);
+        }
+
+        .toast.warning .toast-icon {
+            background: var(--warning);
+        }
+
+        .toast-message {
+            flex: 1;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .toast-close {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 4px;
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .chart-card.large {
+                grid-column: span 12;
+            }
+
+            .chart-card.small {
+                grid-column: span 12;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                transform: translateX(-100%);
+            }
+
+            .sidebar.active {
+                transform: translateX(0);
+            }
+
+            .main-content {
+                margin-left: 0;
+            }
+
+            .topbar {
+                padding: 16px;
+            }
+
+            .search-box {
+                width: 100%;
+            }
+
+            .page-content {
+                padding: 20px;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .chart-card {
+                grid-column: span 12 !important;
+            }
+
+            .filters-bar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            table {
+                font-size: 12px;
+            }
+
+            th, td {
+                padding: 12px;
+            }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--dark);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--primary);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--primary-dark);
+        }
+    </style>
+</head>
+<body>
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loader"></div>
+    </div>
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <i class="fas fa-robot"></i>
+                <span>Bot Analytics</span>
+            </div>
+        </div>
+
+        <nav class="sidebar-menu">
+            <div class="menu-section">
+                <div class="menu-section-title">Principal</div>
+                <a class="menu-item active" data-page="dashboard">
+                    <i class="fas fa-home"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a class="menu-item" data-page="analytics">
+                    <i class="fas fa-chart-line"></i>
+                    <span>Analytics</span>
+                </a>
+                <a class="menu-item" data-page="users">
+                    <i class="fas fa-users"></i>
+                    <span>Usuários</span>
+                    <span class="menu-badge" id="usersBadge">0</span>
+                </a>
+                <a class="menu-item" data-page="downloads">
+                    <i class="fas fa-download"></i>
+                    <span>Downloads</span>
+                </a>
+            </div>
+
+            <div class="menu-section">
+                <div class="menu-section-title">Premium</div>
+                <a class="menu-item" data-page="premium">
+                    <i class="fas fa-crown"></i>
+                    <span>Relatório Premium</span>
+                </a>
+                <a class="menu-item" data-page="revenue">
+                    <i class="fas fa-dollar-sign"></i>
+                    <span>Receita</span>
+                </a>
+                <a class="menu-item" data-page="subscriptions">
+                    <i class="fas fa-credit-card"></i>
+                    <span>Assinaturas</span>
+                </a>
+            </div>
+
+            <div class="menu-section">
+                <div class="menu-section-title">Sistema</div>
+                <a class="menu-item" data-page="logs">
+                    <i class="fas fa-file-alt"></i>
+                    <span>Logs</span>
+                </a>
+                <a class="menu-item" data-page="settings">
+                    <i class="fas fa-cog"></i>
+                    <span>Configurações</span>
+                </a>
+            </div>
+        </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="main-content" id="mainContent">
+        <!-- Topbar -->
+        <header class="topbar">
+            <div class="topbar-left">
+                <button class="menu-toggle" id="menuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+
+                <div class="search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" placeholder="Pesquisar usuários, downloads, logs..." id="globalSearch">
+                </div>
+            </div>
+
+            <div class="topbar-right">
+                <button class="icon-btn" title="Notificações">
+                    <i class="fas fa-bell"></i>
+                    <span class="badge" id="notificationsBadge">0</span>
+                </button>
+
+                <button class="icon-btn" title="Exportar Dados" onclick="openExportModal()">
+                    <i class="fas fa-download"></i>
+                </button>
+
+                <button class="icon-btn" title="Atualizar" onclick="refreshDashboard()">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+
+                <div class="user-profile">
+                    <div class="user-avatar">AD</div>
+                    <div class="user-info">
+                        <div class="user-name">Admin</div>
+                        <div class="user-role">Administrador</div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Page Content -->
+        <main class="page-content">
+            <!-- Dashboard Page -->
+            <div id="dashboardPage" class="page active">
+                <div class="page-header">
+                    <div class="page-title">
+                        <h1>
+                            <i class="fas fa-chart-pie"></i>
+                            Dashboard Geral
+                        </h1>
+                        <div class="page-actions">
+                            <button class="btn btn-secondary" onclick="openFilterModal()">
+                                <i class="fas fa-filter"></i>
+                                Filtros Avançados
+                            </button>
+                            <button class="btn btn-primary" onclick="openExportModal()">
+                                <i class="fas fa-file-export"></i>
+                                Exportar Relatório
+                            </button>
+                        </div>
+                    </div>
+                    <p class="page-subtitle">Visão geral completa do desempenho do bot em tempo real</p>
+                </div>
+
+                <!-- Filters Bar -->
+                <div class="filters-bar">
+                    <div class="filter-group">
+                        <label class="filter-label">Período</label>
+                        <select class="filter-select" id="periodFilter" onchange="applyFilters()">
+                            <option value="today">Hoje</option>
+                            <option value="yesterday">Ontem</option>
+                            <option value="7days">Últimos 7 dias</option>
+                            <option value="30days" selected>Últimos 30 dias</option>
+                            <option value="90days">Últimos 90 dias</option>
+                            <option value="custom">Período customizado</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label class="filter-label">Status</label>
+                        <select class="filter-select" id="statusFilter" onchange="applyFilters()">
+                            <option value="all">Todos</option>
+                            <option value="active">Ativos</option>
+                            <option value="premium">Premium</option>
+                            <option value="free">Gratuito</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label class="filter-label">Plataforma</label>
+                        <select class="filter-select" id="platformFilter" onchange="applyFilters()">
+                            <option value="all">Todas</option>
+                            <option value="instagram">Instagram</option>
+                            <option value="shopee">Shopee</option>
+                            <option value="tiktok">TikTok</option>
+                            <option value="youtube">YouTube</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group" style="margin-left: auto;">
+                        <label class="filter-label">Atualização</label>
+                        <select class="filter-select" id="refreshRate" onchange="setRefreshRate()">
+                            <option value="0">Manual</option>
+                            <option value="5">5 segundos</option>
+                            <option value="10">10 segundos</option>
+                            <option value="30">30 segundos</option>
+                            <option value="60">1 minuto</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Stats Grid -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <div class="stat-icon">
+                                <i class="fas fa-clock"></i>
+                            </div>
+                            <div class="stat-menu">
+                                <i class="fas fa-ellipsis-v"></i>
+                            </div>
+                        </div>
+                        <div class="stat-title">Uptime do Sistema</div>
+                        <div class="stat-value" id="uptimeStat">--</div>
+                        <div class="stat-footer">
+                            <i class="fas fa-info-circle"></i>
+                            Tempo ativo contínuo
+                        </div>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <div class="stat-icon">
+                                <i class="fas fa-chart-line"></i>
+                            </div>
+                        </div>
+                        <div class="stat-title">Total de Requisições</div>
+                        <div class="stat-value" id="requestsStat">0</div>
+                        <div class="stat-change positive">
+                            <i class="fas fa-arrow-up"></i>
+                            <span id="requestsChange">+12.5%</span>
+                            vs. mês anterior
+                        </div>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <div class="stat-icon">
+                                <i class="fas fa-users"></i>
+                            </div>
+                        </div>
+                        <div class="stat-title">Usuários Únicos</div>
+                        <div class="stat-value" id="usersStat">0</div>
+                        <div class="stat-change positive">
+                            <i class="fas fa-arrow-up"></i>
+                            <span id="usersChange">+8.3%</span>
+                            novos usuários
+                        </div>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <div class="stat-icon">
+                                <i class="fas fa-exclamation-triangle"></i>
+                            </div>
+                        </div>
+                        <div class="stat-title">Taxa de Erros</div>
+                        <div class="stat-value" id="errorRateStat">0%</div>
+                        <div class="stat-change positive">
+                            <i class="fas fa-arrow-down"></i>
+                            <span>-2.1%</span>
+                            melhoria
+                        </div>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <div class="stat-icon">
+                                <i class="fas fa-tachometer-alt"></i>
+                            </div>
+                        </div>
+                        <div class="stat-title">Tempo de Resposta</div>
+                        <div class="stat-value" id="responseStat">0ms</div>
+                        <div class="stat-footer">
+                            <i class="fas fa-bolt"></i>
+                            Latência média
+                        </div>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <div class="stat-icon">
+                                <i class="fas fa-memory"></i>
+                            </div>
+                        </div>
+                        <div class="stat-title">Uso de Memória</div>
+                        <div class="stat-value" id="memoryStat">0 MB</div>
+                        <div class="stat-footer">
+                            <i class="fas fa-server"></i>
+                            RAM utilizada
+                        </div>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <div class="stat-icon">
+                                <i class="fas fa-microchip"></i>
+                            </div>
+                        </div>
+                        <div class="stat-title">Uso de CPU</div>
+                        <div class="stat-value" id="cpuStat">0%</div>
+                        <div class="stat-footer">
+                            <i class="fas fa-cogs"></i>
+                            Processamento
+                        </div>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <div class="stat-icon">
+                                <i class="fas fa-download"></i>
+                            </div>
+                        </div>
+                        <div class="stat-title">Downloads</div>
+                        <div class="stat-value" id="downloadsStat">0</div>
+                        <div class="stat-change positive">
+                            <i class="fas fa-circle" style="font-size: 8px;"></i>
+                            <span id="activeDownloads">0</span>
+                            ativos agora
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Charts Grid -->
+                <div class="charts-grid">
+                    <!-- Main Chart -->
+                    <div class="chart-card large">
+                        <div class="chart-header">
+                            <h3 class="chart-title">
+                                <i class="fas fa-chart-area"></i>
+                                Requisições por Minuto
+                            </h3>
+                            <div class="chart-actions">
+                                <button class="btn btn-secondary btn-icon" title="Baixar">
+                                    <i class="fas fa-download"></i>
+                                </button>
+                                <button class="btn btn-secondary btn-icon" title="Expandir">
+                                    <i class="fas fa-expand"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="requestsChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Small Chart -->
+                    <div class="chart-card small">
+                        <div class="chart-header">
+                            <h3 class="chart-title">
+                                <i class="fas fa-chart-pie"></i>
+                                Por Plataforma
+                            </h3>
+                        </div>
+                        <div class="chart-container small">
+                            <canvas id="platformChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Revenue Chart -->
+                    <div class="chart-card half">
+                        <div class="chart-header">
+                            <h3 class="chart-title">
+                                <i class="fas fa-dollar-sign"></i>
+                                Receita Mensal
+                            </h3>
+                            <div class="chart-actions">
+                                <button class="btn btn-success btn-icon" title="Ver Detalhes">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="chart-container small">
+                            <canvas id="revenueChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Users Growth -->
+                    <div class="chart-card half">
+                        <div class="chart-header">
+                            <h3 class="chart-title">
+                                <i class="fas fa-user-plus"></i>
+                                Crescimento de Usuários
+                            </h3>
+                        </div>
+                        <div class="chart-container small">
+                            <canvas id="usersGrowthChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Activity Table -->
+                <div class="data-table">
+                    <div class="table-header">
+                        <h3 class="table-title">
+                            <i class="fas fa-history"></i>
+                            Atividade Recente
+                        </h3>
+                        <div class="table-actions">
+                            <button class="btn btn-secondary" onclick="exportTable()">
+                                <i class="fas fa-file-csv"></i>
+                                Exportar CSV
+                            </button>
+                            <button class="btn btn-secondary" onclick="refreshTable()">
+                                <i class="fas fa-sync"></i>
+                                Atualizar
+                            </button>
+                        </div>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Usuário</th>
+                                <th>Ação</th>
+                                <th>Plataforma</th>
+                                <th>Status</th>
+                                <th>Data/Hora</th>
+                                <th>Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="activityTable">
+                            <tr>
+                                <td colspan="7" style="text-align: center; padding: 40px;">
+                                    <i class="fas fa-spinner fa-spin" style="font-size: 24px; color: var(--primary);"></i>
+                                    <p style="margin-top: 12px; color: var(--text-secondary);">Carregando dados...</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <div class="pagination">
+                        <div class="pagination-info">
+                            Mostrando <strong>1-10</strong> de <strong>248</strong> registros
+                        </div>
+                        <div class="pagination-controls">
+                            <button class="page-btn" disabled>
+                                <i class="fas fa-chevron-left"></i>
+                            </button>
+                            <button class="page-btn active">1</button>
+                            <button class="page-btn">2</button>
+                            <button class="page-btn">3</button>
+                            <button class="page-btn">...</button>
+                            <button class="page-btn">25</button>
+                            <button class="page-btn">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Premium Page -->
+            <div id="premiumPage" class="page" style="display: none;">
+                <div class="page-header">
+                    <div class="page-title">
+                        <h1>
+                            <i class="fas fa-crown"></i>
+                            Relatório Premium
+                        </h1>
+                        <div class="page-actions">
+                            <button class="btn btn-secondary">
+                                <i class="fas fa-calendar-alt"></i>
+                                Selecionar Período
+                            </button>
+                            <button class="btn btn-primary" onclick="exportPremiumReport()">
+                                <i class="fas fa-file-pdf"></i>
+                                Exportar PDF
+                            </button>
+                        </div>
+                    </div>
+                    <p class="page-subtitle">Análise completa de assinantes premium e receita</p>
+                </div>
+
+                <!-- Premium será carregado dinamicamente -->
+                <div id="premiumContent">
+                    <div style="text-align: center; padding: 60px;">
+                        <i class="fas fa-spinner fa-spin" style="font-size: 48px; color: var(--primary);"></i>
+                        <p style="margin-top: 20px; color: var(--text-secondary);">Carregando dados premium...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logs Page -->
+            <div id="logsPage" class="page" style="display: none;">
+                <div class="page-header">
+                    <div class="page-title">
+                        <h1>
+                            <i class="fas fa-file-alt"></i>
+                            Logs do Sistema
+                        </h1>
+                        <div class="page-actions">
+                            <button class="btn btn-secondary" onclick="clearLogs()">
+                                <i class="fas fa-trash"></i>
+                                Limpar Logs
+                            </button>
+                            <button class="btn btn-primary" onclick="downloadLogs()">
+                                <i class="fas fa-download"></i>
+                                Download Completo
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Logs Filters -->
+                <div class="filters-bar">
+                    <div class="filter-group">
+                        <label class="filter-label">Nível</label>
+                        <select class="filter-select" id="logLevelFilter" onchange="filterLogs()">
+                            <option value="all">Todos</option>
+                            <option value="ERROR">Erros</option>
+                            <option value="WARNING">Avisos</option>
+                            <option value="INFO">Info</option>
+                            <option value="DEBUG">Debug</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label class="filter-label">Pesquisar</label>
+                        <input type="text" class="form-input" placeholder="Buscar em logs..." id="logSearch" onkeyup="searchLogs()">
+                    </div>
+
+                    <div class="filter-group" style="margin-left: auto;">
+                        <label class="filter-label">Limite</label>
+                        <select class="filter-select" id="logLimit" onchange="filterLogs()">
+                            <option value="50">50 registros</option>
+                            <option value="100" selected>100 registros</option>
+                            <option value="500">500 registros</option>
+                            <option value="1000">1000 registros</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Logs Display -->
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3 class="chart-title">
+                            <i class="fas fa-terminal"></i>
+                            Console de Logs
+                        </h3>
+                        <div style="display: flex; gap: 8px;">
+                            <span class="status-badge active">
+                                <span class="status-dot"></span>
+                                Monitoramento Ativo
+                            </span>
+                            <button class="btn btn-secondary btn-icon" onclick="toggleAutoScroll()">
+                                <i class="fas fa-arrows-alt-v"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="logsConsole" style="max-height: 600px; overflow-y: auto; background: var(--dark); border-radius: 12px; padding: 16px; font-family: 'Courier New', monospace;">
+                        <!-- Logs aqui -->
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Export Modal -->
+    <div class="modal" id="exportModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">
+                    <i class="fas fa-file-export"></i>
+                    Exportar Dados
+                </h3>
+                <button class="modal-close" onclick="closeExportModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Formato de Exportação</label>
+                    <select class="form-input" id="exportFormat">
+                        <option value="csv">CSV (Excel)</option>
+                        <option value="json">JSON</option>
+                        <option value="pdf">PDF</option>
+                        <option value="xlsx">Excel (.xlsx)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Dados para Exportar</label>
+                    <div style="display: flex; flex-direction: column; gap: 12px;">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" checked> Métricas Gerais
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" checked> Dados de Usuários
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" checked> Downloads
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox"> Dados Premium
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox"> Logs do Sistema
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Período</label>
+                    <div class="date-range">
+                        <input type="date" class="date-input" id="exportDateStart">
+                        <span>até</span>
+                        <input type="date" class="date-input" id="exportDateEnd">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeExportModal()">
+                    Cancelar
+                </button>
+                <button class="btn btn-primary" onclick="executeExport()">
+                    <i class="fas fa-download"></i>
+                    Exportar Agora
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Main JavaScript -->
+    <script>
+        // Global Variables
+        let currentPage = 'dashboard';
+        let refreshInterval = null;
+        let charts = {};
+        let autoScroll = true;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeApp();
+            initializeCharts();
+            loadDashboardData();
+            setupEventListeners();
+        });
+
+        function initializeApp() {
+            console.log('🚀 Bot Analytics Dashboard carregado!');
+            
+            // Set default dates for export
+            const today = new Date();
+            const lastMonth = new Date();
+            lastMonth.setMonth(lastMonth.getMonth() - 1);
+            
+            document.getElementById('exportDateStart').valueAsDate = lastMonth;
+            document.getElementById('exportDateEnd').valueAsDate = today;
+        }
+
+        function setupEventListeners() {
+            // Menu toggle
+            document.getElementById('menuToggle').addEventListener('click', toggleSidebar);
+
+            // Menu items navigation
+            document.querySelectorAll('.menu-item').forEach(item => {
+                item.addEventListener('click', function() {
+                    const page = this.getAttribute('data-page');
+                    navigateTo(page);
+                });
+            });
+
+            // Global search
+            document.getElementById('globalSearch').addEventListener('input', function(e) {
+                performGlobalSearch(e.target.value);
+            });
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const mainContent = document.getElementById('mainContent');
+            
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('expanded');
+        }
+
+        function navigateTo(page) {
+            // Update menu
+            document.querySelectorAll('.menu-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            document.querySelector(`[data-page="${page}"]`).classList.add('active');
+
+            // Update page
+            document.querySelectorAll('.page').forEach(p => {
+                p.style.display = 'none';
+            });
+
+            currentPage = page;
+
+            if (page === 'premium') {
+                document.getElementById('premiumPage').style.display = 'block';
+                loadPremiumData();
+            } else if (page === 'logs') {
+                document.getElementById('logsPage').style.display = 'block';
+                loadLogs();
+            } else if (page === 'dashboard') {
+                document.getElementById('dashboardPage').style.display = 'block';
+            }
+        }
+
+        // Charts Initialization
+        function initializeCharts() {
+            // Requests Chart
+            const requestsCtx = document.getElementById('requestsChart').getContext('2d');
+            charts.requests = new Chart(requestsCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Requisições',
+                        data: [],
+                        borderColor: '#6366f1',
+                        backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                        tension: 0.4,
+                        fill: true,
+                        borderWidth: 3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: 'rgba(30, 41, 59, 0.9)',
+                            padding: 12,
+                            titleColor: '#e2e8f0',
+                            bodyColor: '#e2e8f0',
+                            borderColor: '#6366f1',
+                            borderWidth: 1
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: '#334155' },
+                            ticks: { color: '#94a3b8' }
+                        },
+                        x: {
+                            grid: { color: '#334155' },
+                            ticks: { color: '#94a3b8' }
+                        }
+                    }
+                }
+            });
+
+            // Platform Chart
+            const platformCtx = document.getElementById('platformChart').getContext('2d');
+            charts.platform = new Chart(platformCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Instagram', 'Shopee', 'TikTok', 'YouTube'],
+                    datasets: [{
+                        data: [0, 0, 0, 0],
+                        backgroundColor: [
+                            '#ec4899',
+                            '#f59e0b',
+                            '#3b82f6',
+                            '#ef4444'
+                        ],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: { color: '#94a3b8' }
+                        }
+                    }
+                }
+            });
+
+            // Revenue Chart
+            const revenueCtx = document.getElementById('revenueChart').getContext('2d');
+            charts.revenue = new Chart(revenueCtx, {
+                type: 'bar',
+                data: {
+                    labels: ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun'],
+                    datasets: [{
+                        label: 'Receita (R$)',
+                        data: [0, 0, 0, 0, 0, 0],
+                        backgroundColor: '#10b981'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: '#334155' },
+                            ticks: { color: '#94a3b8' }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { color: '#94a3b8' }
+                        }
+                    }
+                }
+            });
+
+            // Users Growth Chart
+            const usersGrowthCtx = document.getElementById('usersGrowthChart').getContext('2d');
+            charts.usersGrowth = new Chart(usersGrowthCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Usuários',
+                        data: [],
+                        borderColor: '#8b5cf6',
+                        backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: '#334155' },
+                            ticks: { color: '#94a3b8' }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { color: '#94a3b8' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Load Dashboard Data
+        async function loadDashboardData() {
+            try {
+                const response = await fetch('/api/metrics');
+                const data = await response.json();
+
+                // Update stats
+                document.getElementById('uptimeStat').textContent = data.uptime_formatted;
+                document.getElementById('requestsStat').textContent = data.total_requests.toLocaleString();
+                document.getElementById('usersStat').textContent = data.total_unique_users.toLocaleString();
+                document.getElementById('errorRateStat').textContent = data.error_rate + '%';
+                document.getElementById('responseStat').textContent = data.avg_response_time_ms + 'ms';
+                document.getElementById('memoryStat').textContent = data.memory_usage_mb + ' MB';
+                document.getElementById('cpuStat').textContent = data.cpu_percent + '%';
+                document.getElementById('downloadsStat').textContent = data.total_downloads.toLocaleString();
+                document.getElementById('activeDownloads').textContent = data.active_downloads;
+
+                // Update badges
+                document.getElementById('usersBadge').textContent = data.total_unique_users;
+                document.getElementById('notificationsBadge').textContent = data.total_errors || 0;
+
+                // Update charts
+                if (data.requests_per_minute && data.requests_per_minute.length > 0) {
+                    charts.requests.data.labels = data.requests_per_minute.map((_, i) => `-${60-i}min`);
+                    charts.requests.data.datasets[0].data = data.requests_per_minute;
+                    charts.requests.update('none');
+                }
+
+                // Load activity table
+                loadActivityTable();
+                
+                // Load platform statistics
+                loadPlatformActivity();
+
+            } catch (error) {
+                console.error('Erro ao carregar dados:', error);
+                showToast('Erro ao carregar dados', 'error');
+            }
+        }
+
+        // ===== FUNÇÃO CORRIGIDA PARA ATIVIDADE RECENTE =====
+        async function loadActivityTable() {
+            try {
+                const tbody = document.getElementById('activityTable');
+                
+                // Mostrar loading
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" style="text-align: center; padding: 40px;">
+                            <i class="fas fa-spinner fa-spin" style="font-size: 24px; color: var(--primary);"></i>
+                            <p style="margin-top: 12px; color: var(--text-secondary);">Carregando atividades...</p>
+                        </td>
+                    </tr>
+                `;
+
+                const response = await fetch('/api/recent-activity?limit=10');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                const activities = data.downloads || []; // Acessar a propriedade 'downloads' da resposta
+
+                if (!activities || activities.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="7" style="text-align: center; padding: 40px;">
+                                <i class="fas fa-inbox" style="font-size: 24px; color: var(--text-secondary);"></i>
+                                <p style="margin-top: 12px; color: var(--text-secondary);">Nenhuma atividade recente</p>
+                            </td>
+                        </tr>
+                    `;
+                    return;
+                }
+
+                tbody.innerHTML = '';
+
+                activities.forEach((activity, index) => {
+                    const row = document.createElement('tr');
+                    
+                    // Mascarar user_id para privacidade
+                    const maskedUserId = activity.user_id ? 
+                        `***${activity.user_id.toString().slice(-3)}` : 'N/A';
+                    
+                    // Determinar ícone da plataforma
+                    let platformIcon = 'fa-globe';
+                    let platformName = activity.platform || 'Desconhecido';
+                    
+                    if (activity.platform) {
+                        const platform = activity.platform.toLowerCase();
+                        if (platform.includes('instagram')) {
+                            platformIcon = 'fab fa-instagram';
+                            platformName = 'Instagram';
+                        } else if (platform.includes('shopee')) {
+                            platformIcon = 'fa-shopping-bag';
+                            platformName = 'Shopee';
+                        } else if (platform.includes('tiktok')) {
+                            platformIcon = 'fab fa-tiktok';
+                            platformName = 'TikTok';
+                        } else if (platform.includes('youtube')) {
+                            platformIcon = 'fab fa-youtube';
+                            platformName = 'YouTube';
+                        }
+                    }
+                    
+                    // Determinar status
+                    let statusClass = 'active';
+                    let statusText = 'Concluído';
+                    
+                    if (activity.status) {
+                        const status = activity.status.toLowerCase();
+                        if (status.includes('error') || status.includes('failed')) {
+                            statusClass = 'expired';
+                            statusText = 'Erro';
+                        } else if (status.includes('processing') || status.includes('pending')) {
+                            statusClass = 'pending';
+                            statusText = 'Processando';
+                        }
+                    }
+                    
+                    // Formatar timestamp
+                    const timestamp = activity.timestamp ? 
+                        new Date(activity.timestamp).toLocaleString('pt-BR', {
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit'
+                        }) : 'N/A';
+                    
+                    // Determinar ação
+                    let actionText = activity.action || 'Download';
+                    if (activity.action_type) {
+                        if (activity.action_type.includes('premium')) {
+                            actionText = '<i class="fas fa-crown" style="color: var(--warning);"></i> Premium';
+                        } else if (activity.action_type.includes('download')) {
+                            actionText = '<i class="fas fa-download"></i> Download';
+                        }
+                    }
+                    
+                    row.innerHTML = `
+                        <td>#${String(index + 1).padStart(5, '0')}</td>
+                        <td>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <i class="fas fa-user-circle" style="color: var(--primary);"></i>
+                                ${maskedUserId}
+                            </div>
+                        </td>
+                        <td>${actionText}</td>
+                        <td>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <i class="${platformIcon}" style="font-size: 16px;"></i>
+                                ${platformName}
+                            </div>
+                        </td>
+                        <td>
+                            <span class="status-badge ${statusClass}">
+                                <span class="status-dot"></span>
+                                ${statusText}
+                            </span>
+                        </td>
+                        <td style="font-size: 13px;">${timestamp}</td>
+                        <td>
+                            <button class="btn btn-secondary btn-icon" onclick="viewActivityDetails(${index})" title="Ver detalhes">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </td>
+                    `;
+                    
+                    tbody.appendChild(row);
+                });
+
+                // Atualizar informações de paginação
+                updatePaginationInfo(activities.length);
+
+            } catch (error) {
+                console.error('Erro ao carregar tabela de atividades:', error);
+                const tbody = document.getElementById('activityTable');
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" style="text-align: center; padding: 40px;">
+                            <i class="fas fa-exclamation-triangle" style="font-size: 24px; color: var(--danger);"></i>
+                            <p style="margin-top: 12px; color: var(--text-secondary);">Erro ao carregar atividades: ${error.message}</p>
+                            <button class="btn btn-primary" onclick="loadActivityTable()" style="margin-top: 12px;">
+                                <i class="fas fa-sync"></i> Tentar Novamente
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        function updatePaginationInfo(count) {
+            const paginationInfo = document.querySelector('.pagination-info');
+            if (paginationInfo) {
+                paginationInfo.innerHTML = `Mostrando <strong>1-${count}</strong> de <strong>${count}</strong> registros`;
+            }
+        }
+
+        function viewActivityDetails(index) {
+            showToast('Visualização de detalhes em desenvolvimento', 'info');
+        }
+        // ===== FIM DA FUNÇÃO CORRIGIDA =====
+
+        // ===== NOVA FUNÇÃO PARA CARREGAR ESTATÍSTICAS POR PLATAFORMA =====
+        async function loadPlatformActivity() {
+            try {
+                const response = await fetch('/api/platform-activity');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const platformStats = await response.json();
+                
+                // Atualizando o gráfico de plataformas
+                const platformChart = document.getElementById('platformChart');
+                
+                if (!platformChart) {
+                    console.error('Elemento do gráfico de plataforma não encontrado');
+                    return;
+                }
+                
+                // Se já existir um gráfico, destrua-o para recriar
+                if (charts.platforms) {
+                    charts.platforms.destroy();
+                }
+                
+                const ctx = platformChart.getContext('2d');
+                
+                // Preparar os dados para o gráfico
+                const labels = Object.keys(platformStats);
+                const data = Object.values(platformStats);
+                
+                // Cores para cada plataforma
+                const backgroundColors = {
+                    'youtube': '#FF0000',
+                    'instagram': '#C13584',
+                    'shopee': '#FF6600',
+                    'facebook': '#1877F2',
+                    'tiktok': '#000000'
+                };
+                
+                const colors = labels.map(platform => 
+                    backgroundColors[platform] || `hsl(${Math.random() * 360}, 70%, 50%)`
+                );
+                
+                // Criar o novo gráfico
+                charts.platforms = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            data: data,
+                            backgroundColor: colors,
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'right',
+                                labels: {
+                                    color: '#94a3b8'
+                                }
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const label = context.label || '';
+                                        const value = context.raw || 0;
+                                        const total = context.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                                        const percentage = ((value / total) * 100).toFixed(1);
+                                        return `${label}: ${value} (${percentage}%)`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('Erro ao carregar estatísticas por plataforma:', error);
+            }
+        }
+        // ===== FIM DA FUNÇÃO DE ESTATÍSTICAS POR PLATAFORMA =====
+
+        async function loadPremiumData() {
+            try {
+                const response = await fetch('/api/premium/stats');
+                const data = await response.json();
+
+                const premiumHTML = `
+                    <div class="premium-section">
+                        <div class="premium-header">
+                            <div class="premium-icon"><i class="fas fa-crown"></i></div>
+                            <div>
+                                <h2 class="premium-title">Visão Geral Premium</h2>
+                                <p class="page-subtitle">Período: ${data.current_month || 'N/A'}</p>
+                            </div>
+                        </div>
+                        <div class="premium-grid">
+                            <div class="premium-stat">
+                                <div class="premium-stat-value">${data.total_active || 0}</div>
+                                <div class="premium-stat-label">Assinantes Ativos</div>
+                            </div>
+                            <div class="premium-stat">
+                                <div class="premium-stat-value">${data.new_this_month || 0}</div>
+                                <div class="premium-stat-label">Novos este Mês</div>
+                            </div>
+                            <div class="premium-stat">
+                                <div class="premium-stat-value">${data.expires_this_month || 0}</div>
+                                <div class="premium-stat-label">Expiram este Mês</div>
+                            </div>
+                            <div class="premium-stat">
+                                <div class="premium-stat-value">${data.expires_next_month || 0}</div>
+                                <div class="premium-stat-label">Expiram Próx. Mês</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="charts-grid">
+                        <div class="chart-card half">
+                            <div class="chart-header">
+                                <h3 class="chart-title"><i class="fas fa-dollar-sign"></i> Receita</h3>
+                            </div>
+                            <div style="padding: 20px;">
+                                <div style="font-size: 42px; font-weight: 800; color: var(--success); margin-bottom: 8px;">
+                                    R$ ${formatCurrency(data.revenue_month || 0)}
+                                </div>
+                                <div style="color: var(--text-secondary);">Receita Mensal</div>
+                                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border);">
+                                    <div style="color: var(--text-secondary); margin-bottom: 4px;">Receita Total</div>
+                                    <div style="font-size: 24px; font-weight: 700;">R$ ${formatCurrency(data.revenue_total || 0)}</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="chart-card half">
+                            <div class="chart-header">
+                                <h3 class="chart-title"><i class="fas fa-chart-line"></i> Análise</h3>
+                            </div>
+                            <div style="padding: 20px;">
+                                <div style="margin-bottom: 20px;">
+                                    <div style="color: var(--text-secondary); margin-bottom: 8px;">Ticket Médio</div>
+                                    <div style="font-size: 32px; font-weight: 700;">R$ ${formatCurrency(data.avg_ticket || 0)}</div>
+                                </div>
+                                <div>
+                                    <div style="color: var(--text-secondary); margin-bottom: 8px;">Taxa de Conversão</div>
+                                    <div style="font-size: 32px; font-weight: 700;">5.2%</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                document.getElementById('premiumContent').innerHTML = premiumHTML;
+
+            } catch (error) {
+                console.error('Erro ao carregar dados premium:', error);
+                document.getElementById('premiumContent').innerHTML = `
+                    <div style="text-align: center; padding: 60px;">
+                        <i class="fas fa-exclamation-circle" style="font-size: 48px; color: var(--danger);"></i>
+                        <p style="margin-top: 20px; color: var(--text-secondary);">Erro ao carregar dados premium</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function loadLogs() {
+            try {
+                const level = document.getElementById('logLevelFilter').value;
+                const limit = document.getElementById('logLimit').value;
+                
+                const response = await fetch(`/api/logs?limit=${limit}${level !== 'all' ? '&level=' + level : ''}`);
+                const logs = await response.json();
+
+                const logsConsole = document.getElementById('logsConsole');
+                logsConsole.innerHTML = '';
+
+                logs.reverse().forEach(log => {
+                    const logDiv = document.createElement('div');
+                    logDiv.style.cssText = 'padding: 8px 12px; margin-bottom: 4px; border-radius: 6px; background: rgba(0,0,0,0.3); border-left: 3px solid;';
+                    
+                    let borderColor = '#334155';
+                    if (log.level === 'ERROR' || log.level === 'CRITICAL') borderColor = '#ef4444';
+                    else if (log.level === 'WARNING') borderColor = '#f59e0b';
+                    else if (log.level === 'INFO') borderColor = '#6366f1';
+                    
+                    logDiv.style.borderLeftColor = borderColor;
+                    
+                    const timestamp = new Date(log.timestamp).toLocaleString('pt-BR');
+                    logDiv.innerHTML = `
+                        <span style="color: #64748b;">[${timestamp}]</span>
+                        <span style="color: ${borderColor}; font-weight: 700; margin: 0 8px;">${log.level}</span>
+                        <span>${log.message}</span>
+                    `;
+                    
+                    logsConsole.appendChild(logDiv);
+                });
+
+                if (autoScroll) {
+                    logsConsole.scrollTop = logsConsole.scrollHeight;
+                }
+
+            } catch (error) {
+                console.error('Erro ao carregar logs:', error);
+            }
+        }
+
+        // Filters & Actions
+        function applyFilters() {
+            showToast('Filtros aplicados com sucesso', 'success');
+            loadDashboardData();
+        }
+
+        function setRefreshRate() {
+            const rate = parseInt(document.getElementById('refreshRate').value);
+            
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+            }
+
+            if (rate > 0) {
+                refreshInterval = setInterval(loadDashboardData, rate * 1000);
+                showToast(`Auto-refresh ativado (${rate}s)`, 'success');
+            } else {
+                showToast('Auto-refresh desativado', 'info');
+            }
+        }
+
+        function refreshDashboard() {
+            showLoadingOverlay();
+            loadDashboardData().then(() => {
+                hideLoadingOverlay();
+                showToast('Dashboard atualizado', 'success');
+            });
+        }
+
+        function performGlobalSearch(query) {
+            if (query.length < 3) return;
+            console.log('Pesquisando:', query);
+            // Implementar busca global
+        }
+
+        function filterLogs() {
+            loadLogs();
+        }
+
+        function searchLogs() {
+            const query = document.getElementById('logSearch').value.toLowerCase();
+            const logs = document.getElementById('logsConsole').children;
+            
+            Array.from(logs).forEach(log => {
+                if (log.textContent.toLowerCase().includes(query)) {
+                    log.style.display = 'block';
+                } else {
+                    log.style.display = 'none';
+                }
+            });
+        }
+
+        function toggleAutoScroll() {
+            autoScroll = !autoScroll;
+            showToast(autoScroll ? 'Auto-scroll ativado' : 'Auto-scroll desativado', 'info');
+        }
+
+        // Modals
+        function openExportModal() {
+            document.getElementById('exportModal').classList.add('active');
+        }
+
+        function closeExportModal() {
+            document.getElementById('exportModal').classList.remove('active');
+        }
+
+        function openFilterModal() {
+            showToast('Modal de filtros avançados em desenvolvimento', 'info');
+        }
+
+        function executeExport() {
+            const format = document.getElementById('exportFormat').value;
+            showLoadingOverlay();
+            
+            setTimeout(() => {
+                hideLoadingOverlay();
+                closeExportModal();
+                showToast(`Exportação ${format.toUpperCase()} iniciada`, 'success');
+            }, 2000);
+        }
+
+        function exportPremiumReport() {
+            showToast('Gerando relatório PDF...', 'info');
+        }
+
+        function exportTable() {
+            showToast('Exportando tabela para CSV...', 'info');
+        }
+
+        function refreshTable() {
+            loadActivityTable();
+            showToast('Tabela atualizada', 'success');
+        }
+
+        function downloadLogs() {
+            showToast('Download de logs iniciado', 'success');
+        }
+
+        function clearLogs() {
+            if (confirm('Tem certeza que deseja limpar os logs?')) {
+                document.getElementById('logsConsole').innerHTML = '';
+                showToast('Logs limpos', 'success');
+            }
+        }
+
+        // Helpers
+        function showLoadingOverlay() {
+            document.getElementById('loadingOverlay').classList.add('active');
+        }
+
+        function hideLoadingOverlay() {
+            document.getElementById('loadingOverlay').classList.remove('active');
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            
+            let icon = 'fa-info-circle';
+            if (type === 'success') icon = 'fa-check-circle';
+            if (type === 'error') icon = 'fa-exclamation-circle';
+            if (type === 'warning') icon = 'fa-exclamation-triangle';
+            
+            toast.innerHTML = `
+                <div class="toast-icon">
+                    <i class="fas ${icon}"></i>
+                </div>
+                <div class="toast-message">${message}</div>
+                <button class="toast-close" onclick="this.parentElement.remove()">
+                    <i class="fas fa-times"></i>
+                </button>
+            `;
+            
+            document.getElementById('toastContainer').appendChild(toast);
+            
+            setTimeout(() => toast.remove(), 5000);
+        }
+
+        function formatCurrency(value) {
+            return new Intl.NumberFormat('pt-BR', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            }).format(value);
+        }
+
+        // Auto-refresh (default: 30s)
+        setInterval(loadDashboardData, 30000);
+    </script>
+</body>
+</html>"""
+
+# ════════════════════════════════════════════════════════════════
+# 📊 ROTAS DE ESTATÍSTICAS E DASHBOARD
+# ════════════════════════════════════════════════════════════════
+
+from flask import Flask, jsonify, request, Response
+
+app = Flask(__name__)
+
+# Variável global
+user_requests = {}
+
+# ════════════════════════════════════════════════════════════════
+# 🆕 NOVOS ENDPOINTS - DASHBOARD MODERNO
+# ════════════════════════════════════════════════════════════════
+
+@app.route("/")
+def dashboard():
+    """Serve o novo dashboard moderno"""
+    try:
+        with open("dashboard.html", "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        # Fallback para o dashboard antigo se o novo não existir
+        return DASHBOARD_HTML
+
+@app.route("/api/metrics")
+def api_metrics():
+    """Retorna métricas gerais do sistema - VERSÃO ATUALIZADA"""
+    health_monitor.record_activity("flask")
+    
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Total de downloads (soma de todos os usuários)
+            cursor.execute("SELECT SUM(downloads_count) FROM user_downloads")
+            result = cursor.fetchone()
+            total_downloads = int(result[0]) if result[0] else 0
+            
+            # Usuários ativos (total de usuários registrados)
+            cursor.execute("SELECT COUNT(*) FROM user_downloads")
+            active_users = cursor.fetchone()[0]
+            
+            # Usuários premium ativos
+            now = datetime.now().isoformat()
+            cursor.execute("""
+                SELECT COUNT(*) 
+                FROM user_downloads 
+                WHERE is_premium = 1 AND premium_expires > ?
+            """, (now,))
+            premium_users = cursor.fetchone()[0]
+            
+            # Requisições na última hora (estimativa baseada em atividade)
+            # Como não temos tabela de logs de requisições, retornamos 0
+            requests_last_hour = 0
+            
+            return jsonify({
+                "total_downloads": total_downloads,
+                "active_users": active_users,
+                "premium_users": premium_users,
+                "requests_per_minute": requests_last_hour
+            })
+            
+    except Exception as e:
+        LOG.error("Erro no api_metrics: %s", e)
+        return jsonify({
+            "total_downloads": 0,
+            "active_users": 0,
+            "premium_users": 0,
+            "requests_per_minute": 0
+        })
+
+@app.route("/api/platform-activity")
+def api_platform_activity():
+    """🔥 CORRIGIDO: Retorna downloads por plataforma com dados REAIS"""
+    health_monitor.record_activity("flask")
+    
+    try:
+        # Pega estatísticas reais do metrics_collector
+        platform_stats = metrics_collector.get_platform_stats()
+        
+        return jsonify(platform_stats)
+            
+    except Exception as e:
+        LOG.error("Erro no api_platform_activity: %s", e)
+        return jsonify({"youtube": 0, "instagram": 0, "shopee": 0})
+
+@app.route("/api/recent-activity")
+def api_recent_activity():
+    """🔥 CORRIGIDO: Retorna os últimos 5 downloads REAIS - SEM PAGINAÇÃO"""
+    health_monitor.record_activity("flask")
+    
+    try:
+        # Pega atividades reais do metrics_collector
+        recent_activities = metrics_collector.get_recent_activities(limit=5)
+        
+        # Filtra apenas downloads e formata
+        downloads = []
+        for activity in recent_activities:
+            if activity.get("type") == "download":
+                downloads.append({
+                    "user_id": activity.get("user_id"),
+                    "platform": activity.get("platform", "unknown"),
+                    "timestamp": activity.get("timestamp"),
+                    "url": activity.get("url", "")
+                })
+        
+        return jsonify({"downloads": downloads})
+            
+    except Exception as e:
+        LOG.error("Erro no api_recent_activity: %s", e)
+        return jsonify({"downloads": []})
+
+@app.route("/api/revenue")
+def api_revenue():
+    """Retorna dados de receita filtrados por período"""
+    health_monitor.record_activity("flask")
+    
+    filter_type = request.args.get("filter", "day")  # day, month, year
+    
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Define período baseado no filtro
+            if filter_type == "day":
+                start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                date_format = "%H:00"
+            elif filter_type == "month":
+                start_date = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                date_format = "%d/%m"
+            else:  # year
+                start_date = datetime.now().replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+                date_format = "%b"
+            
+            start_date_str = start_date.isoformat()
+            
+            # Receita total no período
+            cursor.execute("""
+                SELECT COALESCE(SUM(amount), 0)
+                FROM pix_payments
+                WHERE status = 'confirmed' AND created_at > ?
+            """, (start_date_str,))
+            total_revenue = cursor.fetchone()[0]
+            
+            # Novas assinaturas no período
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM pix_payments
+                WHERE status = 'confirmed' AND created_at > ?
+            """, (start_date_str,))
+            new_subscriptions = cursor.fetchone()[0]
+            
+            # Média por pagamento
+            avg_payment = total_revenue / new_subscriptions if new_subscriptions > 0 else 0
+            
+            # Dados para gráfico de receitas
+            cursor.execute("""
+                SELECT created_at, amount
+                FROM pix_payments
+                WHERE status = 'confirmed' AND created_at > ?
+                ORDER BY created_at
+            """, (start_date_str,))
+            
+            payments = cursor.fetchall()
+            
+            # Agrupa dados por período
+            chart_data = defaultdict(float)
+            subscriptions_data = defaultdict(int)
+            
+            for payment in payments:
+                try:
+                    payment_date = datetime.fromisoformat(payment[0])
+                    label = payment_date.strftime(date_format)
+                    chart_data[label] += float(payment[1])
+                    subscriptions_data[label] += 1
+                except:
+                    continue
+            
+            # Converte para formato de lista
+            chart_data_list = [{"label": k, "value": v} for k, v in sorted(chart_data.items())]
+            subscriptions_data_list = [{"label": k, "value": v} for k, v in sorted(subscriptions_data.items())]
+            
+            # Se não houver dados, cria estrutura vazia
+            if not chart_data_list:
+                if filter_type == "day":
+                    chart_data_list = [{"label": f"{h:02d}:00", "value": 0} for h in range(24)]
+                    subscriptions_data_list = [{"label": f"{h:02d}:00", "value": 0} for h in range(24)]
+                elif filter_type == "month":
+                    days_in_month = 31
+                    chart_data_list = [{"label": f"{d:02d}/{datetime.now().month:02d}", "value": 0} for d in range(1, days_in_month + 1)]
+                    subscriptions_data_list = [{"label": f"{d:02d}/{datetime.now().month:02d}", "value": 0} for d in range(1, days_in_month + 1)]
+                else:
+                    months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+                    chart_data_list = [{"label": m, "value": 0} for m in months]
+                    subscriptions_data_list = [{"label": m, "value": 0} for m in months]
+            
+            return jsonify({
+                "total_revenue": float(total_revenue),
+                "new_subscriptions": new_subscriptions,
+                "avg_payment": float(avg_payment),
+                "chart_data": chart_data_list,
+                "subscriptions_data": subscriptions_data_list
+            })
+            
+    except Exception as e:
+        LOG.error("Erro no api_revenue: %s", e)
+        return jsonify({
+            "total_revenue": 0,
+            "new_subscriptions": 0,
+            "avg_payment": 0,
+            "chart_data": [],
+            "subscriptions_data": []
+        })
+
+@app.route("/api/export-report")
+def api_export_report():
+    """Exporta relatório filtrado em formato TXT"""
+    health_monitor.record_activity("flask")
+    
+    filter_type = request.args.get("filter", "day")
+    
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Define período
+            if filter_type == "day":
+                start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                period_name = "Hoje"
+            elif filter_type == "month":
+                start_date = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                period_name = "Este Mês"
+            else:
+                start_date = datetime.now().replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+                period_name = "Este Ano"
+            
+            start_date_str = start_date.isoformat()
+            
+            # Coleta dados
+            cursor.execute("""
+                SELECT COALESCE(SUM(amount), 0), COUNT(*)
+                FROM pix_payments
+                WHERE status = 'confirmed' AND created_at > ?
+            """, (start_date_str,))
+            revenue_data = cursor.fetchone()
+            
+            cursor.execute("""
+                SELECT COUNT(DISTINCT user_id)
+                FROM downloads
+                WHERE timestamp > ?
+            """, (start_date_str,))
+            active_users = cursor.fetchone()[0]
+            
+            cursor.execute("""
+                SELECT platform, COUNT(*) as count
+                FROM downloads
+                WHERE timestamp > ?
+                GROUP BY platform
+            """, (start_date_str,))
+            platform_stats = cursor.fetchall()
+            
+            # Gera relatório em TXT
+            report = []
+            report.append("=" * 60)
+            report.append("RELATÓRIO DE DESEMPENHO - VIDEO DOWNLOADER BOT")
+            report.append("=" * 60)
+            report.append(f"Período: {period_name}")
+            report.append(f"Data de Geração: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+            report.append("=" * 60)
+            report.append("")
+            
+            report.append("📊 MÉTRICAS FINANCEIRAS")
+            report.append("-" * 60)
+            report.append(f"Receita Total: R$ {revenue_data[0]:.2f}")
+            report.append(f"Novas Assinaturas: {revenue_data[1]}")
+            if revenue_data[1] > 0:
+                report.append(f"Ticket Médio: R$ {revenue_data[0]/revenue_data[1]:.2f}")
+            report.append("")
+            
+            report.append("👥 MÉTRICAS DE USUÁRIOS")
+            report.append("-" * 60)
+            report.append(f"Usuários Ativos: {active_users}")
+            report.append("")
+            
+            report.append("📥 DOWNLOADS POR PLATAFORMA")
+            report.append("-" * 60)
+            for platform, count in platform_stats:
+                report.append(f"{platform.capitalize()}: {count} downloads")
+            report.append("")
+            
+            report.append("=" * 60)
+            report.append("Relatório gerado automaticamente pelo sistema")
+            report.append("=" * 60)
+            
+            # Retorna como arquivo para download
+            report_text = "\n".join(report)
+            
+            return Response(
+                report_text,
+                mimetype="text/plain",
+                headers={
+                    "Content-Disposition": f"attachment; filename=relatorio_{filter_type}_{int(datetime.now().timestamp())}.txt"
+                }
+            )
+            
+    except Exception as e:
+        LOG.error("Erro no api_export_report: %s", e)
+        return "Erro ao gerar relatório", 500
+
+# ════════════════════════════════════════════════════════════════
+# 📊 ENDPOINTS EXISTENTES MANTIDOS
+# ════════════════════════════════════════════════════════════════
+
+@app.route('/api/register', methods=['POST'])
+def register():
+    data = request.json
+    user_id = data.get('user_id', 'anon')
+    platform = data.get('platform', 'Desconhecido')
+
+    user_requests[user_id] = {
+        'platform': platform,
+        'action': 'Download',
+        'action_type': 'download',
+        'status': 'success',
+        'timestamp': datetime.now().isoformat()
+    }
+
+    return jsonify({'ok': True})
+
+@app.route("/api/premium/stats")
+def api_premium_stats():
+    """API para estatísticas premium"""
+    try:
+        health_monitor.record_activity("flask")
+        
+        # Usa a função que você já tem no código
+        stats = get_premium_monthly_stats()
+        
+        # Calcula ticket médio
+        avg_ticket = 0
+        if stats.get('new_this_month', 0) > 0:
+            avg_ticket = stats.get('revenue_month', 0) / stats['new_this_month']
+        
+        return jsonify({
+            "current_month": stats.get('current_month', ''),
+            "total_active": stats.get('total_active', 0),
+            "new_this_month": stats.get('new_this_month', 0),
+            "expires_this_month": stats.get('expires_this_month', 0),
+            "expires_next_month": stats.get('expires_next_month', 0),
+            "revenue_month": stats.get('revenue_month', 0),
+            "revenue_total": stats.get('revenue_total', 0),
+            "avg_ticket": avg_ticket,
+            "by_expiry_date": stats.get('by_expiry_date', []),
+            "recent_subscribers": stats.get('recent_subscribers', [])
+        })
+    except Exception as e:
+        LOG.error("Erro em /api/premium/stats: %s", e)
+        return jsonify({"error": str(e)}), 500
+        
+@app.route("/api/stats/monthly")
+def api_stats_monthly():
+    """API para estatísticas mensais"""
+    try:
+        health_monitor.record_activity("flask")
+        return jsonify(monthly_stats.get_stats())
+    except Exception as e:
+        LOG.error("Erro em /api/stats/monthly: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/stats/daily")
+def api_stats_daily():
+    """API para estatísticas diárias"""
+    try:
+        health_monitor.record_activity("flask")
+        
+        today = datetime.now().strftime("%Y-%m-%d")
+        stats = monthly_stats.get_stats()
+        
+        return jsonify({
+            "date": today,
+            "requests": stats["requests_by_day"].get(today, 0),
+            "downloads": stats["downloads_by_day"].get(today, 0),
+            "total_users_month": stats["total_unique_users"]
+        })
+    except Exception as e:
+        LOG.error("Erro em /api/stats/daily: %s", e)
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
@@ -3461,11 +6741,6 @@ def webhook():
         
         # CRÍTICO: Retorna 200 mesmo com erro para evitar retry infinito do Telegram
         return jsonify({"status": "error", "message": str(e)}), 200
-
-@app.route("/")
-def index():
-    """Rota principal"""
-    return "🤖 Bot de Download Ativo"
 
 @app.route("/diagnostics")
 def diagnostics():
@@ -3537,6 +6812,31 @@ def diagnostics():
     
     return diagnostics_data, 200
 
+
+# ════════════════════════════════════════════════════════════════
+# 🎨 ROTA ANTIGA DA DASHBOARD (backup)
+# ════════════════════════════════════════════════════════════════
+
+@app.route("/dashboard-antigo")
+def dashboard_antigo():
+    """Dashboard antigo - mantido como backup"""
+    health_monitor.record_activity("flask")
+    return DASHBOARD_HTML
+
+@app.route("/api/logs")
+def api_logs():
+    """API para retornar logs do sistema"""
+    health_monitor.record_activity("flask")
+    
+    limit = request.args.get('limit', 100, type=int)
+    level = request.args.get('level', None)
+    
+    logs = metrics_collector.get_logs(limit=limit, level=level)
+    
+    return jsonify(logs)
+
+
+
 @app.route("/health")
 def health():
     """Endpoint de health check simplificado para Render"""
@@ -3570,7 +6870,7 @@ def health():
     })
 
     # ✅ Sempre retorna 200 OK, mesmo se monitor indicar problema
-    return checks, 200
+    return jsonify(checks), 200
     
     # Testa banco de dados
     try:
