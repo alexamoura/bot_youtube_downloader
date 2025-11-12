@@ -51,6 +51,13 @@ try:
     GROQ_AVAILABLE = True
 except ImportError:
     GROQ_AVAILABLE = False
+    
+# Importação das classes melhoradas para o dashboard
+try:
+    from log_tracking_enhancement import EnhancedLogMetricsCollector, EnhancedDashboardLogHandler
+    ENHANCED_DASHBOARD_AVAILABLE = True
+except ImportError:
+    ENHANCED_DASHBOARD_AVAILABLE = False
 
 # ════════════════════════════════════════════════════════════════
 # 🔄 SISTEMA DE AUTO-RECUPERAÇÃO E KEEPALIVE
@@ -914,7 +921,13 @@ class LogMetricsCollector:
             logs = [log for log in logs if log["level"] == level]
         return logs[-limit:]
 
-metrics_collector = LogMetricsCollector()
+# Criação da instância aprimorada para o dashboard
+if ENHANCED_DASHBOARD_AVAILABLE:
+    metrics_collector = EnhancedLogMetricsCollector()
+    LOG.info("✅ EnhancedLogMetricsCollector ativado!")
+else:
+    metrics_collector = LogMetricsCollector()
+    LOG.info("⚠️ Usando LogMetricsCollector padrão (dashboard básico)")
 
 # ════════════════════════════════════════════════════════════════
 # 📊 ESTATÍSTICAS MENSAIS E DASHBOARD ESTENDIDA
@@ -1047,7 +1060,13 @@ class DashboardLogHandler(logging.Handler):
         except:
             pass
 
-dashboard_handler = DashboardLogHandler()
+# Criação do handler aprimorado para o dashboard
+if ENHANCED_DASHBOARD_AVAILABLE:
+    dashboard_handler = EnhancedDashboardLogHandler(metrics_collector)
+    LOG.info("✅ EnhancedDashboardLogHandler ativado!")
+else:
+    dashboard_handler = DashboardLogHandler()
+    LOG.info("⚠️ Usando DashboardLogHandler padrão")
 dashboard_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 LOG.addHandler(dashboard_handler)
 
@@ -2597,6 +2616,10 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para mensagens de texto (URLs ou chat com IA)"""
     start_time = time.time()
+    
+    # ✅ Registra a requisição para o dashboard
+    user_id = update.effective_user.id
+    metrics_collector.add_request(user_id)
     user_id = update.effective_user.id
     text = update.message.text.strip()
     
@@ -6752,10 +6775,15 @@ def api_logs():
 
 @app.route("/health")
 def health():
-    """Endpoint de health check simplificado para Render"""
+    """Endpoint de health check que também serve o dashboard profissional"""
     # Registra atividade do Flask
     LAST_ACTIVITY["flask"] = time.time()
-
+    
+    # Verifica se a requisição solicita HTML (navegador)
+    if ENHANCED_DASHBOARD_AVAILABLE and request.headers.get('Accept', '').find('text/html') >= 0:
+        from log_tracking_enhancement import api_health_dashboard
+        return api_health_dashboard(metrics_collector)
+    
     # Informações básicas
     checks = {
         "status": "ok",  # Sempre OK para evitar restart
@@ -6823,6 +6851,64 @@ def health():
 from flask import request
 import mercadopago
 import os
+
+@app.route("/api/logs")
+def endpoint_logs():
+    """API endpoint para o dashboard: retorna logs filtrados"""
+    if ENHANCED_DASHBOARD_AVAILABLE:
+        from log_tracking_enhancement import api_logs
+        return api_logs(metrics_collector)
+    return {"error": "Enhanced dashboard not available", "logs": []}, 200
+
+@app.route("/api/downloads")
+def endpoint_downloads():
+    """API endpoint para o dashboard: retorna logs de download filtrados"""
+    if ENHANCED_DASHBOARD_AVAILABLE:
+        from log_tracking_enhancement import api_downloads
+        return api_downloads(metrics_collector)
+    return {"error": "Enhanced dashboard not available", "downloads": []}, 200
+
+@app.route("/api/metrics")
+def endpoint_metrics():
+    """API endpoint para o dashboard: retorna métricas gerais"""
+    if ENHANCED_DASHBOARD_AVAILABLE:
+        from log_tracking_enhancement import api_metrics
+        return api_metrics(metrics_collector)
+    # Dados simulados se o enhanced dashboard não estiver disponível
+    return {
+        "total_requests": 0,
+        "total_downloads": 0,
+        "hourly_requests": {},
+        "unique_users": 0,
+        "average_response_time": 0,
+        "error_count": 0,
+        "uptime_seconds": 0
+    }, 200
+
+@app.route("/api/platform-activity")
+def endpoint_platform_activity():
+    """API endpoint para o dashboard: retorna estatísticas por plataforma"""
+    if ENHANCED_DASHBOARD_AVAILABLE:
+        from log_tracking_enhancement import api_platform_activity
+        return api_platform_activity(metrics_collector)
+    # Dados simulados se o enhanced dashboard não estiver disponível
+    return {"youtube": 0, "instagram": 0, "shopee": 0, "unknown": 0}, 200
+
+@app.route("/api/recent-activity")
+def endpoint_recent_activity():
+    """API endpoint para o dashboard: retorna logs de download recentes"""
+    if ENHANCED_DASHBOARD_AVAILABLE:
+        from log_tracking_enhancement import api_recent_activity
+        return api_recent_activity(metrics_collector)
+    return {"downloads": [], "count": 0}, 200
+
+@app.route("/")
+def dashboard_root():
+    """Redireciona a raiz para o dashboard profissional"""
+    from flask import send_file
+    if os.path.exists('dashboard_pro.html'):
+        return send_file('dashboard_pro.html')
+    return redirect("/dashboard") # Redireciona para o dashboard antigo
 
 @app.route("/webhook/pix", methods=["POST"])
 def webhook_pix():
