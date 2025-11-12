@@ -20,10 +20,10 @@ import shutil
 import subprocess
 import gc
 import glob
-from collections import OrderedDict, deque, defaultdict
+from collections import OrderedDict, deque
 from contextlib import contextmanager
 from urllib.parse import urlparse, parse_qs, unquote
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import io
 import yt_dlp
 
@@ -729,6 +729,7 @@ class WatermarkRemover:
             LOG.error(f"❌ Erro ao remover marca: {e}")
             return video_path
 
+
 # Instância global do removedor
 WATERMARK_REMOVER = WatermarkRemover()
 
@@ -745,7 +746,7 @@ from telegram.ext import (
 )
 
 # Configuração de Logging Otimizada
-LOG_LEVEL = os.getenv("LOG_LEVEL", "WARNING").upper()  # Configurável via env
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()  # Configurável via env
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -760,298 +761,7 @@ logging.basicConfig(
     ]
 )
 LOG = logging.getLogger("ytbot")
-LOG.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
-# ════════════════════════════════════════════════════════════════
-# 📊 SISTEMA DE LOGS E MÉTRICAS PARA DASHBOARD  
-# ════════════════════════════════════════════════════════════════
-
-class LogMetricsCollector:
-    """Coletor de métricas e logs para dashboard"""
-    
-    def __init__(self, max_logs=500):
-        self.logs = deque(maxlen=max_logs)
-        self.metrics = {
-            "total_requests": 0,
-            "total_errors": 0,
-            "total_downloads": 0,
-            "total_users": set(),
-            "requests_per_minute": deque(maxlen=60),
-            "errors_per_minute": deque(maxlen=60),
-            "response_times": deque(maxlen=100),
-            "active_downloads": 0,
-            "memory_usage_mb": 0,
-            "cpu_percent": 0,
-        }
-        
-        # 🔥 NOVO: Tracking por plataforma
-        self.platform_stats = {
-            "youtube": 0,
-            "instagram": 0,
-            "shopee": 0
-        }
-        
-        # 🔥 NOVO: Lista de atividades recentes
-        self.recent_activities = deque(maxlen=50)
-        
-        self.start_time = time.time()
-        self.last_minute_requests = 0
-        self.last_minute_errors = 0
-        self.minute_start = time.time()
-        
-    def add_log(self, level, message, timestamp=None):
-        if timestamp is None:
-            timestamp = datetime.now()
-        self.logs.append({
-            "timestamp": timestamp.isoformat(),
-            "level": level,
-            "message": message
-        })
-        if level in ["ERROR", "CRITICAL"]:
-            self.metrics["total_errors"] += 1
-            self.last_minute_errors += 1
-    
-    def add_request(self, user_id=None, response_time=None):
-        self.metrics["total_requests"] += 1
-        self.last_minute_requests += 1
-        if user_id:
-            self.metrics["total_users"].add(user_id)
-            # Atualiza estatísticas mensais também
-            try:
-                monthly_stats.add_request(user_id)
-            except:
-                pass
-        if response_time:
-            self.metrics["response_times"].append(response_time)
-        now = time.time()
-        if now - self.minute_start >= 60:
-            self.metrics["requests_per_minute"].append(self.last_minute_requests)
-            self.metrics["errors_per_minute"].append(self.last_minute_errors)
-            self.last_minute_requests = 0
-            self.last_minute_errors = 0
-            self.minute_start = now
-    
-    def add_download(self, platform="other", user_id=None, url=None):
-        """🔥 CORRIGIDO: Adiciona download com tracking por plataforma"""
-        self.metrics["total_downloads"] += 1
-        
-        # Detecta plataforma automaticamente se não fornecida
-        if url and platform == "other":
-            url_lower = url.lower()
-            if "youtube.com" in url_lower or "youtu.be" in url_lower:
-                platform = "youtube"
-            elif "instagram.com" in url_lower:
-                platform = "instagram"
-            elif "shopee.co" in url_lower or "shopee.com" in url_lower:
-                platform = "shopee"
-        
-        # Conta por plataforma
-        if platform in self.platform_stats:
-            self.platform_stats[platform] += 1
-        
-        # Adiciona à atividade recente
-        self.recent_activities.append({
-            "type": "download",
-            "platform": platform,
-            "user_id": user_id,
-            "url": url[:50] + "..." if url and len(url) > 50 else url,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        # Atualiza estatísticas mensais também
-        try:
-            monthly_stats.add_download()
-        except:
-            pass
-        
-        LOG.info("📊 Download registrado - Plataforma: %s, User: %s", platform, user_id)
-    
-    def set_active_downloads(self, count):
-        self.metrics["active_downloads"] = count
-    
-    def get_platform_stats(self):
-        """🔥 NOVO: Retorna estatísticas por plataforma"""
-        return self.platform_stats.copy()
-    
-    def get_recent_activities(self, limit=5):
-        """🔥 NOVO: Retorna atividades recentes"""
-        activities = list(self.recent_activities)
-        activities.reverse()  # Mais recentes primeiro
-        return activities[:limit]
-    
-    def update_system_metrics(self):
-        try:
-            import psutil
-            process = psutil.Process()
-            self.metrics["memory_usage_mb"] = process.memory_info().rss / 1024 / 1024
-            self.metrics["cpu_percent"] = process.cpu_percent(interval=0.1)
-        except:
-            pass
-    
-    def get_metrics(self):
-        uptime = time.time() - self.start_time
-        avg_response_time = 0
-        if self.metrics["response_times"]:
-            avg_response_time = sum(self.metrics["response_times"]) / len(self.metrics["response_times"])
-        return {
-            "uptime_seconds": int(uptime),
-            "uptime_formatted": str(timedelta(seconds=int(uptime))),
-            "total_requests": self.metrics["total_requests"],
-            "total_errors": self.metrics["total_errors"],
-            "total_downloads": self.metrics["total_downloads"],
-            "total_unique_users": len(self.metrics["total_users"]),
-            "active_downloads": self.metrics["active_downloads"],
-            "avg_response_time_ms": round(avg_response_time * 1000, 2),
-            "memory_usage_mb": round(self.metrics["memory_usage_mb"], 2),
-            "cpu_percent": round(self.metrics["cpu_percent"], 2),
-            "error_rate": round((self.metrics["total_errors"] / max(self.metrics["total_requests"], 1)) * 100, 2),
-            "requests_per_minute": list(self.metrics["requests_per_minute"]),
-            "errors_per_minute": list(self.metrics["errors_per_minute"]),
-        }
-    
-    def get_logs(self, limit=100, level=None):
-        logs = list(self.logs)
-        if level:
-            logs = [log for log in logs if log["level"] == level]
-        return logs[-limit:]
-
-metrics_collector = LogMetricsCollector()
-
-# ════════════════════════════════════════════════════════════════
-# 📊 ESTATÍSTICAS MENSAIS E DASHBOARD ESTENDIDA
-# ════════════════════════════════════════════════════════════════
-
-class MonthlyStatsCollector:
-    """Coletor de estatísticas mensais"""
-    
-    def __init__(self):
-        self.stats_file = "/tmp/bot_monthly_stats.json"
-        self.stats = self._load_stats()
-    
-    def _load_stats(self):
-        """Carrega estatísticas do arquivo"""
-        try:
-            import json
-            if os.path.exists(self.stats_file):
-                with open(self.stats_file, 'r') as f:
-                    return json.load(f)
-        except:
-            pass
-        
-        return {
-            "current_month": datetime.now().strftime("%Y-%m"),
-            "total_requests": 0,
-            "total_downloads": 0,
-            "total_users": [],
-            "requests_by_day": {},
-            "downloads_by_day": {},
-            "top_users": {},
-            "last_update": datetime.now().isoformat()
-        }
-    
-    def _save_stats(self):
-        """Salva estatísticas no arquivo"""
-        try:
-            import json
-            self.stats["last_update"] = datetime.now().isoformat()
-            with open(self.stats_file, 'w') as f:
-                json.dump(self.stats, f)
-        except Exception as e:
-            LOG.error("Erro ao salvar estatísticas: %s", e)
-    
-    def add_request(self, user_id=None):
-        """Registra uma requisição"""
-        current_month = datetime.now().strftime("%Y-%m")
-        current_day = datetime.now().strftime("%Y-%m-%d")
-        
-        # Reset se mudou o mês
-        if self.stats["current_month"] != current_month:
-            self.stats = {
-                "current_month": current_month,
-                "total_requests": 0,
-                "total_downloads": 0,
-                "total_users": [],
-                "requests_by_day": {},
-                "downloads_by_day": {},
-                "top_users": {},
-                "last_update": datetime.now().isoformat()
-            }
-        
-        self.stats["total_requests"] += 1
-        
-        if current_day not in self.stats["requests_by_day"]:
-            self.stats["requests_by_day"][current_day] = 0
-        self.stats["requests_by_day"][current_day] += 1
-        
-        if user_id:
-            if user_id not in self.stats["total_users"]:
-                self.stats["total_users"].append(user_id)
-            
-            user_id_str = str(user_id)
-            if user_id_str not in self.stats["top_users"]:
-                self.stats["top_users"][user_id_str] = 0
-            self.stats["top_users"][user_id_str] += 1
-        
-        self._save_stats()
-    
-    def add_download(self):
-        """Registra um download"""
-        current_day = datetime.now().strftime("%Y-%m-%d")
-        
-        self.stats["total_downloads"] += 1
-        
-        if current_day not in self.stats["downloads_by_day"]:
-            self.stats["downloads_by_day"][current_day] = 0
-        self.stats["downloads_by_day"][current_day] += 1
-        
-        self._save_stats()
-    
-    def get_stats(self):
-        """Retorna estatísticas do mês"""
-        # Top 10 usuários
-        top_users = sorted(
-            self.stats["top_users"].items(),
-            key=lambda x: x[1],
-            reverse=True
-        )[:10]
-        
-        # Últimos 7 dias
-        last_7_days = {}
-        for i in range(7):
-            day = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-            last_7_days[day] = {
-                "requests": self.stats["requests_by_day"].get(day, 0),
-                "downloads": self.stats["downloads_by_day"].get(day, 0)
-            }
-        
-        return {
-            "current_month": self.stats["current_month"],
-            "total_requests": self.stats["total_requests"],
-            "total_downloads": self.stats["total_downloads"],
-            "total_unique_users": len(self.stats["total_users"]),
-            "top_users": top_users,
-            "last_7_days": last_7_days,
-            "requests_by_day": self.stats["requests_by_day"],
-            "downloads_by_day": self.stats["downloads_by_day"],
-            "last_update": self.stats["last_update"]
-        }
-
-# Instância global
-monthly_stats = MonthlyStatsCollector()
-
-class DashboardLogHandler(logging.Handler):
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            level = record.levelname
-            metrics_collector.add_log(level, msg)
-        except:
-            pass
-
-dashboard_handler = DashboardLogHandler()
-dashboard_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-LOG.addHandler(dashboard_handler)
-
-  # Usa mesma config
+LOG.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))  # Usa mesma config
 
 
 # Token do Bot
@@ -2059,13 +1769,6 @@ def split_video_file(input_path: str, output_dir: str, segment_size: int = SPLIT
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para o comando /start"""
     user_id = update.effective_user.id
-    
-    # 🔥 TRACKING: Registra requisição
-    try:
-        metrics_collector.add_request(user_id=user_id)
-    except:
-        pass
-    
     update_user(user_id)
     
     welcome_text = MESSAGES["welcome"].format(free_limit=FREE_DOWNLOADS_LIMIT)
@@ -2082,13 +1785,6 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para o comando /status - mostra saldo de downloads"""
     user_id = update.effective_user.id
-    
-    # 🔥 TRACKING: Registra requisição
-    try:
-        metrics_collector.add_request(user_id=user_id)
-    except:
-        pass
-    
     stats = get_user_download_stats(user_id)
     
     # Verifica data de expiração se for premium
@@ -2128,12 +1824,6 @@ async def premium_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para o comando /premium - informações sobre plano premium"""
     user_id = update.effective_user.id
     
-    # 🔥 TRACKING: Registra requisição
-    try:
-        metrics_collector.add_request(user_id=user_id)
-    except:
-        pass
-    
     keyboard = [[
         InlineKeyboardButton("💳 Assinar Premium", callback_data=f"subscribe:{user_id}")
     ]]
@@ -2148,14 +1838,6 @@ async def premium_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para o comando /ai - conversar com IA"""
-    user_id = update.effective_user.id
-    
-    # 🔥 TRACKING: Registra requisição
-    try:
-        metrics_collector.add_request(user_id=user_id)
-    except:
-        pass
-    
     if not groq_client:
         await update.message.reply_text(
             "🤖 <b>IA Não Disponível</b>\n\n"
@@ -2369,12 +2051,6 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     - Lista de últimos assinantes
     """
     user_id = update.effective_user.id
-    
-    # 🔥 TRACKING: Registra requisição
-    try:
-        metrics_collector.add_request(user_id=user_id)
-    except:
-        pass
     
     LOG.info("📊 Comando /mensal executado por usuário %d", user_id)
     
@@ -2596,15 +2272,8 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para mensagens de texto (URLs ou chat com IA)"""
-    start_time = time.time()
     user_id = update.effective_user.id
     text = update.message.text.strip()
-    
-    # 📊 Tracking de métricas
-    try:
-        metrics_collector.add_request(user_id=user_id)
-    except:
-        pass
     
     update_user(user_id)
     
@@ -3032,12 +2701,6 @@ async def callback_buy_premium(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = query.from_user.id
     username = query.from_user.first_name or f"User{user_id}"
     
-    # 🔥 TRACKING: Registra requisição
-    try:
-        metrics_collector.add_request(user_id=user_id)
-    except:
-        pass
-    
     LOG.info("🛒 Usuário %d iniciou compra de premium", user_id)
     
     # Verifica se já é premium
@@ -3402,14 +3065,6 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    user_id = query.from_user.id
-    
-    # 🔥 TRACKING: Registra requisição
-    try:
-        metrics_collector.add_request(user_id=user_id)
-    except:
-        pass
-    
     data = query.data
     action, token = data.split(":", 1)
     
@@ -3452,14 +3107,6 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "user_id": pm["user_id"],
             "started_at": time.time()
         }
-        
-        # 📊 Tracking de métricas - registra download
-        try:
-            # 🔥 CORRIGIDO: Passa plataforma e URL para tracking
-            metrics_collector.add_download(platform=pm["platform"], user_id=user_id, url=pm["url"])
-            metrics_collector.set_active_downloads(len(ACTIVE_DOWNLOADS))
-        except:
-            pass
         
         await query.edit_message_text(MESSAGES["download_started"])
         
@@ -3777,8 +3424,8 @@ application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("stats", stats_cmd))
 application.add_handler(CommandHandler("status", status_cmd))
 application.add_handler(CommandHandler("premium", premium_cmd))
-application.add_handler(CommandHandler("ai", ai_cmd))
-application.add_handler(CommandHandler("mensal", mensal_cmd))
+application.add_handler(CommandHandler("ai", ai_cmd))  # ← Comando IA
+application.add_handler(CommandHandler("mensal", mensal_cmd))  # ← Comando relatório mensal
 application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
 application.add_handler(CallbackQueryHandler(callback_buy_premium, pattern=r"^subscribe:"))
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
@@ -3786,410 +3433,6 @@ application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle
 # ============================
 # FLASK ROUTES
 # ============================
-
-
-# ════════════════════════════════════════════════════════════════
-# 🎨 DASHBOARD HTML
-# ════════════════════════════════════════════════════════════════
-
-# Carrega o HTML do dashboard a partir do arquivo externo
-DASHBOARD_HTML = ""
-try:
-    with open("dashboard.html", "r", encoding="utf-8") as f:
-        DASHBOARD_HTML = f.read()
-except Exception as e:
-    LOG.error("Erro ao carregar dashboard.html: %s", e)
-    DASHBOARD_HTML = "<h1>Erro ao carregar dashboard</h1>"
-
-# ════════════════════════════════════════════════════════════════
-# 📊 ROTAS DE ESTATÍSTICAS E DASHBOARD
-# ════════════════════════════════════════════════════════════════
-
-from flask import Flask, jsonify, request, Response
-
-app = Flask(__name__)
-
-# Variável global
-user_requests = {}
-
-# ════════════════════════════════════════════════════════════════
-# 🆕 NOVOS ENDPOINTS - DASHBOARD MODERNO
-# ════════════════════════════════════════════════════════════════
-
-@app.route("/")
-def dashboard():
-    """Serve o novo dashboard moderno"""
-    try:
-        with open("dashboard.html", "r", encoding="utf-8") as f:
-            return f.read()
-    except FileNotFoundError:
-        # Fallback para o dashboard antigo se o novo não existir
-        return DASHBOARD_HTML
-
-@app.route("/api/metrics")
-def api_metrics():
-    """Retorna métricas gerais do sistema - VERSÃO ATUALIZADA"""
-    health_monitor.record_activity("flask")
-    
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Total de downloads (soma de todos os usuários)
-            cursor.execute("SELECT SUM(downloads_count) FROM user_downloads")
-            result = cursor.fetchone()
-            total_downloads = int(result[0]) if result[0] else 0
-            
-            # Usuários ativos (total de usuários registrados)
-            cursor.execute("SELECT COUNT(*) FROM user_downloads")
-            active_users = cursor.fetchone()[0]
-            
-            # Usuários premium ativos
-            now = datetime.now().isoformat()
-            cursor.execute("""
-                SELECT COUNT(*) 
-                FROM user_downloads 
-                WHERE is_premium = 1 AND premium_expires > ?
-            """, (now,))
-            premium_users = cursor.fetchone()[0]
-            
-            # Requisições na última hora (estimativa baseada em atividade)
-            # Como não temos tabela de logs de requisições, retornamos 0
-            requests_last_hour = 0
-            
-            return jsonify({
-                "total_downloads": total_downloads,
-                "active_users": active_users,
-                "premium_users": premium_users,
-                "requests_per_minute": requests_last_hour
-            })
-            
-    except Exception as e:
-        LOG.error("Erro no api_metrics: %s", e)
-        return jsonify({
-            "total_downloads": 0,
-            "active_users": 0,
-            "premium_users": 0,
-            "requests_per_minute": 0
-        })
-
-@app.route("/api/platform-activity")
-def api_platform_activity():
-    """🔥 CORRIGIDO: Retorna downloads por plataforma com dados REAIS"""
-    health_monitor.record_activity("flask")
-    
-    try:
-        # Pega estatísticas reais do metrics_collector
-        platform_stats = metrics_collector.get_platform_stats()
-        
-        return jsonify(platform_stats)
-            
-    except Exception as e:
-        LOG.error("Erro no api_platform_activity: %s", e)
-        return jsonify({"youtube": 0, "instagram": 0, "shopee": 0})
-
-@app.route("/api/recent-activity")
-def api_recent_activity():
-    """🔥 CORRIGIDO: Retorna os últimos 5 downloads REAIS - SEM PAGINAÇÃO"""
-    health_monitor.record_activity("flask")
-    
-    try:
-        # Pega atividades reais do metrics_collector
-        recent_activities = metrics_collector.get_recent_activities(limit=5)
-        
-        # Filtra apenas downloads e formata
-        downloads = []
-        for activity in recent_activities:
-            if activity.get("type") == "download":
-                downloads.append({
-                    "user_id": activity.get("user_id"),
-                    "platform": activity.get("platform", "unknown"),
-                    "timestamp": activity.get("timestamp"),
-                    "url": activity.get("url", "")
-                })
-        
-        return jsonify({"downloads": downloads})
-            
-    except Exception as e:
-        LOG.error("Erro no api_recent_activity: %s", e)
-        return jsonify({"downloads": []})
-
-@app.route("/api/revenue")
-def api_revenue():
-    """Retorna dados de receita filtrados por período"""
-    health_monitor.record_activity("flask")
-    
-    filter_type = request.args.get("filter", "day")  # day, month, year
-    
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Define período baseado no filtro
-            if filter_type == "day":
-                start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                date_format = "%H:00"
-            elif filter_type == "month":
-                start_date = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                date_format = "%d/%m"
-            else:  # year
-                start_date = datetime.now().replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-                date_format = "%b"
-            
-            start_date_str = start_date.isoformat()
-            
-            # Receita total no período
-            cursor.execute("""
-                SELECT COALESCE(SUM(amount), 0)
-                FROM pix_payments
-                WHERE status = 'confirmed' AND created_at > ?
-            """, (start_date_str,))
-            total_revenue = cursor.fetchone()[0]
-            
-            # Novas assinaturas no período
-            cursor.execute("""
-                SELECT COUNT(*)
-                FROM pix_payments
-                WHERE status = 'confirmed' AND created_at > ?
-            """, (start_date_str,))
-            new_subscriptions = cursor.fetchone()[0]
-            
-            # Média por pagamento
-            avg_payment = total_revenue / new_subscriptions if new_subscriptions > 0 else 0
-            
-            # Dados para gráfico de receitas
-            cursor.execute("""
-                SELECT created_at, amount
-                FROM pix_payments
-                WHERE status = 'confirmed' AND created_at > ?
-                ORDER BY created_at
-            """, (start_date_str,))
-            
-            payments = cursor.fetchall()
-            
-            # Agrupa dados por período
-            chart_data = defaultdict(float)
-            subscriptions_data = defaultdict(int)
-            
-            for payment in payments:
-                try:
-                    payment_date = datetime.fromisoformat(payment[0])
-                    label = payment_date.strftime(date_format)
-                    chart_data[label] += float(payment[1])
-                    subscriptions_data[label] += 1
-                except:
-                    continue
-            
-            # Converte para formato de lista
-            chart_data_list = [{"label": k, "value": v} for k, v in sorted(chart_data.items())]
-            subscriptions_data_list = [{"label": k, "value": v} for k, v in sorted(subscriptions_data.items())]
-            
-            # Se não houver dados, cria estrutura vazia
-            if not chart_data_list:
-                if filter_type == "day":
-                    chart_data_list = [{"label": f"{h:02d}:00", "value": 0} for h in range(24)]
-                    subscriptions_data_list = [{"label": f"{h:02d}:00", "value": 0} for h in range(24)]
-                elif filter_type == "month":
-                    days_in_month = 31
-                    chart_data_list = [{"label": f"{d:02d}/{datetime.now().month:02d}", "value": 0} for d in range(1, days_in_month + 1)]
-                    subscriptions_data_list = [{"label": f"{d:02d}/{datetime.now().month:02d}", "value": 0} for d in range(1, days_in_month + 1)]
-                else:
-                    months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
-                    chart_data_list = [{"label": m, "value": 0} for m in months]
-                    subscriptions_data_list = [{"label": m, "value": 0} for m in months]
-            
-            return jsonify({
-                "total_revenue": float(total_revenue),
-                "new_subscriptions": new_subscriptions,
-                "avg_payment": float(avg_payment),
-                "chart_data": chart_data_list,
-                "subscriptions_data": subscriptions_data_list
-            })
-            
-    except Exception as e:
-        LOG.error("Erro no api_revenue: %s", e)
-        return jsonify({
-            "total_revenue": 0,
-            "new_subscriptions": 0,
-            "avg_payment": 0,
-            "chart_data": [],
-            "subscriptions_data": []
-        })
-
-@app.route("/api/export-report")
-def api_export_report():
-    """Exporta relatório filtrado em formato TXT"""
-    health_monitor.record_activity("flask")
-    
-    filter_type = request.args.get("filter", "day")
-    
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Define período
-            if filter_type == "day":
-                start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                period_name = "Hoje"
-            elif filter_type == "month":
-                start_date = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                period_name = "Este Mês"
-            else:
-                start_date = datetime.now().replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-                period_name = "Este Ano"
-            
-            start_date_str = start_date.isoformat()
-            
-            # Coleta dados
-            cursor.execute("""
-                SELECT COALESCE(SUM(amount), 0), COUNT(*)
-                FROM pix_payments
-                WHERE status = 'confirmed' AND created_at > ?
-            """, (start_date_str,))
-            revenue_data = cursor.fetchone()
-            
-            cursor.execute("""
-                SELECT COUNT(DISTINCT user_id)
-                FROM downloads
-                WHERE timestamp > ?
-            """, (start_date_str,))
-            active_users = cursor.fetchone()[0]
-            
-            cursor.execute("""
-                SELECT platform, COUNT(*) as count
-                FROM downloads
-                WHERE timestamp > ?
-                GROUP BY platform
-            """, (start_date_str,))
-            platform_stats = cursor.fetchall()
-            
-            # Gera relatório em TXT
-            report = []
-            report.append("=" * 60)
-            report.append("RELATÓRIO DE DESEMPENHO - VIDEO DOWNLOADER BOT")
-            report.append("=" * 60)
-            report.append(f"Período: {period_name}")
-            report.append(f"Data de Geração: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
-            report.append("=" * 60)
-            report.append("")
-            
-            report.append("📊 MÉTRICAS FINANCEIRAS")
-            report.append("-" * 60)
-            report.append(f"Receita Total: R$ {revenue_data[0]:.2f}")
-            report.append(f"Novas Assinaturas: {revenue_data[1]}")
-            if revenue_data[1] > 0:
-                report.append(f"Ticket Médio: R$ {revenue_data[0]/revenue_data[1]:.2f}")
-            report.append("")
-            
-            report.append("👥 MÉTRICAS DE USUÁRIOS")
-            report.append("-" * 60)
-            report.append(f"Usuários Ativos: {active_users}")
-            report.append("")
-            
-            report.append("📥 DOWNLOADS POR PLATAFORMA")
-            report.append("-" * 60)
-            for platform, count in platform_stats:
-                report.append(f"{platform.capitalize()}: {count} downloads")
-            report.append("")
-            
-            report.append("=" * 60)
-            report.append("Relatório gerado automaticamente pelo sistema")
-            report.append("=" * 60)
-            
-            # Retorna como arquivo para download
-            report_text = "\n".join(report)
-            
-            return Response(
-                report_text,
-                mimetype="text/plain",
-                headers={
-                    "Content-Disposition": f"attachment; filename=relatorio_{filter_type}_{int(datetime.now().timestamp())}.txt"
-                }
-            )
-            
-    except Exception as e:
-        LOG.error("Erro no api_export_report: %s", e)
-        return "Erro ao gerar relatório", 500
-
-# ════════════════════════════════════════════════════════════════
-# 📊 ENDPOINTS EXISTENTES MANTIDOS
-# ════════════════════════════════════════════════════════════════
-
-@app.route('/api/register', methods=['POST'])
-def register():
-    data = request.json
-    user_id = data.get('user_id', 'anon')
-    platform = data.get('platform', 'Desconhecido')
-
-    user_requests[user_id] = {
-        'platform': platform,
-        'action': 'Download',
-        'action_type': 'download',
-        'status': 'success',
-        'timestamp': datetime.now().isoformat()
-    }
-
-    return jsonify({'ok': True})
-
-@app.route("/api/premium/stats")
-def api_premium_stats():
-    """API para estatísticas premium"""
-    try:
-        health_monitor.record_activity("flask")
-        
-        # Usa a função que você já tem no código
-        stats = get_premium_monthly_stats()
-        
-        # Calcula ticket médio
-        avg_ticket = 0
-        if stats.get('new_this_month', 0) > 0:
-            avg_ticket = stats.get('revenue_month', 0) / stats['new_this_month']
-        
-        return jsonify({
-            "current_month": stats.get('current_month', ''),
-            "total_active": stats.get('total_active', 0),
-            "new_this_month": stats.get('new_this_month', 0),
-            "expires_this_month": stats.get('expires_this_month', 0),
-            "expires_next_month": stats.get('expires_next_month', 0),
-            "revenue_month": stats.get('revenue_month', 0),
-            "revenue_total": stats.get('revenue_total', 0),
-            "avg_ticket": avg_ticket,
-            "by_expiry_date": stats.get('by_expiry_date', []),
-            "recent_subscribers": stats.get('recent_subscribers', [])
-        })
-    except Exception as e:
-        LOG.error("Erro em /api/premium/stats: %s", e)
-        return jsonify({"error": str(e)}), 500
-        
-@app.route("/api/stats/monthly")
-def api_stats_monthly():
-    """API para estatísticas mensais"""
-    try:
-        health_monitor.record_activity("flask")
-        return jsonify(monthly_stats.get_stats())
-    except Exception as e:
-        LOG.error("Erro em /api/stats/monthly: %s", e)
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/stats/daily")
-def api_stats_daily():
-    """API para estatísticas diárias"""
-    try:
-        health_monitor.record_activity("flask")
-        
-        today = datetime.now().strftime("%Y-%m-%d")
-        stats = monthly_stats.get_stats()
-        
-        return jsonify({
-            "date": today,
-            "requests": stats["requests_by_day"].get(today, 0),
-            "downloads": stats["downloads_by_day"].get(today, 0),
-            "total_users_month": stats["total_unique_users"]
-        })
-    except Exception as e:
-        LOG.error("Erro em /api/stats/daily: %s", e)
-        return jsonify({"error": str(e)}), 500
-
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
@@ -4218,6 +3461,11 @@ def webhook():
         
         # CRÍTICO: Retorna 200 mesmo com erro para evitar retry infinito do Telegram
         return jsonify({"status": "error", "message": str(e)}), 200
+
+@app.route("/")
+def index():
+    """Rota principal"""
+    return "🤖 Bot de Download Ativo"
 
 @app.route("/diagnostics")
 def diagnostics():
@@ -4289,31 +3537,6 @@ def diagnostics():
     
     return diagnostics_data, 200
 
-
-# ════════════════════════════════════════════════════════════════
-# 🎨 ROTA ANTIGA DA DASHBOARD (backup)
-# ════════════════════════════════════════════════════════════════
-
-@app.route("/dashboard-antigo")
-def dashboard_antigo():
-    """Dashboard antigo - mantido como backup"""
-    health_monitor.record_activity("flask")
-    return DASHBOARD_HTML
-
-@app.route("/api/logs")
-def api_logs():
-    """API para retornar logs do sistema"""
-    health_monitor.record_activity("flask")
-    
-    limit = request.args.get('limit', 100, type=int)
-    level = request.args.get('level', None)
-    
-    logs = metrics_collector.get_logs(limit=limit, level=level)
-    
-    return jsonify(logs)
-
-
-
 @app.route("/health")
 def health():
     """Endpoint de health check simplificado para Render"""
@@ -4347,7 +3570,7 @@ def health():
     })
 
     # ✅ Sempre retorna 200 OK, mesmo se monitor indicar problema
-    return jsonify(checks), 200
+    return checks, 200
     
     # Testa banco de dados
     try:
