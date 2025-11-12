@@ -5821,169 +5821,204 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
 
         // ===== FUNÇÃO CORRIGIDA PARA ATIVIDADE RECENTE =====
+
         async function loadActivityTable() {
-            try {
-                const tbody = document.getElementById('activityTable');
-                
-                // Mostrar loading
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="7" style="text-align: center; padding: 40px;">
-                            <i class="fas fa-spinner fa-spin" style="font-size: 24px; color: var(--primary);"></i>
-                            <p style="margin-top: 12px; color: var(--text-secondary);">Carregando atividades...</p>
-                        </td>
-                    </tr>
-                `;
+    try {
+        const tbody = document.getElementById('activityTable');
+        
+        // Mostrar loading
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="7" style="text-align: center; padding: 40px;">
+                    <i class="fas fa-spinner fa-spin" style="font-size: 24px; color: var(--primary);"></i>
+                    <p style="margin-top: 12px; color: var(--text-secondary);">Carregando atividades...</p>
+                </td>
+            </tr>
+        `;
 
-                const response = await fetch('/api/recent-activity?limit=10');
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
+        const response = await fetch('/api/recent-activity?limit=10');
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        const activities = data.downloads || []; // Acessar a propriedade 'downloads' da resposta
+
+        if (!activities || activities.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 40px;">
+                        <i class="fas fa-inbox" style="font-size: 24px; color: var(--text-secondary);"></i>
+                        <p style="margin-top: 12px; color: var(--text-secondary);">Nenhuma atividade recente</p>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        tbody.innerHTML = '';
+        
+        // Renderizar cada atividade na tabela
+        activities.forEach(activity => {
+            const timestamp = new Date(activity.timestamp);
+            const formattedDate = timestamp.toLocaleDateString('pt-BR');
+            const formattedTime = timestamp.toLocaleTimeString('pt-BR');
+            
+            const platformIcons = {
+                'youtube': 'fab fa-youtube text-red-500',
+                'instagram': 'fab fa-instagram text-purple-500',
+                'shopee': 'fas fa-shopping-bag text-orange-500',
+                'unknown': 'fas fa-question-circle text-gray-500'
+            };
+            
+            const iconClass = platformIcons[activity.platform] || platformIcons.unknown;
+            
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td class="w-10">
+                    <i class="${iconClass}"></i>
+                </td>
+                <td class="w-32">${activity.user_id}</td>
+                <td class="whitespace-nowrap overflow-hidden text-ellipsis max-w-xs" title="${activity.url || ''}">${activity.url || 'N/A'}</td>
+                <td>${activity.platform || 'Desconhecido'}</td>
+                <td>${formattedDate}</td>
+                <td>${formattedTime}</td>
+            `;
+            tbody.appendChild(row);
+        });
+    } catch (error) {
+        console.error('Erro ao carregar atividades recentes:', error);
+        document.getElementById('activityTable').innerHTML = `
+            <tr>
+                <td colspan="7" style="text-align: center; padding: 40px;">
+                    <i class="fas fa-exclamation-triangle text-yellow-500"></i>
+                    <p style="margin-top: 12px; color: var(--text-secondary);">Erro ao carregar atividades</p>
+                </td>
+            </tr>
+        `;
+    }
+}
+
+async function loadPlatformActivity() {
+    try {
+        const response = await fetch('/api/platform-activity');
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const platformStats = await response.json();
+        
+        // Atualizando o gráfico de plataformas
+        const platformChart = document.getElementById('platformChart');
+        
+        if (!platformChart) {
+            console.error('Elemento do gráfico de plataforma não encontrado');
+            return;
+        }
+        
+        // Se já existir um gráfico, destrua-o para recriar
+        if (charts.platforms) {
+            charts.platforms.destroy();
+        }
+        
+        const ctx = platformChart.getContext('2d');
+        
+        // Preparar os dados para o gráfico
+        const labels = Object.keys(platformStats);
+        const data = Object.values(platformStats);
+        
+        // Cores para cada plataforma
+        const backgroundColors = {
+            'youtube': '#FF0000',
+            'instagram': '#C13584',
+            'shopee': '#FF6600',
+            'facebook': '#1877F2',
+            'tiktok': '#000000'
+        };
+        
+        const colors = labels.map(platform => 
+            backgroundColors[platform] || `hsl(${Math.random() * 360}, 70%, 50%)`
+        );
+        
+        // Criar o novo gráfico
+        charts.platforms = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: colors,
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: {
+                            color: '#94a3b8'
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.label || '';
+                                const value = context.raw || 0;
+                                const total = context.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                                const percentage = ((value / total) * 100).toFixed(1);
+                                return `${label}: ${value} (${percentage}%)`;
+                            }
+                        }
+                    }
                 }
-                
-                const activities = await response.json();
-
-                if (!activities || activities.length === 0) {
-                    tbody.innerHTML = `
-                        <tr>
-                            <td colspan="7" style="text-align: center; padding: 40px;">
-                                <i class="fas fa-inbox" style="font-size: 24px; color: var(--text-secondary);"></i>
-                                <p style="margin-top: 12px; color: var(--text-secondary);">Nenhuma atividade recente</p>
-                            </td>
-                        </tr>
-                    `;
-                    return;
-                }
-
-                tbody.innerHTML = '';
-
-                activities.forEach((activity, index) => {
-                    const row = document.createElement('tr');
-                    
-                    // Mascarar user_id para privacidade
-                    const maskedUserId = activity.user_id ? 
-                        `***${activity.user_id.toString().slice(-3)}` : 'N/A';
-                    
-                    // Determinar ícone da plataforma
-                    let platformIcon = 'fa-globe';
-                    let platformName = activity.platform || 'Desconhecido';
-                    
-                    if (activity.platform) {
-                        const platform = activity.platform.toLowerCase();
-                        if (platform.includes('instagram')) {
-                            platformIcon = 'fab fa-instagram';
-                            platformName = 'Instagram';
-                        } else if (platform.includes('shopee')) {
-                            platformIcon = 'fa-shopping-bag';
-                            platformName = 'Shopee';
-                        } else if (platform.includes('tiktok')) {
-                            platformIcon = 'fab fa-tiktok';
-                            platformName = 'TikTok';
-                        } else if (platform.includes('youtube')) {
-                            platformIcon = 'fab fa-youtube';
-                            platformName = 'YouTube';
-                        }
-                    }
-                    
-                    // Determinar status
-                    let statusClass = 'active';
-                    let statusText = 'Concluído';
-                    
-                    if (activity.status) {
-                        const status = activity.status.toLowerCase();
-                        if (status.includes('error') || status.includes('failed')) {
-                            statusClass = 'expired';
-                            statusText = 'Erro';
-                        } else if (status.includes('processing') || status.includes('pending')) {
-                            statusClass = 'pending';
-                            statusText = 'Processando';
-                        }
-                    }
-                    
-                    // Formatar timestamp
-                    const timestamp = activity.timestamp ? 
-                        new Date(activity.timestamp).toLocaleString('pt-BR', {
-                            day: '2-digit',
-                            month: '2-digit',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            second: '2-digit'
-                        }) : 'N/A';
-                    
-                    // Determinar ação
-                    let actionText = activity.action || 'Download';
-                    if (activity.action_type) {
-                        if (activity.action_type.includes('premium')) {
-                            actionText = '<i class="fas fa-crown" style="color: var(--warning);"></i> Premium';
-                        } else if (activity.action_type.includes('download')) {
-                            actionText = '<i class="fas fa-download"></i> Download';
-                        }
-                    }
-                    
-                    row.innerHTML = `
-                        <td>#${String(index + 1).padStart(5, '0')}</td>
-                        <td>
-                            <div style="display: flex; align-items: center; gap: 8px;">
-                                <i class="fas fa-user-circle" style="color: var(--primary);"></i>
-                                ${maskedUserId}
-                            </div>
-                        </td>
-                        <td>${actionText}</td>
-                        <td>
-                            <div style="display: flex; align-items: center; gap: 8px;">
-                                <i class="${platformIcon}" style="font-size: 16px;"></i>
-                                ${platformName}
-                            </div>
-                        </td>
-                        <td>
-                            <span class="status-badge ${statusClass}">
-                                <span class="status-dot"></span>
-                                ${statusText}
-                            </span>
-                        </td>
-                        <td style="font-size: 13px;">${timestamp}</td>
-                        <td>
-                            <button class="btn btn-secondary btn-icon" onclick="viewActivityDetails(${index})" title="Ver detalhes">
-                                <i class="fas fa-eye"></i>
-                            </button>
-                        </td>
-                    `;
-                    
-                    tbody.appendChild(row);
-                });
-
-                // Atualizar informações de paginação
-                updatePaginationInfo(activities.length);
-
-            } catch (error) {
-                console.error('Erro ao carregar tabela de atividades:', error);
-                const tbody = document.getElementById('activityTable');
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="7" style="text-align: center; padding: 40px;">
-                            <i class="fas fa-exclamation-triangle" style="font-size: 24px; color: var(--danger);"></i>
-                            <p style="margin-top: 12px; color: var(--text-secondary);">Erro ao carregar atividades: ${error.message}</p>
-                            <button class="btn btn-primary" onclick="loadActivityTable()" style="margin-top: 12px;">
-                                <i class="fas fa-sync"></i> Tentar Novamente
-                            </button>
-                        </td>
-                    </tr>
-                `;
             }
+        });
+    } catch (error) {
+        console.error('Erro ao carregar estatísticas por plataforma:', error);
+    }
+}
+
+async function loadDashboardData() {
+    try {
+        const response = await fetch('/api/metrics');
+        const data = await response.json();
+
+        // Update stats
+        document.getElementById('uptimeStat').textContent = data.uptime_formatted;
+        document.getElementById('requestsStat').textContent = data.total_requests.toLocaleString();
+        document.getElementById('usersStat').textContent = data.total_unique_users.toLocaleString();
+        document.getElementById('errorRateStat').textContent = data.error_rate + '%';
+        document.getElementById('responseStat').textContent = data.avg_response_time_ms + 'ms';
+        document.getElementById('memoryStat').textContent = data.memory_usage_mb + ' MB';
+        document.getElementById('cpuStat').textContent = data.cpu_percent + '%';
+        document.getElementById('downloadsStat').textContent = data.total_downloads.toLocaleString();
+        document.getElementById('activeDownloads').textContent = data.active_downloads;
+
+        // Update badges
+        document.getElementById('usersBadge').textContent = data.total_unique_users;
+        document.getElementById('notificationsBadge').textContent = data.total_errors || 0;
+
+        // Update charts
+        if (data.requests_per_minute && data.requests_per_minute.length > 0) {
+            charts.requests.data.labels = data.requests_per_minute.map((_, i) => `-${60-i}min`);
+            charts.requests.data.datasets[0].data = data.requests_per_minute;
+            charts.requests.update('none');
         }
 
-        function updatePaginationInfo(count) {
-            const paginationInfo = document.querySelector('.pagination-info');
-            if (paginationInfo) {
-                paginationInfo.innerHTML = `Mostrando <strong>1-${count}</strong> de <strong>${count}</strong> registros`;
-            }
-        }
+        // Load activity table
+        loadActivityTable();
+        
+        // Load platform statistics
+        loadPlatformActivity();
 
-        function viewActivityDetails(index) {
-            showToast('Visualização de detalhes em desenvolvimento', 'info');
-        }
-        // ===== FIM DA FUNÇÃO CORRIGIDA =====
+    } catch (error) {
+        console.error('Erro ao carregar dados:', error);
+        showToast('Erro ao carregar dados', 'error');
+    }
+}
 
         async function loadPremiumData() {
             try {
