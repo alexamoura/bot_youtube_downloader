@@ -1565,7 +1565,7 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         if url_already_clean:
             # Marca já foi removida na URL - FFmpeg não necessário!
             LOG.info("✅ Vídeo baixado já SEM marca d'água (removida na URL)")
-            caption = "🛍️ Shopee Video\n✨ Marca d'água removida"
+            caption = "🎬 Aproveite o seu vídeo 🎬"
         elif WATERMARK_REMOVER.is_available():
             # Marca ainda presente - usar FFmpeg
             LOG.info("🎬 Marca d'água ainda presente - usando FFmpeg...")
@@ -1585,10 +1585,10 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
                         break
 
             output_path = cleaned_path if os.path.exists(cleaned_path) else output_path
-            caption = "🛍️ Shopee Video\n✨ Marca d'água removida (método FFmpeg)"
+            caption = "🎬 Aproveite o seu vídeo 🎬"
         else:
             LOG.warning("⚠️ FFmpeg não disponível, enviando vídeo original.")
-            caption = "🛍️ Shopee Video"
+            caption = "🎬 Aproveite o seu vídeo 🎬"
 
         # Envia o vídeo
         await application.bot.edit_message_text(
@@ -1688,7 +1688,7 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         )
         
         with open(output_path, "rb") as fh:
-            await application.bot.send_video(chat_id=chat_id, video=fh, caption="🛍️ Shopee Video")
+            await application.bot.send_video(chat_id=chat_id, video=fh, caption="🎬 Aproveite o seu vídeo 🎬")
         
         # Mensagem de sucesso com contador
         stats = get_user_download_stats(pm["user_id"])
@@ -3337,9 +3337,7 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
             
             # Envia o vídeo
             with open(path, "rb") as fh:
-                caption = "🛍️ Shopee Video" if 'shopee' in pm["url"].lower() else None
-                if caption and WATERMARK_REMOVER.is_available():
-                    caption += "\n✨ Marca d'água removida"
+                caption = "🎬 Aproveite o seu vídeo 🎬"
                 
                 await application.bot.send_video(
                     chat_id=chat_id,
