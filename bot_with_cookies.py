@@ -905,7 +905,7 @@ MESSAGES = {
     "error_unknown": "❌ Um erro inesperado ocorreu. Nossa equipe foi notificada. Por favor, tente novamente.",
     "error_expired": "⏰ Esta solicitação expirou. Por favor, envie o link novamente.",
     "download_cancelled": "🚫 Download cancelado com sucesso.",
-    "cleanup": "🧹 Limpeza: removido {path}",
+    "cleanup": "🎬Aproveite o seu vídeo🎬",
 }
 
 app = Flask(__name__)
@@ -1576,7 +1576,7 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         if url_already_clean:
             # Marca já foi removida na URL - FFmpeg não necessário!
             LOG.info("✅ Vídeo baixado já SEM marca d'água (removida na URL)")
-            caption = "🛍️ Shopee Video\n✨ Marca d'água removida (método URL)"
+            caption = "🛍️ Shopee Video\n✨ Marca d'água removida"
         elif WATERMARK_REMOVER.is_available():
             # Marca ainda presente - usar FFmpeg
             LOG.info("🎬 Marca d'água ainda presente - usando FFmpeg...")
