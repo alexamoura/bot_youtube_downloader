@@ -2,7 +2,7 @@
 """
 bot_with_cookies_melhorado.py - Versão Profissional
 
-Telegram bot IA (webhook) com sistema de controle de downloads e suporte a pagamento PIX - ATUALIZADO EM 15/11/2025 - 10:30HS
+Telegram bot IA (webhook) com sistema de controle de downloads e suporte a pagamento PIX - ATUALIZADO EM 08/11/2025 - 10:30HS
 """
 import os
 import sys
@@ -51,12 +51,6 @@ try:
     GROQ_AVAILABLE = True
 except ImportError:
     GROQ_AVAILABLE = False
-
-try:
-    import psutil
-    PSUTIL_AVAILABLE = True
-except ImportError:
-    PSUTIL_AVAILABLE = False
 
 # ════════════════════════════════════════════════════════════════
 # 🔄 SISTEMA DE AUTO-RECUPERAÇÃO E KEEPALIVE
@@ -998,22 +992,7 @@ def init_db():
                     FOREIGN KEY (user_id) REFERENCES user_downloads(user_id)
                 )
             """)
-
-            # Tabela de logs detalhados de downloads (para dashboard)
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS download_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    url TEXT,
-                    platform TEXT,
-                    status TEXT DEFAULT 'success',
-                    filesize INTEGER DEFAULT 0,
-                    duration_seconds REAL DEFAULT 0,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (user_id) REFERENCES user_downloads(user_id)
-                )
-            """)
-
+            
             conn.commit()
             conn.close()
             LOG.info("Banco de dados inicializado com sucesso.")
@@ -1120,38 +1099,6 @@ def increment_download_count(user_id: int):
             LOG.info("Contador de downloads incrementado para usuário %d", user_id)
         except sqlite3.Error as e:
             LOG.error("Erro ao incrementar contador de downloads: %s", e)
-
-def detect_platform_from_url(url: str) -> str:
-    """Detecta a plataforma a partir da URL"""
-    url_lower = url.lower()
-    if 'shopee' in url_lower or 'shope.ee' in url_lower:
-        return 'shopee'
-    elif 'instagram' in url_lower or 'insta' in url_lower:
-        return 'instagram'
-    elif 'youtube' in url_lower or 'youtu.be' in url_lower:
-        return 'youtube'
-    elif 'tiktok' in url_lower:
-        return 'tiktok'
-    elif 'twitter' in url_lower or 'x.com' in url_lower:
-        return 'twitter'
-    else:
-        return 'other'
-
-def log_download_activity(user_id: int, url: str, platform: str, status: str = "success", filesize: int = 0, duration_seconds: float = 0):
-    """Registra atividade de download no banco de dados para analytics"""
-    with DB_LOCK:
-        try:
-            conn = sqlite3.connect(DB_FILE, timeout=10)
-            c = conn.cursor()
-            c.execute("""
-                INSERT INTO download_logs (user_id, url, platform, status, filesize, duration_seconds)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (user_id, url, platform, status, filesize, duration_seconds))
-            conn.commit()
-            conn.close()
-            LOG.debug("Log de download registrado: user=%d, platform=%s, status=%s", user_id, platform, status)
-        except sqlite3.Error as e:
-            LOG.error("Erro ao registrar log de download: %s", e)
 
 def get_monthly_users_count() -> int:
     """Retorna o número de usuários ativos no mês atual"""
@@ -3426,38 +3373,16 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
             # Envia o vídeo
             with open(path, "rb") as fh:
                 caption = "🎬 Aproveite o seu vídeo 🎬"
-
+                
                 await application.bot.send_video(
                     chat_id=chat_id,
                     video=fh,
                     caption=caption
                 )
-
-                # Registra sucesso no log de atividades
-                platform = detect_platform_from_url(pm["url"])
-                duration = time.time() - ACTIVE_DOWNLOADS.get(token, {}).get("started_at", time.time())
-                log_download_activity(
-                    user_id=pm["user_id"],
-                    url=pm["url"],
-                    platform=platform,
-                    status="success",
-                    filesize=tamanho,
-                    duration_seconds=duration
-                )
-
+                    
         except Exception as e:
             LOG.exception("Erro ao enviar arquivo %s: %s", path, e)
             await _notify_error(pm, "error_upload")
-            # Registra erro no log de atividades
-            platform = detect_platform_from_url(pm["url"])
-            log_download_activity(
-                user_id=pm["user_id"],
-                url=pm["url"],
-                platform=platform,
-                status="failed",
-                filesize=0,
-                duration_seconds=0
-            )
             return
 
     # Mensagem de sucesso com contador de downloads
@@ -3734,237 +3659,6 @@ def webhook_pix():
         return "erro", 500
 
 # ======================
-# DASHBOARD & API ENDPOINTS
-# ======================
-
-from flask import send_file
-
-@app.route("/dashboard")
-def dashboard():
-    """Serve o dashboard HTML"""
-    try:
-        dashboard_path = os.path.join(os.path.dirname(__file__), "dashboard.html")
-        return send_file(dashboard_path)
-    except Exception as e:
-        LOG.error("Erro ao servir dashboard: %s", e)
-        return jsonify({"error": "Dashboard não encontrado"}), 404
-
-@app.route("/api/metrics")
-def api_metrics():
-    """Retorna métricas gerais do sistema"""
-    try:
-        with DB_LOCK:
-            conn = sqlite3.connect(DB_FILE, timeout=10)
-            c = conn.cursor()
-
-            # Total de downloads (todos os tempos)
-            c.execute("SELECT COALESCE(SUM(downloads_count), 0) FROM user_downloads")
-            total_downloads = c.fetchone()[0]
-
-            # Usuários ativos (últimos 30 dias)
-            c.execute("SELECT COUNT(DISTINCT user_id) FROM monthly_users")
-            active_users = c.fetchone()[0]
-
-            # Usuários premium
-            c.execute("SELECT COUNT(*) FROM user_downloads WHERE is_premium = 1")
-            premium_users = c.fetchone()[0]
-
-            # Downloads na última hora (estimativa baseada em logs)
-            one_hour_ago = (datetime.now() - timedelta(hours=1)).isoformat()
-            c.execute("SELECT COUNT(*) FROM download_logs WHERE created_at >= ?", (one_hour_ago,))
-            recent_downloads = c.fetchone()[0]
-
-            conn.close()
-
-        return jsonify({
-            "total_downloads": total_downloads,
-            "active_users": active_users,
-            "premium_users": premium_users,
-            "requests_per_minute": recent_downloads / 60.0 if recent_downloads > 0 else 0
-        })
-    except Exception as e:
-        LOG.error("Erro ao buscar métricas: %s", e)
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/platform-activity")
-def api_platform_activity():
-    """Retorna atividade de downloads por plataforma"""
-    try:
-        with DB_LOCK:
-            conn = sqlite3.connect(DB_FILE, timeout=10)
-            c = conn.cursor()
-
-            # Downloads por plataforma nas últimas 24 horas
-            today = datetime.now().date().isoformat()
-            c.execute("""
-                SELECT platform, COUNT(*) as count
-                FROM download_logs
-                WHERE DATE(created_at) = ?
-                GROUP BY platform
-            """, (today,))
-
-            results = c.fetchall()
-            conn.close()
-
-            platform_data = {}
-            for platform, count in results:
-                if platform:
-                    platform_data[platform.lower()] = count
-
-            # Garantir que todas as plataformas principais apareçam
-            for platform in ['youtube', 'instagram', 'shopee']:
-                if platform not in platform_data:
-                    platform_data[platform] = 0
-
-            return jsonify(platform_data)
-    except Exception as e:
-        LOG.error("Erro ao buscar atividade por plataforma: %s", e)
-        return jsonify({}), 500
-
-@app.route("/api/recent-activity")
-def api_recent_activity():
-    """Retorna atividade recente de downloads"""
-    try:
-        with DB_LOCK:
-            conn = sqlite3.connect(DB_FILE, timeout=10)
-            c = conn.cursor()
-
-            # Últimos 10 downloads
-            c.execute("""
-                SELECT user_id, platform, status, created_at
-                FROM download_logs
-                ORDER BY created_at DESC
-                LIMIT 10
-            """)
-
-            results = c.fetchall()
-            conn.close()
-
-            downloads = []
-            for user_id, platform, status, created_at in results:
-                downloads.append({
-                    "user_id": f"User {user_id}",
-                    "platform": platform or "unknown",
-                    "status": status,
-                    "timestamp": created_at
-                })
-
-            return jsonify({"downloads": downloads})
-    except Exception as e:
-        LOG.error("Erro ao buscar atividade recente: %s", e)
-        return jsonify({"downloads": []}), 500
-
-@app.route("/api/system-resources")
-def api_system_resources():
-    """Retorna uso de CPU e memória do sistema"""
-    try:
-        if not PSUTIL_AVAILABLE:
-            return jsonify({
-                "cpu_percent": 0,
-                "memory_percent": 0,
-                "memory_used_mb": 0,
-                "memory_total_mb": 0,
-                "error": "psutil não disponível"
-            })
-
-        # Uso de CPU (percentual)
-        cpu_percent = psutil.cpu_percent(interval=1)
-
-        # Uso de memória
-        memory = psutil.virtual_memory()
-        memory_percent = memory.percent
-        memory_used_mb = memory.used / (1024 * 1024)
-        memory_total_mb = memory.total / (1024 * 1024)
-
-        return jsonify({
-            "cpu_percent": round(cpu_percent, 2),
-            "memory_percent": round(memory_percent, 2),
-            "memory_used_mb": round(memory_used_mb, 2),
-            "memory_total_mb": round(memory_total_mb, 2)
-        })
-    except Exception as e:
-        LOG.error("Erro ao buscar recursos do sistema: %s", e)
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/connections")
-def api_connections():
-    """Retorna estatísticas de conexões (dia e mês)"""
-    try:
-        with DB_LOCK:
-            conn = sqlite3.connect(DB_FILE, timeout=10)
-            c = conn.cursor()
-
-            # Conexões do dia (usuários únicos que baixaram hoje)
-            today = datetime.now().date().isoformat()
-            c.execute("""
-                SELECT COUNT(DISTINCT user_id)
-                FROM download_logs
-                WHERE DATE(created_at) = ?
-            """, (today,))
-            connections_today = c.fetchone()[0]
-
-            # Conexões do mês
-            current_month = datetime.now().strftime("%Y-%m")
-            c.execute("""
-                SELECT COUNT(*)
-                FROM monthly_users
-                WHERE last_month = ?
-            """, (current_month,))
-            connections_month = c.fetchone()[0]
-
-            conn.close()
-
-        return jsonify({
-            "connections_today": connections_today,
-            "connections_month": connections_month
-        })
-    except Exception as e:
-        LOG.error("Erro ao buscar conexões: %s", e)
-        return jsonify({"connections_today": 0, "connections_month": 0}), 500
-
-@app.route("/api/downloads-today")
-def api_downloads_today():
-    """Retorna total de downloads do dia e por plataforma"""
-    try:
-        with DB_LOCK:
-            conn = sqlite3.connect(DB_FILE, timeout=10)
-            c = conn.cursor()
-
-            today = datetime.now().date().isoformat()
-
-            # Total do dia
-            c.execute("""
-                SELECT COUNT(*)
-                FROM download_logs
-                WHERE DATE(created_at) = ?
-            """, (today,))
-            total_today = c.fetchone()[0]
-
-            # Por plataforma
-            c.execute("""
-                SELECT platform, COUNT(*) as count
-                FROM download_logs
-                WHERE DATE(created_at) = ?
-                GROUP BY platform
-            """, (today,))
-
-            results = c.fetchall()
-            conn.close()
-
-            platforms = {}
-            for platform, count in results:
-                if platform:
-                    platforms[platform.lower()] = count
-
-            return jsonify({
-                "total": total_today,
-                "platforms": platforms
-            })
-    except Exception as e:
-        LOG.error("Erro ao buscar downloads do dia: %s", e)
-        return jsonify({"total": 0, "platforms": {}}), 500
-
-# ======================
 # ALERTAS DISCORD (Render)
 # ======================
 
@@ -4059,7 +3753,7 @@ def render_webhook():
             f"🖥️ **Serviço:** {service_name}\n"
             f"{status_emoji} **{status_text}**\n"
             f"⏰ **Hora (Brasília):** {timestamp}\n"
-            f"🔗 https://bot-youtube-downloader-telegram.onrender.com/dashboard"
+            f"🔗 https://dashboard.render.com"
         )
 
         if not DISCORD_WEBHOOK_URL:
