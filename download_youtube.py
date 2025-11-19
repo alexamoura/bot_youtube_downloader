@@ -64,7 +64,7 @@ def download(urls, cookiefile=None, outtmpl="%(title)s - %(id)s.%(ext)s", extra_
 
     ydl_opts = {
         "outtmpl": outtmpl,
-        "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        "format": "bestvideo[height<=1080]+bestaudio/best",
         "merge_output_format": "mp4",
         "noplaylist": False,
         # Aumente retries para maior robustez em infra remota:
