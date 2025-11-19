@@ -2590,8 +2590,8 @@ async def get_video_info(url: str) -> dict:
         "extractor_retries": 2,  # Reduz tentativas (padrão: 3)
         "fragment_retries": 2,   # Reduz retries de fragmentos
         "buffersize": 1024 * 64,  # 64KB buffer (padrão: 1024KB)
-        # Adiciona seleção de formato para evitar erro "format not available"
-        "format": get_format_for_url(url),
+        # Para extract_info com download=False, não precisa especificar formato
+        # O yt-dlp irá listar todos disponíveis sem tentar baixar
     }
     
     if is_shopee:
