@@ -1273,13 +1273,31 @@ def get_youtube_format_by_quality(quality: str) -> str:
     """Retorna string de formato yt-dlp baseado na qualidade escolhida
 
     Formatos otimizados para máxima compatibilidade com fallbacks robustos
+    Estratégia atualizada para contornar erro "Requested format is not available"
     """
+    # Nova estratégia: prioriza formatos únicos (vídeo+áudio) ao invés de combinações separadas
     quality_formats = {
-        "360p": "best[height<=360]/bestvideo[height<=360]+bestaudio/worst",
-        "480p": "best[height<=480]/bestvideo[height<=480]+bestaudio/best[height<=360]",
-        "720p": "best[height<=720]/bestvideo[height<=720]+bestaudio/best[height<=480]",
-        "1080p": "best[height<=1080]/bestvideo[height<=1080]+bestaudio/best",
-        "best": "bestvideo+bestaudio/best",
+        "360p": (
+            "best[height<=360][ext=mp4]/best[height<=360]/"
+            "worst[height>=240][ext=mp4]/worst[height>=240]/"
+            "best[height<=480]/worst"
+        ),
+        "480p": (
+            "best[height<=480][ext=mp4]/best[height<=480]/"
+            "best[height<=360][ext=mp4]/best[height<=360]/"
+            "best[height<=720]/best"
+        ),
+        "720p": (
+            "best[height<=720][ext=mp4]/best[height<=720]/"
+            "best[height<=480][ext=mp4]/best[height<=480]/"
+            "best[height<=1080]/best"
+        ),
+        "1080p": (
+            "best[height<=1080][ext=mp4]/best[height<=1080]/"
+            "best[height<=720][ext=mp4]/best[height<=720]/"
+            "best"
+        ),
+        "best": "best[ext=mp4]/best"
     }
     return quality_formats.get(quality, quality_formats["720p"])
 
@@ -2590,8 +2608,8 @@ async def get_video_info(url: str) -> dict:
         "extractor_retries": 2,  # Reduz tentativas (padrão: 3)
         "fragment_retries": 2,   # Reduz retries de fragmentos
         "buffersize": 1024 * 64,  # 64KB buffer (padrão: 1024KB)
-        # Para extract_info com download=False, não precisa especificar formato
-        # O yt-dlp irá listar todos disponíveis sem tentar baixar
+        # Adiciona seleção de formato para evitar erro "format not available"
+        "format": get_format_for_url(url),
     }
     
     if is_shopee:
