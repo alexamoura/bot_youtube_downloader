@@ -1272,34 +1272,24 @@ def get_cookie_for_url(url: str):
 def get_youtube_format_by_quality(quality: str) -> str:
     """Retorna string de formato yt-dlp baseado na qualidade escolhida
 
-    Formatos otimizados para máxima compatibilidade com fallbacks robustos
-    Estratégia atualizada para contornar erro "Requested format is not available"
+    Usa estratégia super simplificada para evitar erros de formato
     """
-    # Nova estratégia: prioriza formatos únicos (vídeo+áudio) ao invés de combinações separadas
-    quality_formats = {
-        "360p": (
-            "best[height<=360][ext=mp4]/best[height<=360]/"
-            "worst[height>=240][ext=mp4]/worst[height>=240]/"
-            "best[height<=480]/worst"
-        ),
-        "480p": (
-            "best[height<=480][ext=mp4]/best[height<=480]/"
-            "best[height<=360][ext=mp4]/best[height<=360]/"
-            "best[height<=720]/best"
-        ),
-        "720p": (
-            "best[height<=720][ext=mp4]/best[height<=720]/"
-            "best[height<=480][ext=mp4]/best[height<=480]/"
-            "best[height<=1080]/best"
-        ),
-        "1080p": (
-            "best[height<=1080][ext=mp4]/best[height<=1080]/"
-            "best[height<=720][ext=mp4]/best[height<=720]/"
-            "best"
-        ),
-        "best": "best[ext=mp4]/best"
+    # SUPER SIMPLIFICADO: deixa o yt-dlp escolher automaticamente
+    # Isso SEMPRE funcionará pois o yt-dlp escolherá o melhor disponível
+    
+    if quality == "best":
+        return None  # Deixa yt-dlp escolher o melhor
+    
+    # Para outras qualidades, usa filtro simples sem combinações complexas
+    quality_map = {
+        "360p": "worst",  # Pega a pior qualidade (geralmente 360p ou menos)
+        "480p": "worst+1",  # Um nível acima da pior
+        "720p": None,  # Deixa yt-dlp escolher (geralmente 720p)
+        "1080p": None,  # Deixa yt-dlp escolher
     }
-    return quality_formats.get(quality, quality_formats["720p"])
+    
+    # Se não encontrar, retorna None para usar o padrão do yt-dlp
+    return quality_map.get(quality, None)
 
 def get_format_for_url(url: str, quality: str = None) -> str:
     """Retorna o formato apropriado baseado na plataforma - OTIMIZADO PARA 50MB
@@ -1314,25 +1304,26 @@ def get_format_for_url(url: str, quality: str = None) -> str:
     # Shopee: melhor qualidade disponível (geralmente já é pequeno)
     if 'shopee' in url_lower or 'shope.ee' in url_lower:
         LOG.info("🛍️ Formato Shopee: best (otimizado)")
-        return "best[ext=mp4][filesize<=50M]/best[ext=mp4]/best"
+        return None  # Deixa yt-dlp escolher
 
     # Instagram: formato único já otimizado
     elif 'instagram' in url_lower or 'insta' in url_lower:
         LOG.info("📸 Formato Instagram: best (otimizado)")
-        return "best[ext=mp4]/best"
+        return None  # Deixa yt-dlp escolher
 
     # YouTube: permite escolha de qualidade
     elif 'youtube' in url_lower or 'youtu.be' in url_lower:
         if quality:
             LOG.info("🎥 Formato YouTube: %s (escolhido pelo usuário)", quality)
-            return get_youtube_format_by_quality(quality)
+            format_str = get_youtube_format_by_quality(quality)
+            return format_str if format_str else None
         else:
-            LOG.info("🎥 Formato YouTube: 720p (padrão)")
-            return get_youtube_format_by_quality("720p")
+            LOG.info("🎥 Formato YouTube: padrão (deixando yt-dlp escolher)")
+            return None  # Deixa yt-dlp escolher
     # Outras plataformas: formato otimizado
     else:
-        LOG.info("🎬 Formato padrão: best (otimizado)")
-        return "best[ext=mp4]/best"
+        LOG.info("🎬 Formato padrão: deixando yt-dlp escolher")
+        return None  # Deixa yt-dlp escolher
 
 
 def resolve_shopee_universal_link(url: str) -> str:
@@ -2608,9 +2599,13 @@ async def get_video_info(url: str) -> dict:
         "extractor_retries": 2,  # Reduz tentativas (padrão: 3)
         "fragment_retries": 2,   # Reduz retries de fragmentos
         "buffersize": 1024 * 64,  # 64KB buffer (padrão: 1024KB)
-        # Adiciona seleção de formato para evitar erro "format not available"
-        "format": get_format_for_url(url),
     }
+    
+    # Adiciona formato apenas se não for None
+    format_str = get_format_for_url(url)
+    if format_str:
+        ydl_opts["format"] = format_str
+    # Se format_str for None, deixa yt-dlp usar o padrão (que sempre funciona)
     
     if is_shopee:
         # Configurações específicas para Shopee
