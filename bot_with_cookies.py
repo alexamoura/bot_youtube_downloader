@@ -1270,12 +1270,15 @@ def get_cookie_for_url(url: str):
     return None
 
 def get_youtube_format_by_quality(quality: str) -> str:
-    """Retorna string de formato yt-dlp baseado na qualidade escolhida"""
+    """Retorna string de formato yt-dlp baseado na qualidade escolhida
+
+    Formatos otimizados para máxima compatibilidade com fallbacks robustos
+    """
     quality_formats = {
-        "360p": "bestvideo[height<=360]+bestaudio/best[height<=360]/worst",
-        "480p": "bestvideo[height<=480]+bestaudio/best[height<=480]/best[height<=360]",
-        "720p": "bestvideo[height<=720]+bestaudio/best[height<=720]/best[height<=480]",
-        "1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        "360p": "best[height<=360]/bestvideo[height<=360]+bestaudio/worst",
+        "480p": "best[height<=480]/bestvideo[height<=480]+bestaudio/best[height<=360]",
+        "720p": "best[height<=720]/bestvideo[height<=720]+bestaudio/best[height<=480]",
+        "1080p": "best[height<=1080]/bestvideo[height<=1080]+bestaudio/best",
         "best": "bestvideo+bestaudio/best",
     }
     return quality_formats.get(quality, quality_formats["720p"])
@@ -1302,12 +1305,12 @@ def get_format_for_url(url: str, quality: str = None) -> str:
 
     # YouTube: permite escolha de qualidade
     elif 'youtube' in url_lower or 'youtu.be' in url_lower:
-        LOG.info("🎥 Formato YouTube: até 1080p (otimizado, sem cortes)")
-        return "bestvideo[height<=1080]+bestaudio/best"
-        return "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
-        return "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
-        return "best[ext=]/best"
-      
+        if quality:
+            LOG.info("🎥 Formato YouTube: %s (escolhido pelo usuário)", quality)
+            return get_youtube_format_by_quality(quality)
+        else:
+            LOG.info("🎥 Formato YouTube: 720p (padrão)")
+            return get_youtube_format_by_quality("720p")
     # Outras plataformas: formato otimizado
     else:
         LOG.info("🎬 Formato padrão: best (otimizado)")

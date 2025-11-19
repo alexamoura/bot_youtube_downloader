@@ -7,12 +7,15 @@ import yt_dlp
 import sys
 
 def get_youtube_format_by_quality(quality: str) -> str:
-    """Retorna string de formato yt-dlp baseado na qualidade escolhida"""
+    """Retorna string de formato yt-dlp baseado na qualidade escolhida
+
+    Formatos otimizados para máxima compatibilidade com fallbacks robustos
+    """
     quality_formats = {
-        "360p": "bestvideo[height<=360]+bestaudio/best[height<=360]/worst",
-        "480p": "bestvideo[height<=480]+bestaudio/best[height<=480]/best[height<=360]",
-        "720p": "bestvideo[height<=720]+bestaudio/best[height<=720]/best[height<=480]",
-        "1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        "360p": "best[height<=360]/bestvideo[height<=360]+bestaudio/worst",
+        "480p": "best[height<=480]/bestvideo[height<=480]+bestaudio/best[height<=360]",
+        "720p": "best[height<=720]/bestvideo[height<=720]+bestaudio/best[height<=480]",
+        "1080p": "best[height<=1080]/bestvideo[height<=1080]+bestaudio/best",
         "best": "bestvideo+bestaudio/best",
     }
     return quality_formats.get(quality, quality_formats["720p"])
