@@ -30,36 +30,20 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 def get_youtube_format_by_quality(quality: str) -> str:
     """
     Retorna string de formato yt-dlp baseado na qualidade escolhida
-    Estratégia atualizada para máxima compatibilidade com mudanças recentes do YouTube
+    Usa estratégia super simplificada para evitar erros de formato
     """
-    # Formatos mais robustos com múltiplos fallbacks
-    # Prioriza mp4 e usa fallbacks progressivos
-    quality_formats = {
-        "360p": (
-            "best[height<=360][ext=mp4]/best[height<=360]/"
-            "worst[height>=240][ext=mp4]/worst[height>=240]/"
-            "best[height<=480]/worst"
-        ),
-        "480p": (
-            "best[height<=480][ext=mp4]/best[height<=480]/"
-            "best[height<=360][ext=mp4]/best[height<=360]/"
-            "best[height<=720]/best"
-        ),
-        "720p": (
-            "best[height<=720][ext=mp4]/best[height<=720]/"
-            "best[height<=480][ext=mp4]/best[height<=480]/"
-            "best[height<=1080]/best"
-        ),
-        "1080p": (
-            "best[height<=1080][ext=mp4]/best[height<=1080]/"
-            "best[height<=720][ext=mp4]/best[height<=720]/"
-            "best"
-        ),
-        "best": "best[ext=mp4]/best"
-    }
+    # SUPER SIMPLIFICADO: deixa o yt-dlp escolher automaticamente quando possível
+    # Isso evita o erro "Requested format is not available"
     
-    # Se a qualidade não for encontrada, usa 720p como padrão
-    return quality_formats.get(quality, quality_formats["720p"])
+    if quality == "best":
+        return None  # Deixa yt-dlp escolher o melhor
+    
+    if quality == "360p":
+        return "worst"  # Pega a pior qualidade disponível
+    
+    # Para outras qualidades, retorna None para usar o padrão do yt-dlp
+    # que sempre funcionará
+    return None
 
 
 def write_cookies_from_env(env_var="YT_COOKIES_B64", dest_path=None):
@@ -112,14 +96,14 @@ def download(urls, cookiefile=None, outtmpl="%(title)s - %(id)s.%(ext)s", extra_
     if is_youtube:
         format_string = get_youtube_format_by_quality(quality)
         LOG.info("YouTube detectado - usando qualidade: %s", quality)
-        LOG.debug("Format string: %s", format_string)
+        if format_string:
+            LOG.debug("Format string: %s", format_string)
     else:
         # Para outras plataformas, usa formato genérico mais robusto
-        format_string = "best[ext=mp4]/best"
+        format_string = None  # Deixa yt-dlp escolher
 
     ydl_opts = {
         "outtmpl": outtmpl,
-        "format": format_string,
         "merge_output_format": "mp4",
         "noplaylist": False,
         # Aumente retries para maior robustez em infra remota:
@@ -137,6 +121,10 @@ def download(urls, cookiefile=None, outtmpl="%(title)s - %(id)s.%(ext)s", extra_
         "prefer_free_formats": False,
         "no_check_certificate": False,
     }
+    
+    # Adiciona formato apenas se não for None
+    if format_string:
+        ydl_opts["format"] = format_string
 
     # Merge any user-provided overrides
     ydl_opts.update(extra_opts)
