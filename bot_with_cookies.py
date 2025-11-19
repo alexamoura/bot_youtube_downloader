@@ -439,13 +439,13 @@ class ShopeeVideoExtractor:
     def remove_watermark_pattern(self, video_url: str) -> str:
         """
         Remove padrão de marca d'água da URL
-        Padrão: .123.456.mp4 → .mp4
+        Padrão: .123.456. → .
         """
         if not video_url:
             return None
         
-        # Remove .NUMERO.NUMERO antes de .mp4
-        clean_url = re.sub(r'\.\d+\.\d+(?=\.mp4)', '', video_url)
+        # Remove .NUMERO.NUMERO antes de .
+        clean_url = re.sub(r'\.\d+\.\d+(?=\.)', '', video_url)
         
         if clean_url != video_url:
             LOG.info("✨ Marca d'água removida da URL")
@@ -536,9 +536,9 @@ class ShopeeVideoExtractor:
             # Padrões para encontrar URL do vídeo
             patterns = [
                 r'"video_url"\s*:\s*"([^"]+)"',
-                r'"url"\s*:\s*"(https://[^"]*\.mp4[^"]*)"',
+                r'"url"\s*:\s*"(https://[^"]*\.[^"]*)"',
                 r'(https://cf\.shopee\.com\.br/file/[a-zA-Z0-9_-]+)',
-                r'(https://[^"\']*shopee[^"\']*\.mp4[^"\']*)',
+                r'(https://[^"\']*shopee[^"\']*\.[^"\']*)',
             ]
             
             for pattern in patterns:
@@ -1276,18 +1276,18 @@ def get_format_for_url(url: str) -> str:
     # Shopee: melhor qualidade disponível (geralmente já é pequeno)
     if 'shopee' in url_lower or 'shope.ee' in url_lower:
         LOG.info("🛍️ Formato Shopee: best (otimizado)")
-        return "best[ext=mp4][filesize<=50M]/best[ext=mp4]/best"
+        return "best[ext=][filesize<=50M]/best[ext=]/best"
     
     # Instagram: formato único já otimizado
     elif 'instagram' in url_lower or 'insta' in url_lower:
         LOG.info("📸 Formato Instagram: best (otimizado)")
-        return "best[ext=mp4]/best"
+        return "best[ext=]/best"
     
     # YouTube: 720p ou 480p, formato já combinado para evitar cortes
     elif 'youtube' in url_lower or 'youtu.be' in url_lower:
         LOG.info("🎥 Formato YouTube: até 1080p (otimizado, sem cortes)")
         # Prioriza formatos já combinados (evita cortes) e limita tamanho
-        return "bestvideo*+bestaudio/best"
+        return "best[ext=]/best"
     
     # Outras plataformas: formato otimizado
     else:
