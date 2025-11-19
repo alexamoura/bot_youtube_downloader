@@ -27,6 +27,18 @@ LOG = logging.getLogger("yt_downloader")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
+def get_youtube_format_by_quality(quality: str) -> str:
+    """Retorna string de formato yt-dlp baseado na qualidade escolhida"""
+    quality_formats = {
+        "360p": "bestvideo[height<=360]+bestaudio/best[height<=360]/worst",
+        "480p": "bestvideo[height<=480]+bestaudio/best[height<=480]/best[height<=360]",
+        "720p": "bestvideo[height<=720]+bestaudio/best[height<=720]/best[height<=480]",
+        "1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        "best": "bestvideo+bestaudio/best",
+    }
+    return quality_formats.get(quality, quality_formats["720p"])
+
+
 def write_cookies_from_env(env_var="YT_COOKIES_B64", dest_path=None):
     """
     Decodifica a variável de ambiente base64 e grava em dest_path.
@@ -58,13 +70,31 @@ def write_cookies_from_env(env_var="YT_COOKIES_B64", dest_path=None):
     return dest_path
 
 
-def download(urls, cookiefile=None, outtmpl="%(title)s - %(id)s.%(ext)s", extra_opts=None):
+def download(urls, cookiefile=None, outtmpl="%(title)s - %(id)s.%(ext)s", extra_opts=None, quality="720p"):
+    """Download de vídeos com yt-dlp
+
+    Args:
+        urls: Lista de URLs para baixar
+        cookiefile: Arquivo de cookies
+        outtmpl: Template de saída
+        extra_opts: Opções extras do yt-dlp
+        quality: Qualidade para YouTube (360p, 480p, 720p, 1080p, best)
+    """
     if extra_opts is None:
         extra_opts = {}
 
+    # Detecta se é YouTube para aplicar seleção de qualidade
+    is_youtube = any('youtube' in url.lower() or 'youtu.be' in url.lower() for url in urls)
+
+    if is_youtube:
+        format_string = get_youtube_format_by_quality(quality)
+        LOG.info("YouTube detectado - usando qualidade: %s", quality)
+    else:
+        format_string = "bestvideo[height<=1080]+bestaudio/best"
+
     ydl_opts = {
         "outtmpl": outtmpl,
-        "format": "bestvideo[height<=1080]+bestaudio/best",
+        "format": format_string,
         "merge_output_format": "mp4",
         "noplaylist": False,
         # Aumente retries para maior robustez em infra remota:
@@ -93,6 +123,8 @@ def main():
     parser.add_argument("urls", nargs="+", help="URLs do YouTube a baixar")
     parser.add_argument("--cookies-env", default="YT_COOKIES_B64", help="Nome da variável de ambiente com cookies em base64")
     parser.add_argument("--out", default="%(title)s - %(id)s.%(ext)s", help="Template de saída (yt-dlp outtmpl)")
+    parser.add_argument("--quality", default="720p", choices=["360p", "480p", "720p", "1080p", "best"],
+                        help="Qualidade do vídeo para YouTube (padrão: 720p)")
     parser.add_argument("--no-cookies", action="store_true", help="Não usar cookies mesmo se a variável existir")
     parser.add_argument("--debug", action="store_true", help="Habilita debug logging")
     args = parser.parse_args()
@@ -112,7 +144,7 @@ def main():
         LOG.warning("Executando sem cookies. Se o YouTube pedir verificação, o download pode falhar.")
 
     try:
-        download(args.urls, cookiefile=cookie_path, outtmpl=args.out)
+        download(args.urls, cookiefile=cookie_path, outtmpl=args.out, quality=args.quality)
     except yt_dlp_lib.utils.DownloadError as e:
         LOG.error("Erro de download: %s", e)
         sys.exit(3)

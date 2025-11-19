@@ -46,9 +46,36 @@ try:
 except Exception:
     LOG.exception("Erro ao preparar cookies. O endpoint ainda pode tentar sem cookies.")
 
-def ytdlp_download(url, outtmpl=None, cookiefile=None):
+def get_youtube_format_by_quality(quality: str) -> str:
+    """Retorna string de formato yt-dlp baseado na qualidade escolhida"""
+    quality_formats = {
+        "360p": "bestvideo[height<=360]+bestaudio/best[height<=360]/worst",
+        "480p": "bestvideo[height<=480]+bestaudio/best[height<=480]/best[height<=360]",
+        "720p": "bestvideo[height<=720]+bestaudio/best[height<=720]/best[height<=480]",
+        "1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        "best": "bestvideo+bestaudio/best",
+    }
+    return quality_formats.get(quality, quality_formats["720p"])
+
+def ytdlp_download(url, outtmpl=None, cookiefile=None, quality="720p"):
+    """Download de vídeo com yt-dlp
+
+    Args:
+        url: URL do vídeo
+        outtmpl: Template de saída
+        cookiefile: Arquivo de cookies
+        quality: Qualidade para YouTube (360p, 480p, 720p, 1080p, best)
+    """
+    # Detecta se é YouTube
+    is_youtube = 'youtube' in url.lower() or 'youtu.be' in url.lower()
+
+    if is_youtube:
+        format_string = get_youtube_format_by_quality(quality)
+    else:
+        format_string = "bestvideo[height<=1080]+bestaudio/best"
+
     opts = {
-        "format": "bestvideo[height<=1080]+bestaudio/best",
+        "format": format_string,
         "merge_output_format": "mp4",
         "noplaylist": False,
         "retries": 5,
