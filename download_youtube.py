@@ -28,17 +28,37 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
 def get_youtube_format_by_quality(quality: str) -> str:
-    """Retorna string de formato yt-dlp baseado na qualidade escolhida
-
-    Formatos otimizados para máxima compatibilidade com fallbacks robustos
     """
+    Retorna string de formato yt-dlp baseado na qualidade escolhida
+    Estratégia atualizada para máxima compatibilidade com mudanças recentes do YouTube
+    """
+    # Formatos mais robustos com múltiplos fallbacks
+    # Prioriza mp4 e usa fallbacks progressivos
     quality_formats = {
-        "360p": "best[height<=360]/bestvideo[height<=360]+bestaudio/worst",
-        "480p": "best[height<=480]/bestvideo[height<=480]+bestaudio/best[height<=360]",
-        "720p": "best[height<=720]/bestvideo[height<=720]+bestaudio/best[height<=480]",
-        "1080p": "best[height<=1080]/bestvideo[height<=1080]+bestaudio/best",
-        "best": "bestvideo+bestaudio/best",
+        "360p": (
+            "best[height<=360][ext=mp4]/best[height<=360]/"
+            "worst[height>=240][ext=mp4]/worst[height>=240]/"
+            "best[height<=480]/worst"
+        ),
+        "480p": (
+            "best[height<=480][ext=mp4]/best[height<=480]/"
+            "best[height<=360][ext=mp4]/best[height<=360]/"
+            "best[height<=720]/best"
+        ),
+        "720p": (
+            "best[height<=720][ext=mp4]/best[height<=720]/"
+            "best[height<=480][ext=mp4]/best[height<=480]/"
+            "best[height<=1080]/best"
+        ),
+        "1080p": (
+            "best[height<=1080][ext=mp4]/best[height<=1080]/"
+            "best[height<=720][ext=mp4]/best[height<=720]/"
+            "best"
+        ),
+        "best": "best[ext=mp4]/best"
     }
+    
+    # Se a qualidade não for encontrada, usa 720p como padrão
     return quality_formats.get(quality, quality_formats["720p"])
 
 
@@ -92,8 +112,10 @@ def download(urls, cookiefile=None, outtmpl="%(title)s - %(id)s.%(ext)s", extra_
     if is_youtube:
         format_string = get_youtube_format_by_quality(quality)
         LOG.info("YouTube detectado - usando qualidade: %s", quality)
+        LOG.debug("Format string: %s", format_string)
     else:
-        format_string = "bestvideo[height<=1080]+bestaudio/best"
+        # Para outras plataformas, usa formato genérico mais robusto
+        format_string = "best[ext=mp4]/best"
 
     ydl_opts = {
         "outtmpl": outtmpl,
@@ -110,7 +132,10 @@ def download(urls, cookiefile=None, outtmpl="%(title)s - %(id)s.%(ext)s", extra_
         # Evita checagem interativa
         "nopart": False,
         # Opcional: user agent custom (algumas vezes ajuda)
-        "http_headers": {"User-Agent": "yt-dlp (script)"},
+        "http_headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+        # Opções adicionais para maior compatibilidade
+        "prefer_free_formats": False,
+        "no_check_certificate": False,
     }
 
     # Merge any user-provided overrides
@@ -130,6 +155,7 @@ def main():
                         help="Qualidade do vídeo para YouTube (padrão: 720p)")
     parser.add_argument("--no-cookies", action="store_true", help="Não usar cookies mesmo se a variável existir")
     parser.add_argument("--debug", action="store_true", help="Habilita debug logging")
+    parser.add_argument("--list-formats", action="store_true", help="Lista formatos disponíveis ao invés de baixar")
     args = parser.parse_args()
 
     if args.debug:
@@ -145,6 +171,17 @@ def main():
 
     if cookie_path is None:
         LOG.warning("Executando sem cookies. Se o YouTube pedir verificação, o download pode falhar.")
+
+    # Se --list-formats foi passado, lista formatos ao invés de baixar
+    if args.list_formats:
+        ydl_opts = {
+            "listformats": True,
+            **({"cookiefile": cookie_path} if cookie_path else {}),
+        }
+        with yt_dlp_lib.YoutubeDL(ydl_opts) as ydl:
+            for url in args.urls:
+                ydl.extract_info(url, download=False)
+        sys.exit(0)
 
     try:
         download(args.urls, cookiefile=cookie_path, outtmpl=args.out, quality=args.quality)
