@@ -792,7 +792,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB - limite do Telegram para bots (API pa
 SPLIT_SIZE = 45 * 1024 * 1024
 
 # Constantes de Controle de Downloads
-FREE_DOWNLOADS_LIMIT = 10
+FREE_DOWNLOADS_LIMIT = 3
 MAX_CONCURRENT_DOWNLOADS = 3  # Até 3 downloads simultâneos
 
 # Configuração do Mercado Pago
@@ -1906,7 +1906,7 @@ async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Funcionalidades:
 - Download de vídeos (Shopee, Instagram, TikTok, Twitter, etc.)
-- Plano gratuito: 10 downloads/mês
+- Plano gratuito: 3 downloads/mês
 - Plano premium: downloads ilimitados (R$9,90/mês)
 - Se o usuário falar para você baixar algum vídeo, incentive ele a te enviar um link
 """
@@ -2345,7 +2345,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Funcionalidades:
 - Download de vídeos (Shopee, Instagram, TikTok, Twitter, etc.)
-- Plano gratuito: 10 downloads/mês
+- Plano gratuito: 3 downloads/mês
 - Plano premium: downloads ilimitados (R$9,90/mês)
 - Se o usuário falar para você baixar algum vídeo, incentive ele a te enviar um link
 
