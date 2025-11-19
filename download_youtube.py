@@ -30,20 +30,19 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 def get_youtube_format_by_quality(quality: str) -> str:
     """
     Retorna string de formato yt-dlp baseado na qualidade escolhida
-    Usa estratégia super simplificada para evitar erros de formato
+    Otimizado para yt-dlp>=2025.11.12 com melhor suporte a formatos do YouTube
     """
-    # SUPER SIMPLIFICADO: deixa o yt-dlp escolher automaticamente quando possível
-    # Isso evita o erro "Requested format is not available"
+    # Para yt-dlp 2025.11.12+, usa seletores simplificados que funcionam melhor
+    quality_formats = {
+        "360p": "best[height<=360]/worst",
+        "480p": "best[height<=480]/best[height<=360]/worst",
+        "720p": "best[height<=720]/best[height<=480]/best",
+        "1080p": "best[height<=1080]/best[height<=720]/best",
+        "best": "best"
+    }
     
-    if quality == "best":
-        return None  # Deixa yt-dlp escolher o melhor
-    
-    if quality == "360p":
-        return "worst"  # Pega a pior qualidade disponível
-    
-    # Para outras qualidades, retorna None para usar o padrão do yt-dlp
-    # que sempre funcionará
-    return None
+    # Retorna o formato com fallback garantido
+    return quality_formats.get(quality, "best")
 
 
 def write_cookies_from_env(env_var="YT_COOKIES_B64", dest_path=None):
@@ -96,14 +95,14 @@ def download(urls, cookiefile=None, outtmpl="%(title)s - %(id)s.%(ext)s", extra_
     if is_youtube:
         format_string = get_youtube_format_by_quality(quality)
         LOG.info("YouTube detectado - usando qualidade: %s", quality)
-        if format_string:
-            LOG.debug("Format string: %s", format_string)
+        LOG.debug("Format string: %s", format_string)
     else:
-        # Para outras plataformas, usa formato genérico mais robusto
-        format_string = None  # Deixa yt-dlp escolher
+        # Para outras plataformas, usa formato genérico
+        format_string = "best"
 
     ydl_opts = {
         "outtmpl": outtmpl,
+        "format": format_string,
         "merge_output_format": "mp4",
         "noplaylist": False,
         # Aumente retries para maior robustez em infra remota:
@@ -115,16 +114,12 @@ def download(urls, cookiefile=None, outtmpl="%(title)s - %(id)s.%(ext)s", extra_
         "progress_hooks": [lambda d: LOG.debug("progress: %s", d)],
         # Evita checagem interativa
         "nopart": False,
-        # Opcional: user agent custom (algumas vezes ajuda)
+        # User agent atualizado para 2025
         "http_headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
         # Opções adicionais para maior compatibilidade
         "prefer_free_formats": False,
         "no_check_certificate": False,
     }
-    
-    # Adiciona formato apenas se não for None
-    if format_string:
-        ydl_opts["format"] = format_string
 
     # Merge any user-provided overrides
     ydl_opts.update(extra_opts)
