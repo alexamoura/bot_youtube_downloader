@@ -1276,23 +1276,18 @@ def get_format_for_url(url: str) -> str:
     # Shopee: melhor qualidade disponível (geralmente já é pequeno)
     if 'shopee' in url_lower or 'shope.ee' in url_lower:
         LOG.info("🛍️ Formato Shopee: best (otimizado)")
-        return "best[ext=][filesize<=50M]/best[ext=]/best"
+        return "best[ext=mp4][filesize<=50M]/best[ext=mp4]/best"
     
     # Instagram: formato único já otimizado
     elif 'instagram' in url_lower or 'insta' in url_lower:
         LOG.info("📸 Formato Instagram: best (otimizado)")
-        return "best[ext=]/best"
+        return "best[ext=mp4]/best"
     
     # YouTube: 720p ou 480p, formato já combinado para evitar cortes
     elif 'youtube' in url_lower or 'youtu.be' in url_lower:
         LOG.info("🎥 Formato YouTube: até 1080p (otimizado, sem cortes)")
-        # Prioriza formatos já combinados (evita cortes) e limita tamanho
-##<<<<<<< claude/fix-youtube-download-01L99rUopnA9V5puU9HpmSmK
-        # Tenta várias opções até encontrar uma disponível
-        return "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
-##=======
-        return "best[ext=]/best"
-##>>>>>>> main
+        # Usa formato simplificado e robusto que sempre funciona
+        return "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
     
     # Outras plataformas: formato otimizado
     else:

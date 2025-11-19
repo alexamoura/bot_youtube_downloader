@@ -48,7 +48,7 @@ except Exception:
 
 def ytdlp_download(url, outtmpl=None, cookiefile=None):
     opts = {
-        "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
         "merge_output_format": "mp4",
         "noplaylist": False,
         "retries": 5,
