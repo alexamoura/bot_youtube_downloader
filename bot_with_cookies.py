@@ -1287,7 +1287,12 @@ def get_format_for_url(url: str) -> str:
     elif 'youtube' in url_lower or 'youtu.be' in url_lower:
         LOG.info("🎥 Formato YouTube: até 1080p (otimizado, sem cortes)")
         # Prioriza formatos já combinados (evita cortes) e limita tamanho
+##<<<<<<< claude/fix-youtube-download-01L99rUopnA9V5puU9HpmSmK
+        # Tenta várias opções até encontrar uma disponível
+        return "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
+##=======
         return "best[ext=]/best"
+##>>>>>>> main
     
     # Outras plataformas: formato otimizado
     else:
