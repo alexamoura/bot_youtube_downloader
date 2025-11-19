@@ -3,7 +3,7 @@ gunicorn>=23.0.0
 # Core dependencies
 Flask==3.0.3
 python-telegram-bot==21.4
-yt-dlp>=2025.10.22
+yt-dlp>=2025.11.12
 
 # Para extrator Shopee customizado
 requests==2.31.0
