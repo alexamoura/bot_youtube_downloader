@@ -855,15 +855,15 @@ def get_db_connection():
 MESSAGES = {
     "welcome": (
         "🎥 <b>Bem-vindo ao Serviço de Downloads</b>\n\n"
-        "Envie um link de vídeo do TikTok, Instagram ou Shopee e eu processarei o download para você.\n\n"
-        "📊 <b>Planos disponíveis:</b>\n"
-        "• Gratuito: {free_limit} downloads/mês\n"
-        "• Premium: Downloads ilimitados\n\n"
-        "⚙️ <b>Especificações:</b>\n"
-        "• Vídeos curtos (até 50 MB)\n"
+        "Envie um link de vídeo do TikTok, Instagram, Shopee ou outras plataformas e eu processarei o download para você.\n\n"
+        "🎁 <b>Experimente Gratuitamente:</b>\n"
+        "• 3 downloads por semana\n"
         "• Qualidade até 720p\n"
-        "• Fila: até 3 downloads simultâneos\n\n"
-        "Digite /status para verificar seu saldo de downloads ou /premium para assinar o plano."
+        "• Vídeos curtos (até 50 MB)\n\n"
+        "💎 <b>Deseja Downloads Ilimitados?</b>\n"
+        "Assine o plano Premium e tenha acesso a downloads sem limites!\n"
+        "📲 Digite /premium para assinar\n\n"
+        "📊 <b>Seu saldo:</b> Digite /status para verificar quantos downloads você tem disponíveis esta semana"
     ),
     "url_prompt": "📎 Por favor, envie o link do vídeo que deseja baixar.",
     "processing": "⚙️ Processando sua solicitação...",
@@ -876,19 +876,20 @@ MESSAGES = {
     "download_complete": "✅ Download concluído. Enviando arquivo...",
     "upload_complete": "✅ Vídeo enviado com sucesso!\n\n📊 Downloads restantes: {remaining}/{total}",
     "limit_reached": (
-        "⚠️ <b>Limite de Downloads Atingido</b>\n\n"
-        "Você atingiu o limite de {limit} downloads gratuitos.\n\n"
-        "💎 <b>Adquira o Plano Premium para downloads ilimitados!</b>\n\n"
+        "⚠️ <b>Limite Semanal Atingido</b>\n\n"
+        "Você já usou seus 3 downloads gratuitos desta semana.\n\n"
+        "💎 <b>Deseja Downloads Ilimitados?</b>\n"
+        "Assine o Plano Premium e tenha acesso a downloads sem restrições!\n\n"
         "💳 Valor: R$ 9,90/mês\n"
         "🔄 Pagamento via PIX\n\n"
-        "Entre em contato para mais informações: /premium"
+        "Clique em /premium para assinar agora!"
     ),
     "status": (
         "📊 <b>Status da Sua Conta</b>\n\n"
         "👤 ID: {user_id}\n"
-        "📥 Downloads realizados: {used}/{total}\n"
-        "💾 Downloads restantes: {remaining}\n"
-        "📅 Período: Mensal\n\n"
+        "📥 Downloads realizados esta semana: {used}/{total}\n"
+        "💾 Downloads restantes esta semana: {remaining}\n"
+        "📅 Período: Semanal (reseta toda segunda-feira)\n\n"
         "{premium_info}"
     ),
     "premium_info": (
@@ -906,7 +907,7 @@ MESSAGES = {
         "4️⃣ Aguarde a ativação automática (30-60 segundos)\n\n"
         "⚡ <b>Ativação instantânea via PIX!</b>"
     ),
-    "stats": "📈 <b>Estatísticas do Bot</b>\n\n👥 Usuários ativos este mês: {count}",
+    "stats": "📈 <b>Estatísticas do Bot</b>\n\n👥 Usuários ativos esta semana: {count}",
     "error_timeout": "⏱️ O tempo de processamento excedeu o limite. Por favor, tente novamente.",
     "error_network": "🌐 Erro de conexão detectado. Verifique sua internet e tente novamente em alguns instantes.",
     "error_file_large": "📦 O arquivo excede o limite de 50 MB. Por favor, escolha um vídeo mais curto.",
@@ -1000,19 +1001,19 @@ def init_db():
             LOG.error("Erro ao inicializar banco de dados: %s", e)
 
 def update_user(user_id: int):
-    """Atualiza o registro de acesso mensal do usuário"""
+    """Atualiza o registro de acesso semanal do usuário"""
     with DB_LOCK:
         try:
             conn = sqlite3.connect(DB_FILE, timeout=10)
             c = conn.cursor()
-            month = time.strftime("%Y-%m")
+            week = time.strftime("%Y-W%W")
             c.execute("SELECT last_month FROM monthly_users WHERE user_id=?", (user_id,))
             row = c.fetchone()
             if row:
-                if row[0] != month:
-                    c.execute("UPDATE monthly_users SET last_month=? WHERE user_id=?", (month, user_id))
+                if row[0] != week:
+                    c.execute("UPDATE monthly_users SET last_month=? WHERE user_id=?", (week, user_id))
             else:
-                c.execute("INSERT INTO monthly_users (user_id, last_month) VALUES (?, ?)", (user_id, month))
+                c.execute("INSERT INTO monthly_users (user_id, last_month) VALUES (?, ?)", (user_id, week))
             conn.commit()
             conn.close()
         except sqlite3.Error as e:
@@ -1029,7 +1030,8 @@ def get_user_download_stats(user_id: int) -> dict:
             c.execute("SELECT downloads_count, is_premium, last_reset, premium_expires FROM user_downloads WHERE user_id=?", (user_id,))
             row = c.fetchone()
             
-            current_month = time.strftime("%Y-%m")
+            # Calcula semana atual (usando ISO week)
+            current_week = time.strftime("%Y-W%W")
             today = time.strftime("%Y-%m-%d")
             
             if row:
@@ -1046,14 +1048,14 @@ def get_user_download_stats(user_id: int) -> dict:
                             UPDATE user_downloads 
                             SET is_premium=0, downloads_count=0, last_reset=? 
                             WHERE user_id=?
-                        """, (current_month, user_id))
+                        """, (current_week, user_id))
                         conn.commit()
                 
-                # Reseta contador se mudou o mês (apenas para plano gratuito)
-                elif last_reset != current_month and not is_premium:
+                # Reseta contador se mudou a semana (apenas para plano gratuito)
+                elif last_reset != current_week and not is_premium:
                     downloads_count = 0
                     c.execute("UPDATE user_downloads SET downloads_count=0, last_reset=? WHERE user_id=?", 
-                             (current_month, user_id))
+                             (current_week, user_id))
                     conn.commit()
             else:
                 # Cria novo registro
@@ -1061,7 +1063,7 @@ def get_user_download_stats(user_id: int) -> dict:
                 c.execute("""
                     INSERT INTO user_downloads (user_id, downloads_count, is_premium, last_reset) 
                     VALUES (?, 0, 0, ?)
-                """, (user_id, current_month))
+                """, (user_id, current_week))
                 conn.commit()
             
             conn.close()
@@ -1101,13 +1103,13 @@ def increment_download_count(user_id: int):
             LOG.error("Erro ao incrementar contador de downloads: %s", e)
 
 def get_monthly_users_count() -> int:
-    """Retorna o número de usuários ativos no mês atual"""
-    month = time.strftime("%Y-%m")
+    """Retorna o número de usuários ativos na semana atual"""
+    week = time.strftime("%Y-W%W")
     with DB_LOCK:
         try:
             conn = sqlite3.connect(DB_FILE, timeout=10)
             c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM monthly_users WHERE last_month=?", (month,))
+            c.execute("SELECT COUNT(*) FROM monthly_users WHERE last_month=?", (week,))
             count = c.fetchone()[0]
             conn.close()
             return count
@@ -1906,8 +1908,8 @@ async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Funcionalidades:
 - Download de vídeos (Shopee, Instagram, TikTok, Twitter, etc.)
-- Plano gratuito: 3 downloads/mês
-- Plano premium: downloads ilimitados (R$9,90/mês)
+- Plano gratuito: 3 downloads/semana
+- Plano premium: downloads ilimitados
 - Se o usuário falar para você baixar algum vídeo, incentive ele a te enviar um link
 """
         )
@@ -2345,8 +2347,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Funcionalidades:
 - Download de vídeos (Shopee, Instagram, TikTok, Twitter, etc.)
-- Plano gratuito: 3 downloads/mês
-- Plano premium: downloads ilimitados (R$9,90/mês)
+- Plano gratuito: 3 downloads/semana
+- Plano premium: downloads ilimitados
 - Se o usuário falar para você baixar algum vídeo, incentive ele a te enviar um link
 
 Comandos:
