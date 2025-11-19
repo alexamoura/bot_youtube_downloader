@@ -1269,21 +1269,38 @@ def get_cookie_for_url(url: str):
     LOG.info("Nenhum cookie disponível")
     return None
 
-def get_format_for_url(url: str) -> str:
-    """Retorna o formato apropriado baseado na plataforma - OTIMIZADO PARA 50MB"""
+def get_youtube_format_by_quality(quality: str) -> str:
+    """Retorna string de formato yt-dlp baseado na qualidade escolhida"""
+    quality_formats = {
+        "360p": "bestvideo[height<=360]+bestaudio/best[height<=360]/worst",
+        "480p": "bestvideo[height<=480]+bestaudio/best[height<=480]/best[height<=360]",
+        "720p": "bestvideo[height<=720]+bestaudio/best[height<=720]/best[height<=480]",
+        "1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        "best": "bestvideo+bestaudio/best",
+    }
+    return quality_formats.get(quality, quality_formats["720p"])
+
+def get_format_for_url(url: str, quality: str = None) -> str:
+    """Retorna o formato apropriado baseado na plataforma - OTIMIZADO PARA 50MB
+
+    Args:
+        url: URL do vídeo
+        quality: Qualidade para YouTube (360p, 480p, 720p, 1080p, best).
+                 Se None, usa padrão (720p para YouTube)
+    """
     url_lower = url.lower()
-    
+
     # Shopee: melhor qualidade disponível (geralmente já é pequeno)
     if 'shopee' in url_lower or 'shope.ee' in url_lower:
         LOG.info("🛍️ Formato Shopee: best (otimizado)")
         return "best[ext=mp4][filesize<=50M]/best[ext=mp4]/best"
-    
+
     # Instagram: formato único já otimizado
     elif 'instagram' in url_lower or 'insta' in url_lower:
         LOG.info("📸 Formato Instagram: best (otimizado)")
         return "best[ext=mp4]/best"
-    
-    # YouTube: 720p ou 480p, formato já combinado para evitar cortes
+
+    # YouTube: permite escolha de qualidade
     elif 'youtube' in url_lower or 'youtu.be' in url_lower:
         LOG.info("🎥 Formato YouTube: até 1080p (otimizado, sem cortes)")
         return "bestvideo[height<=1080]+bestaudio/best"
@@ -1875,7 +1892,7 @@ async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 - Nunca invente informações. Se não souber, responda exatamente: "Não tenho essa informação".
 - Não forneça detalhes que não estejam listados abaixo.
 - Se o usuário quiser assinar o plano, peça para digitar /premium.
-- Este bot não faz download de músicas e não permite escolher qualidade de vídeos.
+- Para vídeos do YouTube, você pode escolher a qualidade (360p, 480p, 720p, 1080p).
 - Não responda sobre assuntos que não sejam relacionados ao que esse assistente faz
 
 Funcionalidades:
@@ -2314,7 +2331,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 - Nunca invente informações. Se não souber, responda exatamente: "Não tenho essa informação".
 - Não forneça detalhes que não estejam listados abaixo.
 - Se o usuário quiser assinar o plano, peça para digitar /premium.
-- Este bot não faz download de músicas e não permite escolher qualidade de vídeos.
+- Para vídeos do YouTube, você pode escolher a qualidade (360p, 480p, 720p, 1080p).
 - Não responda sobre assuntos que não sejam relacionados ao que esse assistente faz
 
 Funcionalidades:
@@ -2457,28 +2474,60 @@ Comandos:
             await processing_msg.edit_text(MESSAGES["file_too_large"], parse_mode="HTML")
             LOG.info("Vídeo rejeitado por exceder 50 MB: %d bytes", filesize_bytes)
             return
-        
-        # Cria botões de confirmação
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ Confirmar", callback_data=f"dl:{token}"),
-                InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}")
+
+        # Detecta se é YouTube para mostrar seleção de qualidade
+        is_youtube = 'youtube' in url.lower() or 'youtu.be' in url.lower()
+
+        if is_youtube:
+            # Para YouTube: mostra botões de seleção de qualidade
+            keyboard = [
+                [
+                    InlineKeyboardButton("📱 360p", callback_data=f"quality:{token}:360p"),
+                    InlineKeyboardButton("📺 480p", callback_data=f"quality:{token}:480p"),
+                ],
+                [
+                    InlineKeyboardButton("🎬 720p (Recomendado)", callback_data=f"quality:{token}:720p"),
+                ],
+                [
+                    InlineKeyboardButton("🎥 1080p", callback_data=f"quality:{token}:1080p"),
+                    InlineKeyboardButton("⭐ Melhor", callback_data=f"quality:{token}:best"),
+                ],
+                [
+                    InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}")
+                ]
             ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        confirm_text = MESSAGES["confirm_download"].format(
-            title=title,
-            duration=duration,
-            filesize=filesize
-        )
-        
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            confirm_text = (
+                f"🎥 <b>YouTube - Escolha a Qualidade</b>\n\n"
+                f"📹 <b>{title}</b>\n"
+                f"⏱️ Duração: {duration}\n"
+                f"📦 Tamanho estimado: {filesize}\n\n"
+                f"💡 <b>Dica:</b> 720p é ideal para WhatsApp\n"
+                f"⚠️ Qualidades maiores podem exceder 50 MB"
+            )
+        else:
+            # Para outras plataformas: botões normais de confirmação
+            keyboard = [
+                [
+                    InlineKeyboardButton("✅ Confirmar", callback_data=f"dl:{token}"),
+                    InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            confirm_text = MESSAGES["confirm_download"].format(
+                title=title,
+                duration=duration,
+                filesize=filesize
+            )
+
         await processing_msg.edit_text(
             confirm_text,
             reply_markup=reply_markup,
             parse_mode="HTML"
         )
-        
+
         # Armazena informações pendentes
         PENDING.set(token, {
             "url": url,
@@ -3086,28 +3135,127 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para callbacks de confirmação de download"""
     query = update.callback_query
     await query.answer()
-    
+
     data = query.data
-    action, token = data.split(":", 1)
-    
+    parts = data.split(":")
+    action = parts[0]
+
+    # Para quality, temos 3 partes: quality:token:720p
+    if action == "quality":
+        if len(parts) < 3:
+            await query.answer("❌ Erro: formato inválido", show_alert=True)
+            return
+
+        token = parts[1]
+        quality = parts[2]
+
+        if token not in PENDING.cache:
+            await query.edit_message_text(MESSAGES["error_expired"])
+            return
+
+        pm = PENDING.get(token)
+
+        # Verifica se o usuário é o mesmo que solicitou
+        if pm["user_id"] != query.from_user.id:
+            await query.answer("⚠️ Esta ação não pode ser realizada por você.", show_alert=True)
+            return
+
+        # Armazena qualidade escolhida
+        pm["quality"] = quality
+        PENDING.set(token, pm)
+
+        # Mostra confirmação com a qualidade escolhida
+        quality_emoji = {
+            "360p": "📱",
+            "480p": "📺",
+            "720p": "🎬",
+            "1080p": "🎥",
+            "best": "⭐"
+        }
+
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Confirmar Download", callback_data=f"dl:{token}"),
+                InlineKeyboardButton("🔙 Voltar", callback_data=f"back:{token}")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        confirm_text = (
+            f"🎥 <b>YouTube Download</b>\n\n"
+            f"✅ Qualidade selecionada: {quality_emoji.get(quality, '🎬')} <b>{quality}</b>\n\n"
+            f"📹 Vídeo pronto para download!\n"
+            f"Clique em <b>Confirmar</b> para iniciar."
+        )
+
+        await query.edit_message_text(
+            confirm_text,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+        LOG.info("Usuário %d escolheu qualidade %s", pm["user_id"], quality)
+        return
+
+    # Para dl e cancel, temos 2 partes: dl:token ou cancel:token
+    if len(parts) < 2:
+        await query.answer("❌ Erro: formato inválido", show_alert=True)
+        return
+
+    token = parts[1]
+
     if token not in PENDING.cache:
         await query.edit_message_text(MESSAGES["error_expired"])
         return
-    
+
     pm = PENDING.get(token)
-    
+
     # Verifica se o usuário é o mesmo que solicitou
     if pm["user_id"] != query.from_user.id:
         await query.answer("⚠️ Esta ação não pode ser realizada por você.", show_alert=True)
         return
-    
+
     if action == "cancel":
         # Remove do cache (LimitedCache não tem del, usa cache.pop)
         PENDING.cache.pop(token, None)
         await query.edit_message_text(MESSAGES["download_cancelled"])
         LOG.info("Download cancelado pelo usuário %d", pm["user_id"])
         return
-    
+
+    if action == "back":
+        # Volta para seleção de qualidade (reconstrói a tela inicial)
+        url = pm["url"]
+
+        keyboard = [
+            [
+                InlineKeyboardButton("📱 360p", callback_data=f"quality:{token}:360p"),
+                InlineKeyboardButton("📺 480p", callback_data=f"quality:{token}:480p"),
+            ],
+            [
+                InlineKeyboardButton("🎬 720p (Recomendado)", callback_data=f"quality:{token}:720p"),
+            ],
+            [
+                InlineKeyboardButton("🎥 1080p", callback_data=f"quality:{token}:1080p"),
+                InlineKeyboardButton("⭐ Melhor", callback_data=f"quality:{token}:best"),
+            ],
+            [
+                InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel:{token}")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        confirm_text = (
+            f"🎥 <b>YouTube - Escolha a Qualidade</b>\n\n"
+            f"💡 <b>Dica:</b> 720p é ideal para WhatsApp\n"
+            f"⚠️ Qualidades maiores podem exceder 50 MB"
+        )
+
+        await query.edit_message_text(
+            confirm_text,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+        return
+
     if action == "dl":
         # Verifica quantos downloads estão ativos
         active_count = len(ACTIVE_DOWNLOADS)
@@ -3253,13 +3401,16 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
 
     # Configurações do yt-dlp
     is_shopee = 'shopee' in url.lower() or 'shope.ee' in url.lower()
-    
+
+    # Obtém qualidade escolhida pelo usuário (para YouTube)
+    quality = pm.get("quality", None)
+
     ydl_opts = {
         "outtmpl": outtmpl,
         "progress_hooks": [progress_hook],
         "quiet": False,
         "logger": LOG,
-        "format": get_format_for_url(url),
+        "format": get_format_for_url(url, quality=quality),
         "merge_output_format": "mp4",
         "concurrent_fragment_downloads": 1,
         "force_ipv4": True,
