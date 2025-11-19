@@ -3980,21 +3980,17 @@ async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         response = result.get("response", {})
 
         if response.get("status") == "pending":
-            qr_code_base64 = response["point_of_interaction"]["transaction_data"]["qr_code_base64"]
             qr_code_text = response["point_of_interaction"]["transaction_data"]["qr_code"]
 
             await query.edit_message_text(
                 (
                     f"✅ Pedido criado!\n\n"
+                    f"💰 <b>Valor:</b> R$ {PREMIUM_PRICE:.2f}\n\n"
+                    f"<b>PIX Copia e Cola:</b>\n"
                     f"<code>{qr_code_text}</code>\n\n"
-                    "🖼️ Escaneie o QR Code abaixo para pagar:"
+                    f"📋 Copie o código acima e cole no seu banco para realizar o pagamento."
                 ),
                 parse_mode=ParseMode.HTML
-            )
-
-            await context.bot.send_photo(
-                chat_id=query.message.chat_id,
-                photo=f"data:image/png;base64,{qr_code_base64}"
             )
         else:
             await query.edit_message_text("❌ Erro ao criar pagamento. Tente novamente mais tarde.")
