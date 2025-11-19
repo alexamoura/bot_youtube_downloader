@@ -3605,7 +3605,7 @@ application.add_handler(CommandHandler("status", status_cmd))
 application.add_handler(CommandHandler("premium", premium_cmd))
 application.add_handler(CommandHandler("ai", ai_cmd))  # ← Comando IA
 application.add_handler(CommandHandler("mensal", mensal_cmd))  # ← Comando relatório mensal
-application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:)"))
+application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:|quality:|back:)"))
 application.add_handler(CallbackQueryHandler(callback_buy_premium, pattern=r"^subscribe:"))
 application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
