@@ -912,7 +912,7 @@ MESSAGES = {
     "error_file_large": "📦 O arquivo excede o limite de 50 MB. Por favor, escolha um vídeo mais curto.",
     "error_ffmpeg": "🎬 Ocorreu um erro durante o processamento do vídeo.",
     "error_upload": "📤 Falha ao enviar o arquivo. Por favor, tente novamente.",
-    "error_unknown": "❌ Um erro inesperado ocorreu. Nossa equipe foi notificada. Por favor, aguarde alguns minutos e tente novamente.",
+    "error_unknown": "❌ Um erro inesperado ocorreu. Nossa equipe foi notificada. Por favor, tente novamente.",
     "error_expired": "⏰ Esta solicitação expirou. Por favor, envie o link novamente.",
     "download_cancelled": "🚫 Download cancelado com sucesso.",
     "cleanup": "🎬Aproveite o seu vídeo🎬",
@@ -1272,22 +1272,11 @@ def get_cookie_for_url(url: str):
 def get_format_for_url(url: str) -> str:
     """Retorna o formato apropriado baseado na plataforma - OTIMIZADO PARA 50MB"""
     url_lower = url.lower()
-
+    
+    # Shopee: melhor qualidade disponível (geralmente já é pequeno)
     if 'shopee' in url_lower or 'shope.ee' in url_lower:
-        LOG.info('🛍️ Formato Shopee: best (otimizado)')
-        return 'best[ext=mp4][filesize<=50M]/best[ext=mp4]/best'
-
-    elif 'instagram' in url_lower or 'insta' in url_lower:
-        LOG.info('📸 Formato Instagram: best (otimizado)')
-        return 'best[ext=mp4]/best'
-
-    elif 'youtube' in url_lower or 'youtu.be' in url_lower:
-        LOG.info('🎥 Formato YouTube: fallback genérico com bestvideo+bestaudio')
-        return 'bestvideo+bestaudio/best'
-
-    else:
-        LOG.info('🎬 Formato padrão: best (otimizado)')
-        return 'best[ext=mp4]/best'"best[ext=mp4][filesize<=50M]/best[ext=mp4]/best"
+        LOG.info("🛍️ Formato Shopee: best (otimizado)")
+        return "best[ext=mp4][filesize<=50M]/best[ext=mp4]/best"
     
     # Instagram: formato único já otimizado
     elif 'instagram' in url_lower or 'insta' in url_lower:
