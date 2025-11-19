@@ -2,7 +2,7 @@
 """
 bot_with_cookies_melhorado.py - Versão Profissional
 
-Telegram bot IA (webhook) com sistema de controle de downloads e suporte a pagamento PIX - ATUALIZADO EM 08/11/2025 - 10:30HS
+Telegram bot IA (webhook) com sistema de controle de downloads e suporte a pagamento PIX - ATUALIZADO EM 19/11/2025 - 12:00HS
 """
 import os
 import sys
@@ -1272,11 +1272,22 @@ def get_cookie_for_url(url: str):
 def get_format_for_url(url: str) -> str:
     """Retorna o formato apropriado baseado na plataforma - OTIMIZADO PARA 50MB"""
     url_lower = url.lower()
-    
-    # Shopee: melhor qualidade disponível (geralmente já é pequeno)
+
     if 'shopee' in url_lower or 'shope.ee' in url_lower:
-        LOG.info("🛍️ Formato Shopee: best (otimizado)")
-        return "best[ext=mp4][filesize<=50M]/best[ext=mp4]/best"
+        LOG.info('🛍️ Formato Shopee: best (otimizado)')
+        return 'best[ext=mp4][filesize<=50M]/best[ext=mp4]/best'
+
+    elif 'instagram' in url_lower or 'insta' in url_lower:
+        LOG.info('📸 Formato Instagram: best (otimizado)')
+        return 'best[ext=mp4]/best'
+
+    elif 'youtube' in url_lower or 'youtu.be' in url_lower:
+        LOG.info('🎥 Formato YouTube: fallback genérico com bestvideo+bestaudio')
+        return 'bestvideo+bestaudio/best'
+
+    else:
+        LOG.info('🎬 Formato padrão: best (otimizado)')
+        return 'best[ext=mp4]/best'"best[ext=mp4][filesize<=50M]/best[ext=mp4]/best"
     
     # Instagram: formato único já otimizado
     elif 'instagram' in url_lower or 'insta' in url_lower:
