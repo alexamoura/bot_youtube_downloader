@@ -6,7 +6,7 @@ python-telegram-bot==21.4
 yt-dlp[default]>=2025.11.12
 
 # Para extrator Shopee customizado
-requests==2.31.0
+requests
 beautifulsoup4==4.12.3
 lxml==5.1.0
 
