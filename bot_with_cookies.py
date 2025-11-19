@@ -1295,6 +1295,42 @@ def get_format_for_url(url: str) -> str:
         return "best[ext=mp4]/best"
 
 
+def clean_and_validate_shopee_url(url_part: str, base_domain: str = "sv.shopee.com.br") -> str:
+    """
+    Limpa e valida partes de URL da Shopee, evitando concatenações com 'undefined'
+    
+    Args:
+        url_part: Parte da URL para validar/limpar
+        base_domain: Domínio base para construir URL completa
+        
+    Returns:
+        URL limpa e válida ou None se inválida
+    """
+    if not url_part or url_part == 'undefined' or 'undefined' in url_part:
+        return None
+    
+    # Remove escapes comuns de JSON
+    url_part = url_part.replace('\\/', '/')
+    
+    # Se já é URL completa, retorna
+    if url_part.startswith('http://') or url_part.startswith('https://'):
+        return url_part
+    
+    # Se começa com //, adiciona https:
+    if url_part.startswith('//'):
+        return 'https:' + url_part
+    
+    # Se é path relativo válido, constrói URL completa
+    if url_part.startswith('/'):
+        return f'https://{base_domain}{url_part}'
+    
+    # Para outros casos, valida se é um path válido
+    if url_part and not any(c in url_part for c in ['<', '>', '{', '}', '[', ']', 'undefined']):
+        return f'https://{base_domain}/{url_part}'
+    
+    return None
+
+
 def resolve_shopee_universal_link(url: str) -> str:
     """Resolve universal links da Shopee para URL real"""
     try:
@@ -1449,6 +1485,20 @@ def format_filesize(bytes_size: int) -> str:
 
 async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
     """Download especial para Shopee Video usando extração avançada"""
+    
+    # Validação de URL malformada
+    if 'undefined' in url or url.endswith('undefined'):
+        LOG.error("❌ URL malformada detectada: %s", url)
+        await application.bot.edit_message_text(
+            text="❌ <b>Link inválido</b>\n\n"
+                 "O link da Shopee parece estar corrompido ou incompleto.\n"
+                 "Por favor, copie o link novamente do app da Shopee.",
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"],
+            parse_mode="HTML"
+        )
+        return
+    
     if not REQUESTS_AVAILABLE:
         await application.bot.edit_message_text(
             text="⚠️ Extrator Shopee não disponível. Instale: pip install requests beautifulsoup4",
@@ -1531,9 +1581,14 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             for pattern in patterns:
                 matches = re.findall(pattern, response.text)
                 if matches:
-                    video_url = matches[0].replace('\\/', '/')
-                    LOG.info("URL de vídeo encontrada via regex: %s", video_url[:100])
-                    break
+                    # Limpa e valida a URL encontrada
+                    raw_url = matches[0].replace('\\/', '/')
+                    video_url = clean_and_validate_shopee_url(raw_url)
+                    if video_url:
+                        LOG.info("URL de vídeo encontrada e validada via regex: %s", video_url[:100])
+                        break
+                    else:
+                        LOG.warning("URL encontrada mas inválida: %s", raw_url[:50])
         
         # Verifica se conseguiu URL por qualquer método
         if not video_url:
@@ -1551,9 +1606,23 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             )
             return
 
-        # Ajusta URL se necessário
+        # Ajusta URL se necessário usando validação robusta
         if not video_url.startswith('http'):
-            video_url = 'https:' + video_url if video_url.startswith('//') else 'https://sv.shopee.com.br' + video_url
+            cleaned_url = clean_and_validate_shopee_url(video_url)
+            if cleaned_url:
+                video_url = cleaned_url
+                LOG.info("URL limpa e validada: %s", video_url[:100])
+            else:
+                LOG.error("❌ URL do vídeo inválida após limpeza: %s", video_url)
+                await application.bot.edit_message_text(
+                    text="❌ <b>URL do vídeo inválida</b>\n\n"
+                         "Não foi possível extrair uma URL válida do vídeo.\n"
+                         "Por favor, tente novamente com outro link.",
+                    chat_id=pm["chat_id"],
+                    message_id=pm["message_id"],
+                    parse_mode="HTML"
+                )
+                return
 
         LOG.info("Baixando vídeo da URL: %s", video_url[:100])
 
@@ -1646,13 +1715,8 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             parse_mode="HTML"
         )
         return
-       
-        # Ajusta URL se necessário
-        if not video_url.startswith('http'):
-            video_url = 'https:' + video_url if video_url.startswith('//') else 'https://sv.shopee.com.br' + video_url
-        
-        LOG.info("Baixando vídeo da URL: %s", video_url[:100])
-        
+
+    except Exception as e:
         # Atualiza mensagem
         await application.bot.edit_message_text(
             text="📥 Baixando vídeo da Shopee...",
