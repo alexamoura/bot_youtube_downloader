@@ -912,7 +912,7 @@ MESSAGES = {
     "error_file_large": "📦 O arquivo excede o limite de 50 MB. Por favor, escolha um vídeo mais curto.",
     "error_ffmpeg": "🎬 Ocorreu um erro durante o processamento do vídeo.",
     "error_upload": "📤 Falha ao enviar o arquivo. Por favor, tente novamente.",
-    "error_unknown": "❌ Um erro inesperado ocorreu. Nossa equipe foi notificada. Por favor, tente novamente.",
+    "error_unknown": "❌ Um erro inesperado ocorreu. Nossa equipe foi notificada. Por favor, aguarde alguns minutos e tente novamente.",
     "error_expired": "⏰ Esta solicitação expirou. Por favor, envie o link novamente.",
     "download_cancelled": "🚫 Download cancelado com sucesso.",
     "cleanup": "🎬Aproveite o seu vídeo🎬",
