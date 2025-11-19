@@ -47,17 +47,37 @@ except Exception:
     LOG.exception("Erro ao preparar cookies. O endpoint ainda pode tentar sem cookies.")
 
 def get_youtube_format_by_quality(quality: str) -> str:
-    """Retorna string de formato yt-dlp baseado na qualidade escolhida
-
-    Formatos otimizados para máxima compatibilidade com fallbacks robustos
     """
+    Retorna string de formato yt-dlp baseado na qualidade escolhida
+    Estratégia atualizada para máxima compatibilidade com mudanças recentes do YouTube
+    """
+    # Formatos mais robustos com múltiplos fallbacks
+    # Prioriza mp4 e usa fallbacks progressivos
     quality_formats = {
-        "360p": "best[height<=360]/bestvideo[height<=360]+bestaudio/worst",
-        "480p": "best[height<=480]/bestvideo[height<=480]+bestaudio/best[height<=360]",
-        "720p": "best[height<=720]/bestvideo[height<=720]+bestaudio/best[height<=480]",
-        "1080p": "best[height<=1080]/bestvideo[height<=1080]+bestaudio/best",
-        "best": "bestvideo+bestaudio/best",
+        "360p": (
+            "best[height<=360][ext=mp4]/best[height<=360]/"
+            "worst[height>=240][ext=mp4]/worst[height>=240]/"
+            "best[height<=480]/worst"
+        ),
+        "480p": (
+            "best[height<=480][ext=mp4]/best[height<=480]/"
+            "best[height<=360][ext=mp4]/best[height<=360]/"
+            "best[height<=720]/best"
+        ),
+        "720p": (
+            "best[height<=720][ext=mp4]/best[height<=720]/"
+            "best[height<=480][ext=mp4]/best[height<=480]/"
+            "best[height<=1080]/best"
+        ),
+        "1080p": (
+            "best[height<=1080][ext=mp4]/best[height<=1080]/"
+            "best[height<=720][ext=mp4]/best[height<=720]/"
+            "best"
+        ),
+        "best": "best[ext=mp4]/best"
     }
+    
+    # Se a qualidade não for encontrada, usa 720p como padrão
     return quality_formats.get(quality, quality_formats["720p"])
 
 def ytdlp_download(url, outtmpl=None, cookiefile=None, quality="720p"):
@@ -68,14 +88,20 @@ def ytdlp_download(url, outtmpl=None, cookiefile=None, quality="720p"):
         outtmpl: Template de saída
         cookiefile: Arquivo de cookies
         quality: Qualidade para YouTube (360p, 480p, 720p, 1080p, best)
+    
+    Returns:
+        dict: Informações do vídeo baixado
     """
     # Detecta se é YouTube
     is_youtube = 'youtube' in url.lower() or 'youtu.be' in url.lower()
 
     if is_youtube:
         format_string = get_youtube_format_by_quality(quality)
+        LOG.info("YouTube detectado - usando qualidade: %s", quality)
+        LOG.debug("Format string: %s", format_string)
     else:
-        format_string = "bestvideo[height<=1080]+bestaudio/best"
+        # Para outras plataformas, usa formato genérico mais robusto
+        format_string = "best[ext=mp4]/best"
 
     opts = {
         "format": format_string,
@@ -83,8 +109,14 @@ def ytdlp_download(url, outtmpl=None, cookiefile=None, quality="720p"):
         "noplaylist": False,
         "retries": 5,
         "logger": LOG,
-        "http_headers": {"User-Agent": "yt-dlp (script)"},
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        },
+        # Opções adicionais para maior compatibilidade
+        "prefer_free_formats": False,
+        "no_check_certificate": False,
     }
+    
     if outtmpl:
         opts["outtmpl"] = outtmpl
     if cookiefile:
@@ -92,6 +124,33 @@ def ytdlp_download(url, outtmpl=None, cookiefile=None, quality="720p"):
 
     with yt_dlp_lib.YoutubeDL(opts) as ydl:
         result = ydl.extract_info(url, download=True)
+    return result
+
+def ytdlp_get_info(url, cookiefile=None):
+    """Obtém informações do vídeo sem baixar
+
+    Args:
+        url: URL do vídeo
+        cookiefile: Arquivo de cookies
+    
+    Returns:
+        dict: Informações do vídeo
+    """
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": False,
+        "logger": LOG,
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        },
+    }
+    
+    if cookiefile:
+        opts["cookiefile"] = cookiefile
+
+    with yt_dlp_lib.YoutubeDL(opts) as ydl:
+        result = ydl.extract_info(url, download=False)
     return result
 
 def check_auth(request):
@@ -105,19 +164,29 @@ def check_auth(request):
 
 @app.route("/download", methods=["POST"])
 def download_endpoint():
+    """Endpoint para download de vídeos"""
     if not check_auth(request):
         return jsonify({"error": "unauthorized"}), 401
 
     data = request.get_json(silent=True) or {}
     url = data.get("url")
     outtmpl = data.get("out")  # opcional: template de saída do yt-dlp
+    quality = data.get("quality", "720p")  # opcional: qualidade do vídeo
 
     if not url:
         return jsonify({"error": "missing url"}), 400
+    
+    # Valida qualidade
+    valid_qualities = ["360p", "480p", "720p", "1080p", "best"]
+    if quality not in valid_qualities:
+        return jsonify({
+            "error": "invalid_quality",
+            "message": f"Quality must be one of: {', '.join(valid_qualities)}"
+        }), 400
 
-    LOG.info("Recebido pedido de download para: %s", url)
+    LOG.info("Recebido pedido de download para: %s (quality: %s)", url, quality)
     try:
-        info = ytdlp_download(url, outtmpl=outtmpl, cookiefile=COOKIE_PATH)
+        info = ytdlp_download(url, outtmpl=outtmpl, cookiefile=COOKIE_PATH, quality=quality)
     except yt_dlp_lib.utils.DownloadError as e:
         LOG.error("Erro no download: %s", e)
         return jsonify({"error": "download_failed", "detail": str(e)}), 500
@@ -129,13 +198,129 @@ def download_endpoint():
         "status": "ok",
         "id": info.get("id"),
         "title": info.get("title"),
+        "duration": info.get("duration"),
+        "uploader": info.get("uploader"),
+        "quality": quality,
         "requested_url": url
     }), 200
 
+@app.route("/info", methods=["POST"])
+def info_endpoint():
+    """Endpoint para obter informações do vídeo sem baixar"""
+    if not check_auth(request):
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    url = data.get("url")
+
+    if not url:
+        return jsonify({"error": "missing url"}), 400
+
+    LOG.info("Recebido pedido de informações para: %s", url)
+    try:
+        info = ytdlp_get_info(url, cookiefile=COOKIE_PATH)
+    except yt_dlp_lib.utils.DownloadError as e:
+        LOG.error("Erro ao obter informações: %s", e)
+        return jsonify({"error": "info_extraction_failed", "detail": str(e)}), 500
+    except Exception as e:
+        LOG.exception("Erro inesperado")
+        return jsonify({"error": "internal_error", "detail": str(e)}), 500
+
+    # Formata informações relevantes
+    return jsonify({
+        "status": "ok",
+        "id": info.get("id"),
+        "title": info.get("title"),
+        "duration": info.get("duration"),
+        "uploader": info.get("uploader"),
+        "upload_date": info.get("upload_date"),
+        "view_count": info.get("view_count"),
+        "like_count": info.get("like_count"),
+        "description": info.get("description", "")[:500],  # Limita descrição
+        "thumbnail": info.get("thumbnail"),
+        "requested_url": url
+    }), 200
+
+@app.route("/formats", methods=["POST"])
+def formats_endpoint():
+    """Endpoint para listar formatos disponíveis"""
+    if not check_auth(request):
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    url = data.get("url")
+
+    if not url:
+        return jsonify({"error": "missing url"}), 400
+
+    LOG.info("Recebido pedido de formatos para: %s", url)
+    try:
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "listformats": True,
+            "logger": LOG,
+        }
+        
+        if COOKIE_PATH:
+            opts["cookiefile"] = COOKIE_PATH
+        
+        with yt_dlp_lib.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
+        # Extrai informações dos formatos
+        formats = []
+        for f in info.get("formats", []):
+            formats.append({
+                "format_id": f.get("format_id"),
+                "ext": f.get("ext"),
+                "resolution": f.get("resolution", "N/A"),
+                "fps": f.get("fps"),
+                "filesize": f.get("filesize"),
+                "vcodec": f.get("vcodec"),
+                "acodec": f.get("acodec"),
+            })
+        
+        return jsonify({
+            "status": "ok",
+            "title": info.get("title"),
+            "formats": formats,
+            "requested_url": url
+        }), 200
+        
+    except Exception as e:
+        LOG.exception("Erro ao listar formatos")
+        return jsonify({"error": "formats_list_failed", "detail": str(e)}), 500
+
 @app.route("/healthz", methods=["GET"])
 def healthz():
-    return "ok", 200
+    """Endpoint de health check"""
+    cookies_status = "available" if COOKIE_PATH else "not_configured"
+    return jsonify({
+        "status": "healthy",
+        "cookies": cookies_status,
+        "version": "1.0.1"
+    }), 200
+
+@app.route("/", methods=["GET"])
+def root():
+    """Endpoint raiz com documentação básica"""
+    return jsonify({
+        "service": "YouTube Downloader API",
+        "version": "1.0.1",
+        "endpoints": {
+            "/download": "POST - Download video",
+            "/info": "POST - Get video information",
+            "/formats": "POST - List available formats",
+            "/healthz": "GET - Health check"
+        },
+        "authentication": "Bearer token in Authorization header" if SECRET_TOKEN else "Not configured"
+    }), 200
 
 if __name__ == "__main__":
     # Para desenvolvimento local:
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
+    port = int(os.environ.get("PORT", 5000))
+    debug_mode = os.environ.get("DEBUG", "false").lower() == "true"
+    
+    LOG.info(f"Starting server on port {port} (debug={debug_mode})")
+    app.run(host="0.0.0.0", port=port, debug=debug_mode)
