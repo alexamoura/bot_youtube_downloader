@@ -28,6 +28,12 @@ import io
 import yt_dlp
 
 try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
+try:
     import requests
     from bs4 import BeautifulSoup
     REQUESTS_AVAILABLE = True
@@ -302,6 +308,8 @@ class LimitedCache:
     def __init__(self, max_size=500):
         self.cache = OrderedDict()
         self.max_size = max_size
+        self.hit_count = 0
+        self.miss_count = 0
     
     def set(self, key, value):
         """Adiciona item e remove o mais antigo se exceder limite"""
@@ -315,12 +323,28 @@ class LimitedCache:
         """Busca item e marca como recentemente usado"""
         if key in self.cache:
             self.cache.move_to_end(key)
+            self.hit_count += 1
             return self.cache[key]
+        self.miss_count += 1
         return None
     
     def clear(self):
         """Limpa todo o cache"""
         self.cache.clear()
+        self.hit_count = 0
+        self.miss_count = 0
+    
+    def get_stats(self):
+        """Retorna estatísticas de hit/miss"""
+        total = self.hit_count + self.miss_count
+        if total == 0:
+            return {"size": len(self.cache), "hits": 0, "misses": 0, "hit_rate": 0}
+        return {
+            "size": len(self.cache),
+            "hits": self.hit_count,
+            "misses": self.miss_count,
+            "hit_rate": round((self.hit_count / total) * 100, 1)
+        }
 
 # Sessão HTTP compartilhada (singleton) - economiza memória
 _GLOBAL_HTTP_SESSION = None
@@ -358,17 +382,51 @@ def cleanup_and_gc_routine():
     """
     Thread daemon que executa periodicamente:
     1. Limpeza de arquivos temporários antigos
-    2. Garbage collection forçado
+    2. Garbage collection forçado (AGORA MAIS AGRESSIVO)
+    3. Monitoramento de memória
     OTIMIZADO: Executa a cada 30 minutos (reduz CPU em 66%)
     """
+    import psutil
+    
+    process = psutil.Process(os.getpid())
+    last_memory_warning = 0
+    
     while True:
         time.sleep(1800)  # 30 minutos (otimizado de 600s)
         
         try:
-            # Garbage collection - OTIMIZADO: Apenas geração 0 (5-10x mais rápido)
-            collected = gc.collect(0)
+            # ✅ MELHORIA #1: GC MAIS AGRESSIVO
+            # Coleta todas as gerações (não só geração 0)
+            collected = gc.collect()  # Coleta ALL generations
             if collected > 0:
-                print(f"🗑️ GC: {collected} objetos coletados")
+                LOG.info(f"🗑️ GC agressivo: {collected} objetos coletados")
+            
+            # ✅ MELHORIA #2: Monitoramento de memória em tempo real
+            try:
+                mem_mb = process.memory_info().rss / 1024 / 1024
+                mem_percent = process.memory_percent()
+                
+                now = time.time()
+                if mem_mb > 450 and (now - last_memory_warning) > 300:  # Avisa a cada 5 min
+                    LOG.warning(f"⚠️ MEMÓRIA ALTA: {mem_mb:.1f} MB ({mem_percent:.1f}%) - Executando GC extra")
+                    gc.collect()
+                    gc.collect()  # Duplo GC para emergência
+                    last_memory_warning = now
+                    
+                    # Debug: Força limpeza de cache se > 400 itens
+                    if hasattr(sys.modules.get('__main__'), 'cookie_cache'):
+                        cache = sys.modules['__main__'].cookie_cache.cache
+                        if len(cache) > 400:
+                            LOG.info(f"🧹 Cache grande detectado ({len(cache)} items), reduzindo...")
+                            # Remove 30% dos itens
+                            to_remove = max(1, len(cache) // 3)
+                            for _ in range(to_remove):
+                                try:
+                                    cache.popitem(last=False)
+                                except:
+                                    break
+            except Exception as e:
+                LOG.debug(f"⚠️ Erro ao monitorar memória: {e}")
             
             # Limpeza de arquivos temporários - OTIMIZADO: 1 varredura em vez de 6
             one_hour_ago = time.time() - 3600
@@ -378,11 +436,14 @@ def cleanup_and_gc_routine():
             try:
                 for filename in os.listdir('/tmp'):
                     if filename.endswith(('.mp4', '.jpg', '.jpeg', '.webm', '.png')) or \
-                       filename.startswith('ytdl_'):
+                       filename.startswith('ytdl_') or filename.startswith('yt-dlp'):
                         filepath = os.path.join('/tmp', filename)
                         try:
                             if os.path.getmtime(filepath) < one_hour_ago:
-                                os.unlink(filepath)
+                                if os.path.isdir(filepath):
+                                    shutil.rmtree(filepath, ignore_errors=True)
+                                else:
+                                    os.unlink(filepath)
                                 cleaned_count += 1
                         except Exception:
                             pass
@@ -390,7 +451,7 @@ def cleanup_and_gc_routine():
                 pass
             
             if cleaned_count > 0:
-                print(f"🧹 Limpeza: {cleaned_count} arquivos temporários removidos")
+                LOG.info(f"🧹 Limpeza: {cleaned_count} arquivos temporários removidos")
             
             # OTIMIZAÇÃO #2: Limpar ACTIVE_DOWNLOADS órfãos (downloads travados >30min)
             now = time.time()
@@ -827,6 +888,7 @@ else:
 
 # Estado Global
 PENDING = LimitedCache(max_size=200)  # OTIMIZADO: Reduzido de 1000 para economizar memória (~80% menos RAM)
+COOKIE_CACHE = LimitedCache(max_size=1000)  # ✅ NOVO: Cache para cookies com limite de memória
 DB_LOCK = threading.Lock()
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)  # Controle de fila
 ACTIVE_DOWNLOADS = {}  # Rastreamento de downloads ativos
@@ -3750,6 +3812,22 @@ def health():
         "last_flask_activity": datetime.fromtimestamp(LAST_ACTIVITY["flask"]).isoformat()
     })
 
+    # ✅ MELHORIA: Adiciona info de memória ao health check
+    if PSUTIL_AVAILABLE:
+        try:
+            process = psutil.Process(os.getpid())
+            mem_info = process.memory_info()
+            mem_mb = mem_info.rss / 1024 / 1024
+            mem_percent = process.memory_percent()
+            
+            checks["memory"] = {
+                "rss_mb": round(mem_mb, 1),
+                "percent": round(mem_percent, 1),
+                "status": "🟢 OK" if mem_mb < 400 else "🟡 WARNING" if mem_mb < 480 else "🔴 CRITICAL"
+            }
+        except Exception as e:
+            LOG.debug(f"Erro ao obter info de memória: {e}")
+
     # ✅ Sempre retorna 200 OK, mesmo se monitor indicar problema
     return checks, 200
     
@@ -3783,6 +3861,64 @@ def health():
         status_code = 200
     
     return checks, status_code
+
+# ════════════════════════════════════════════════════════════════
+# 📊 MONITORAMENTO DE MEMÓRIA (NOVO)
+# ════════════════════════════════════════════════════════════════
+
+@app.route("/health/memory")
+def health_memory():
+    """Endpoint para monitorar memória em tempo real"""
+    if not PSUTIL_AVAILABLE:
+        return {"error": "psutil não instalado"}, 501
+    
+    try:
+        process = psutil.Process(os.getpid())
+        mem_info = process.memory_info()
+        mem_mb = mem_info.rss / 1024 / 1024
+        mem_percent = process.memory_percent()
+        
+        # Info de cache
+        cache_stats = {}
+        if hasattr(COOKIE_CACHE, 'get_stats'):
+            cache_stats = COOKIE_CACHE.get_stats()
+        
+        return {
+            "memory": {
+                "rss_mb": round(mem_mb, 1),
+                "vms_mb": round(mem_info.vms / 1024 / 1024, 1),
+                "percent": round(mem_percent, 1),
+                "limit_mb": 512,
+                "remaining_mb": round(512 - mem_mb, 1),
+                "status": "🟢 OK" if mem_mb < 400 else "🟡 WARNING" if mem_mb < 480 else "🔴 CRITICAL"
+            },
+            "cache": cache_stats,
+            "active_downloads": len(ACTIVE_DOWNLOADS),
+            "pending_tasks": len(PENDING.cache) if hasattr(PENDING, 'cache') else 0,
+            "timestamp": datetime.now().isoformat()
+        }, 200
+    
+    except Exception as e:
+        LOG.error(f"Erro ao retornar memória: {e}")
+        return {"error": str(e)}, 500
+
+# ════════════════════════════════════════════════════════════════
+# 📊 CACHE STATS (NOVO)
+# ════════════════════════════════════════════════════════════════
+
+@app.route("/health/cache")
+def health_cache():
+    """Endpoint para monitorar stats de cache"""
+    try:
+        stats = {
+            "cookie_cache": COOKIE_CACHE.get_stats() if hasattr(COOKIE_CACHE, 'get_stats') else {},
+            "active_downloads": len(ACTIVE_DOWNLOADS),
+            "pending_tasks": len(PENDING.cache) if hasattr(PENDING, 'cache') else 0,
+            "timestamp": datetime.now().isoformat()
+        }
+        return stats, 200
+    except Exception as e:
+        return {"error": str(e)}, 500
 
 # ============================
 # MERCADOPAGO
