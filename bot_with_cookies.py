@@ -59,8 +59,55 @@ except ImportError:
     GROQ_AVAILABLE = False
 
 # ════════════════════════════════════════════════════════════════
-# 🔄 SISTEMA DE AUTO-RECUPERAÇÃO E KEEPALIVE
+# 🌍 CONFIGURAÇÃO DE TIMEZONE - BRASÍLIA (UTC-3)
 # ════════════════════════════════════════════════════════════════
+
+from datetime import datetime, timezone, timedelta
+
+# Timezone de Brasília (UTC-3)
+TIMEZONE_BRASILIA = timezone(timedelta(hours=-3))
+
+def get_brasilia_time():
+    """Retorna hora atual no fuso horário de Brasília"""
+    return datetime.now(TIMEZONE_BRASILIA)
+
+def format_brasilia_time(dt=None):
+    """Formata datetime para padrão brasileiro (dd/mm/yyyy HH:MM:SS)"""
+    if dt is None:
+        dt = get_brasilia_time()
+    elif dt.tzinfo is None:
+        # Se for naive, assume que é UTC e converte
+        dt = dt.replace(tzinfo=timezone.utc).astimezone(TIMEZONE_BRASILIA)
+    else:
+        dt = dt.astimezone(TIMEZONE_BRASILIA)
+    return dt.strftime("%d/%m/%Y %H:%M:%S")
+
+# ════════════════════════════════════════════════════════════════
+# 🔐 CONFIGURAÇÃO DE OWNER/ADMIN
+# ════════════════════════════════════════════════════════════════
+
+# ID do owner (seu ID no Telegram)
+OWNER_ID = 6766920288
+
+def is_owner(user_id: int) -> bool:
+    """Verifica se o usuário é o owner do bot"""
+    return user_id == OWNER_ID
+
+async def check_owner_permission(update: Update) -> bool:
+    """
+    Verifica se o usuário tem permissão de owner
+    Retorna True se é owner, False caso contrário
+    """
+    user_id = update.effective_user.id
+    if not is_owner(user_id):
+        await update.message.reply_text(
+            "🔒 <b>Comando Restrito</b>\n\n"
+            "Este comando é destinado apenas ao administrador do bot.",
+            parse_mode="HTML"
+        )
+        LOG.warning(f"⚠️ Tentativa de acesso não autorizado ao comando por usuário {user_id}")
+        return False
+    return True
 
 from datetime import datetime
 
@@ -103,7 +150,7 @@ class BotHealthMonitor:
             "flask_inactive_seconds": int(flask_inactive),
             "webhook_errors": self.webhook_errors,
             "uptime": int(now - self.last_health_check),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": get_brasilia_time().isoformat()
         }
 
         # 🟢 Estado inicial
@@ -1881,11 +1928,22 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     LOG.info("Comando /start executado por usuário %d", user_id)
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para o comando /stats (apenas admin)"""
+    """
+    Handler para o comando /stats
+    
+    ⚠️ RESTRITO: Apenas o owner do bot pode executar este comando
+    """
+    user_id = update.effective_user.id
+    
+    # ✅ NOVO: Verifica se é o owner
+    if not await check_owner_permission(update):
+        return
+    
+    LOG.info("📊 Comando /stats executado por OWNER %d", user_id)
+    
     count = get_monthly_users_count()
     stats_text = MESSAGES["stats"].format(count=count)
     await update.message.reply_text(stats_text, parse_mode="HTML")
-    LOG.info("Comando /stats executado")
 
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para o comando /status - mostra saldo de downloads"""
@@ -2147,6 +2205,8 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handler para o comando /mensal - Relatório detalhado de assinantes premium
     
+    ⚠️ RESTRITO: Apenas o owner do bot pode executar este comando
+    
     Mostra estatísticas completas incluindo:
     - Total de assinantes ativos
     - Novos assinantes do mês
@@ -2157,7 +2217,11 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     user_id = update.effective_user.id
     
-    LOG.info("📊 Comando /mensal executado por usuário %d", user_id)
+    # ✅ NOVO: Verifica se é o owner
+    if not await check_owner_permission(update):
+        return
+    
+    LOG.info("📊 Comando /mensal executado por OWNER %d", user_id)
     
     # Mensagem de carregamento
     loading_msg = await update.message.reply_text(
@@ -3717,7 +3781,7 @@ def diagnostics():
     
     diagnostics_data = {
         "status": "operational",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": get_brasilia_time().isoformat(),
         "system": {
             "uptime_seconds": int(now - health_monitor.last_health_check),
             "python_version": sys.version,
@@ -3800,7 +3864,7 @@ def health():
             "shopee": bool(COOKIE_SHOPEE),
             "instagram": bool(COOKIE_IG)
         },
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": get_brasilia_time().isoformat(),
         "uptime_seconds": int(time.time() - health_monitor.last_health_check)
     }
 
@@ -3808,8 +3872,8 @@ def health():
     health_status = health_monitor.check_health()
     checks.update({
         "monitor": health_status,
-        "last_telegram_activity": datetime.fromtimestamp(LAST_ACTIVITY["telegram"]).isoformat(),
-        "last_flask_activity": datetime.fromtimestamp(LAST_ACTIVITY["flask"]).isoformat()
+        "last_telegram_activity": format_brasilia_time(datetime.fromtimestamp(LAST_ACTIVITY["telegram"])),
+        "last_flask_activity": format_brasilia_time(datetime.fromtimestamp(LAST_ACTIVITY["flask"]))
     })
 
     # ✅ MELHORIA: Adiciona info de memória ao health check
@@ -3895,7 +3959,7 @@ def health_memory():
             "cache": cache_stats,
             "active_downloads": len(ACTIVE_DOWNLOADS),
             "pending_tasks": len(PENDING.cache) if hasattr(PENDING, 'cache') else 0,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": get_brasilia_time().isoformat()
         }, 200
     
     except Exception as e:
@@ -3914,7 +3978,7 @@ def health_cache():
             "cookie_cache": COOKIE_CACHE.get_stats() if hasattr(COOKIE_CACHE, 'get_stats') else {},
             "active_downloads": len(ACTIVE_DOWNLOADS),
             "pending_tasks": len(PENDING.cache) if hasattr(PENDING, 'cache') else 0,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": get_brasilia_time().isoformat()
         }
         return stats, 200
     except Exception as e:
