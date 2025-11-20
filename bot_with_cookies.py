@@ -59,6 +59,28 @@ except ImportError:
     GROQ_AVAILABLE = False
 
 # ════════════════════════════════════════════════════════════════
+# 📱 IMPORTS DO TELEGRAM (necessário cedo no arquivo)
+# ════════════════════════════════════════════════════════════════
+
+try:
+    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.ext import (
+        Application,
+        ApplicationBuilder,
+        ContextTypes,
+        CommandHandler,
+        MessageHandler,
+        CallbackQueryHandler,
+        filters,
+    )
+    from telegram.constants import ParseMode
+    TELEGRAM_AVAILABLE = True
+except ImportError:
+    TELEGRAM_AVAILABLE = False
+    Update = None  # Placeholder se telegram não estiver disponível
+    ParseMode = None
+
+# ════════════════════════════════════════════════════════════════
 # 🌍 CONFIGURAÇÃO DE TIMEZONE - BRASÍLIA (UTC-3)
 # ════════════════════════════════════════════════════════════════
 
@@ -853,15 +875,8 @@ WATERMARK_REMOVER = WatermarkRemover()
 
 
 from flask import Flask, request, jsonify
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters,
-)
+
+# ✅ Imports do telegram já foram adicionados no início do arquivo
 
 # Configuração de Logging Otimizada
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()  # Configurável via env
@@ -4154,7 +4169,7 @@ def render_webhook():
 # CALLBACKS DE PAGAMENTO (ANTES DO APP.RUN)
 # ============================
 
-from telegram.constants import ParseMode
+# ✅ ParseMode já foi importado no início do arquivo
 
 async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para callback de assinatura premium"""
