@@ -815,6 +815,9 @@ if not TOKEN:
 
 LOG.info("TELEGRAM_BOT_TOKEN presente (len=%d).", len(TOKEN))
 
+# 🔐 ID DO ADMINISTRADOR - Apenas este usuário pode usar /mensal e /stats
+ADMIN_ID = 6766920288  # ← ALTERE AQUI se necessário
+
 # Constantes do Sistema
 URL_RE = re.compile(r"(https?://[^\s]+)")
 DB_FILE = os.getenv("DB_FILE", "/data/users.db") if os.path.exists("/data") else "users.db"
@@ -1851,12 +1854,28 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(welcome_text, parse_mode="HTML")
     LOG.info("Comando /start executado por usuário %d", user_id)
 
+# ═══════════════════════════════════════════════════════════════
+# 🔐 PROTEÇÃO DE ADMIN
+# ═══════════════════════════════════════════════════════════════
+
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para o comando /stats (apenas admin)"""
+    user_id = update.effective_user.id
+    
+    # 🔐 PROTEÇÃO: Apenas admin pode usar este comando
+    if user_id != ADMIN_ID:
+        await update.message.reply_text(
+            "❌ <b>Acesso Negado</b>\n\n"
+            "Este comando é restrito apenas ao administrador.",
+            parse_mode="HTML"
+        )
+        LOG.warning("⚠️ Usuário %d tentou acessar /stats (não autorizado)", user_id)
+        return
+    
     count = get_monthly_users_count()
     stats_text = MESSAGES["stats"].format(count=count)
     await update.message.reply_text(stats_text, parse_mode="HTML")
-    LOG.info("Comando /stats executado")
+    LOG.info("📊 Comando /stats executado por ADMIN %d", user_id)
 
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para o comando /status - mostra saldo de downloads"""
@@ -2118,6 +2137,8 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handler para o comando /mensal - Relatório detalhado de assinantes premium
     
+    🔐 RESTRITO: Apenas administrador pode usar
+    
     Mostra estatísticas completas incluindo:
     - Total de assinantes ativos
     - Novos assinantes do mês
@@ -2128,7 +2149,17 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     user_id = update.effective_user.id
     
-    LOG.info("📊 Comando /mensal executado por usuário %d", user_id)
+    # 🔐 PROTEÇÃO: Apenas admin pode usar este comando
+    if user_id != ADMIN_ID:
+        await update.message.reply_text(
+            "❌ <b>Acesso Negado</b>\n\n"
+            "Este comando é restrito apenas ao administrador.",
+            parse_mode="HTML"
+        )
+        LOG.warning("⚠️ Usuário %d tentou acessar /mensal (não autorizado)", user_id)
+        return
+    
+    LOG.info("📊 Comando /mensal executado por ADMIN %d", user_id)
     
     # Mensagem de carregamento
     loading_msg = await update.message.reply_text(
@@ -2636,7 +2667,7 @@ async def get_video_info(url: str) -> dict:
         # 🔧 FIX CONEXÃO YOUTUBE: Aumenta timeouts e retries para evitar "Connection refused"
         "socket_timeout": 60,  # 60s timeout (aumentado de 30s)
         "http_chunk_size": 262144,  # 256KB chunks (mais estável)
-        "retries": {"default": 25, "http_429": 25, "http_503": 25, "socket_timeout": 25},
+        "retries": 25,  # ✅ CORRIGIDO: Número simples (não dicionário)
         "skip_unavailable_fragments": True,  # Evita falhar com fragmentos indisponíveis
         "force_ipv4": True,  # Força IPv4 (mais estável)
         # Headers padrão para evitar bloqueios
@@ -2657,7 +2688,7 @@ async def get_video_info(url: str) -> dict:
                 "Origin": "https://shopee.com.br",
             },
             "socket_timeout": 60,
-            "retries": {"default": 25, "http_429": 25, "http_503": 25},
+            "retries": 25,  # ✅ CORRIGIDO: Número simples
         })
         LOG.info("🛍️ Configurações especiais para Shopee aplicadas")
     
@@ -3471,7 +3502,7 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         "force_ipv4": True,
         "socket_timeout": 60,  # Aumentado de 30s para 60s
         "http_chunk_size": 262144,  # 256KB (mais estável que 512KB)
-        "retries": {"default": 25, "http_429": 25, "http_503": 25, "socket_timeout": 25},
+        "retries": 25,  # ✅ CORRIGIDO: Número simples (não dicionário)
         "fragment_retries": 25,  # Aumentado significativamente
         "no_check_certificate": True,
         "prefer_insecure": True,
@@ -3512,7 +3543,7 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
             "noprogress": False,
             "keep_fragments": False,
             "socket_timeout": 60,  # Aumentado para Shopee também
-            "retries": {"default": 25, "http_429": 25, "http_503": 25},
+            "retries": 25,  # ✅ CORRIGIDO: Número simples
         })
     
     # Adiciona cookies apropriados
