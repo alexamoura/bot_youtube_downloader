@@ -133,6 +133,14 @@ async def check_owner_permission(update: Update) -> bool:
 
 from datetime import datetime
 
+# ════════════════════════════════════════════════════════════════
+# 💾 CONFIGURAÇÕES DE MEMÓRIA - OTIMIZAÇÃO CRÍTICA
+# ════════════════════════════════════════════════════════════════
+
+# Limites de tamanho de arquivo (em MB) - CRITICAL para Render 512MB
+MAX_VIDEO_SIZE_MB = 40  # Reduzido para estar seguro no Render
+MAX_FILE_UPLOAD_SIZE_MB = 48  # Máximo do Telegram é 50MB
+
 # Configurações do sistema de keepalive
 KEEPALIVE_ENABLED = os.getenv("KEEPALIVE_ENABLED", "true").lower() == "true"
 KEEPALIVE_INTERVAL = int(os.getenv("KEEPALIVE_INTERVAL", "600"))  # 10 minutos (otimizado de 300s - reduz CPU em 50%)
@@ -453,7 +461,9 @@ def cleanup_and_gc_routine():
     1. Limpeza de arquivos temporários antigos
     2. Garbage collection forçado (AGORA MAIS AGRESSIVO)
     3. Monitoramento de memória
-    OTIMIZADO: Executa a cada 30 minutos (reduz CPU em 66%)
+    
+    ✅ OTIMIZAÇÃO DE MEMÓRIA: Executa a cada 10 minutos (ao invés de 30)
+    para evitar acúmulo de lixo durante downloads
     """
     import psutil
     
@@ -461,51 +471,78 @@ def cleanup_and_gc_routine():
     last_memory_warning = 0
     
     while True:
-        time.sleep(1800)  # 30 minutos (otimizado de 600s)
+        time.sleep(600)  # 10 minutos (reduzido de 30 para ser mais agressivo)
         
         try:
-            # ✅ MELHORIA #1: GC MAIS AGRESSIVO
+            # ✅ MELHORIA #1: GC EXTREMAMENTE AGRESSIVO
             # Coleta todas as gerações (não só geração 0)
-            collected = gc.collect()  # Coleta ALL generations
+            gc.collect()  # Geração 2
+            gc.collect()  # Geração 1  
+            collected = gc.collect()  # Geração 0
+            
             if collected > 0:
                 LOG.info(f"🗑️ GC agressivo: {collected} objetos coletados")
             
             # ✅ MELHORIA #2: Monitoramento de memória em tempo real
             try:
-                mem_mb = process.memory_info().rss / 1024 / 1024
+                mem_info = process.memory_info()
+                mem_mb = mem_info.rss / 1024 / 1024
                 mem_percent = process.memory_percent()
                 
+                LOG.debug(f"💾 Memória atual: {mem_mb:.1f}MB ({mem_percent:.1f}%)")
+                
                 now = time.time()
-                if mem_mb > 450 and (now - last_memory_warning) > 300:  # Avisa a cada 5 min
-                    LOG.warning(f"⚠️ MEMÓRIA ALTA: {mem_mb:.1f} MB ({mem_percent:.1f}%) - Executando GC extra")
-                    gc.collect()
-                    gc.collect()  # Duplo GC para emergência
-                    last_memory_warning = now
+                
+                # Alerta em 3 níveis
+                if mem_mb > 480:  # CRÍTICO - próximo do limite 512MB
+                    if (now - last_memory_warning) > 60:  # Alerta a cada 1 min
+                        LOG.critical(f"🔴 MEMÓRIA CRÍTICA: {mem_mb:.1f}MB ({mem_percent:.1f}%)")
+                        gc.collect()
+                        gc.collect()
+                        gc.collect()  # Triplo GC para emergência
+                        last_memory_warning = now
+                        
+                        # Force cleanup de temp
+                        cleanup_temp_files()
+                        
+                elif mem_mb > 400:  # AVISO - ocupação alta
+                    if (now - last_memory_warning) > 300:  # Alerta a cada 5 min
+                        LOG.warning(f"🟡 MEMÓRIA ALTA: {mem_mb:.1f}MB ({mem_percent:.1f}%)")
+                        gc.collect()
+                        gc.collect()  # Duplo GC
+                        last_memory_warning = now
+                        
+                else:  # OK
+                    LOG.debug(f"🟢 Memória OK: {mem_mb:.1f}MB")
                     
-                    # Debug: Força limpeza de cache se > 400 itens
+                    # Debug: Força limpeza de cache se > 300 itens
                     if hasattr(sys.modules.get('__main__'), 'cookie_cache'):
-                        cache = sys.modules['__main__'].cookie_cache.cache
-                        if len(cache) > 400:
-                            LOG.info(f"🧹 Cache grande detectado ({len(cache)} items), reduzindo...")
-                            # Remove 30% dos itens
-                            to_remove = max(1, len(cache) // 3)
-                            for _ in range(to_remove):
-                                try:
-                                    cache.popitem(last=False)
-                                except:
-                                    break
+                        try:
+                            cache = sys.modules['__main__'].cookie_cache.cache
+                            if len(cache) > 300:
+                                LOG.info(f"🧹 Cache grande detectado ({len(cache)} items), reduzindo...")
+                                # Remove 40% dos itens
+                                to_remove = max(1, len(cache) // 2.5)
+                                for _ in range(to_remove):
+                                    try:
+                                        cache.popitem(last=False)
+                                    except:
+                                        break
+                        except Exception as e:
+                            LOG.debug(f"Erro ao gerenciar cache: {e}")
+                            
             except Exception as e:
                 LOG.debug(f"⚠️ Erro ao monitorar memória: {e}")
             
-            # Limpeza de arquivos temporários - OTIMIZADO: 1 varredura em vez de 6
+            # Limpeza agressiva de arquivos temporários - OTIMIZADO: 1 varredura
             one_hour_ago = time.time() - 3600
             cleaned_count = 0
             
-            # Varre /tmp apenas 1 vez (83% menos I/O)
+            # Varre /tmp apenas 1 vez
             try:
                 for filename in os.listdir('/tmp'):
-                    if filename.endswith(('.mp4', '.jpg', '.jpeg', '.webm', '.png')) or \
-                       filename.startswith('ytdl_') or filename.startswith('yt-dlp'):
+                    if filename.endswith(('.mp4', '.jpg', '.jpeg', '.webm', '.png', '.mkv', '.avi')) or \
+                       filename.startswith(('ytdl_', 'yt-dlp', 'ytdlp_', 'download_')):
                         filepath = os.path.join('/tmp', filename)
                         try:
                             if os.path.getmtime(filepath) < one_hour_ago:
@@ -1413,40 +1450,129 @@ def get_youtube_format_by_quality(quality: str) -> str:
     return quality_formats.get(quality, "best")
 
 def get_format_for_url(url: str, quality: str = None) -> str:
-    """Retorna o formato apropriado baseado na plataforma - OTIMIZADO PARA 50MB
+    """Retorna o formato apropriado baseado na plataforma - OTIMIZADO PARA 40MB
     
+    ✅ OTIMIZAÇÃO DE MEMÓRIA: Limita tamanho de arquivo por plataforma
     Compatível com yt-dlp>=2025.11.12
     
     Args:
         url: URL do vídeo
         quality: Qualidade para YouTube (360p, 480p, 720p, 1080p, best).
-                 Se None, usa padrão (720p para YouTube)
+                 Se None, usa padrão (480p para economizar memória)
     """
     url_lower = url.lower()
 
     # Shopee: melhor qualidade disponível (geralmente já é pequeno)
     if 'shopee' in url_lower or 'shope.ee' in url_lower:
-        LOG.info("🛍️ Formato Shopee: best (otimizado)")
-        return "best[filesize<50M]/best"
+        LOG.info("🛍️ Formato Shopee: best[filesize<35M] (otimizado para memória)")
+        return "best[filesize<35M]/best"
 
     # Instagram: formato único já otimizado
     elif 'instagram' in url_lower or 'insta' in url_lower:
-        LOG.info("📸 Formato Instagram: best (otimizado)")
-        return "best"
+        LOG.info("📸 Formato Instagram: best[filesize<30M] (otimizado para memória)")
+        return "best[filesize<30M]/best"
+    
+    # TikTok: qualidade reduzida para poupar memória
+    elif 'tiktok' in url_lower or 'tik.tiktok' in url_lower:
+        LOG.info("🎵 Formato TikTok: best[filesize<25M] (otimizado para memória)")
+        return "best[filesize<25M]/best"
+    
+    # Twitter/X: vídeos geralmente pequenos
+    elif 'twitter' in url_lower or 'x.com' in url_lower or 'twitter.com' in url_lower:
+        LOG.info("🐦 Formato Twitter: best[filesize<30M] (otimizado para memória)")
+        return "best[filesize<30M]/best"
 
-    # YouTube: permite escolha de qualidade
+    # YouTube: permite escolha de qualidade, MAS com limite de tamanho
     elif 'youtube' in url_lower or 'youtu.be' in url_lower:
         if quality:
-            LOG.info("🎥 Formato YouTube: %s (escolhido pelo usuário)", quality)
-            return get_youtube_format_by_quality(quality)
+            fmt = get_youtube_format_by_quality(quality)
+            # Adiciona limite de tamanho mesmo com qualidade escolhida
+            LOG.info("🎥 Formato YouTube: %s (escolhido) [filesize<40M] (otimizado para memória)", quality)
+            return f"{fmt}[filesize<40M]/{fmt}"
         else:
-            LOG.info("🎥 Formato YouTube: 720p (padrão)")
-            return get_youtube_format_by_quality("720p")
+            # Padrão: 480p para economizar memória (ao invés de 720p)
+            fmt = get_youtube_format_by_quality("480p")
+            LOG.info("🎥 Formato YouTube: 480p (padrão otimizado) [filesize<40M]")
+            return f"{fmt}[filesize<40M]/{fmt}"
     
     # Outras plataformas: formato otimizado
     else:
-        LOG.info("🎬 Formato padrão: best")
-        return "best"
+        LOG.info("🎬 Formato padrão: best[filesize<40M] (otimizado para memória)")
+        return "best[filesize<40M]/best"
+
+# ════════════════════════════════════════════════════════════════
+# 🔍 VALIDAÇÃO PRÉ-DOWNLOAD - NOVO PARA ECONOMIA DE MEMÓRIA
+# ════════════════════════════════════════════════════════════════
+
+async def validate_video_before_download(url: str) -> tuple:
+    """
+    ✅ Valida tamanho do vídeo ANTES de baixar
+    Economiza banda e memória se vídeo for muito grande
+    
+    Retorna: (is_valid: bool, size_mb: float, title: str)
+    """
+    try:
+        LOG.info(f"🔍 Validando vídeo: {url[:80]}")
+        
+        with yt_dlp.YoutubeDL({
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,  # NÃO baixa, só valida
+            "socket_timeout": 15,
+            "no_cache_dir": True,
+        }) as ydl:
+            info = await asyncio.to_thread(ydl.extract_info, url, download=False)
+            
+            # Tentar obter tamanho exato
+            size = info.get('filesize')
+            
+            # Se não tiver, tentar aproximado
+            if not size:
+                size = info.get('filesize_approx')
+            
+            title = info.get('title', 'Vídeo')[:50]  # Limita título a 50 chars
+            
+            # Se ainda não souber tamanho, deixar passar (melhor tentar)
+            if not size:
+                LOG.warning(f"⚠️ Tamanho desconhecido para: {title}")
+                return True, 0, title
+            
+            size_mb = size / (1024 * 1024)
+            
+            # Validar contra limite
+            if size_mb > MAX_VIDEO_SIZE_MB:
+                LOG.warning(f"❌ Vídeo muito grande: {size_mb:.1f}MB > {MAX_VIDEO_SIZE_MB}MB")
+                return False, size_mb, title
+            
+            LOG.info(f"✅ Validação OK: '{title}' ({size_mb:.1f}MB)")
+            return True, size_mb, title
+        
+    except Exception as e:
+        LOG.warning(f"⚠️ Erro ao validar: {e}")
+        # Se erro na validação, deixar tentar mesmo assim
+        return True, 0, "Vídeo"
+
+async def get_memory_stats() -> dict:
+    """Retorna estatísticas de memória (se psutil disponível)"""
+    if not PSUTIL_AVAILABLE:
+        return {}
+    
+    try:
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        
+        return {
+            "rss_mb": memory_info.rss / (1024 * 1024),      # Memória residente
+            "vms_mb": memory_info.vms / (1024 * 1024),      # Memória virtual
+            "percent": process.memory_percent(),             # % do sistema
+            "timestamp": get_brasilia_time().isoformat()
+        }
+    except Exception:
+        return {}
+
+# ════════════════════════════════════════════════════════════════
+
+def get_format_for_url_OLD(url: str, quality: str = None) -> str:
 
 
 def resolve_shopee_universal_link(url: str) -> str:
@@ -2610,6 +2736,23 @@ Comandos:
     
     # Obtém informações do vídeo (para não-Shopee)
     try:
+        # ✅ NOVO: Validar tamanho ANTES de tentar extrair informações completas
+        is_valid, size_mb, title = await validate_video_before_download(url)
+        
+        if not is_valid:
+            await processing_msg.edit_text(
+                f"❌ <b>Vídeo Muito Grande</b>\n\n"
+                f"Tamanho: {size_mb:.1f}MB\n"
+                f"Máximo permitido: {MAX_VIDEO_SIZE_MB}MB\n\n"
+                f"💡 <b>Solução:</b> Use baixar em qualidade menor",
+                parse_mode="HTML"
+            )
+            LOG.info(f"Vídeo rejeitado: {size_mb:.1f}MB > {MAX_VIDEO_SIZE_MB}MB")
+            return
+        
+        if size_mb > 0:
+            LOG.info(f"✅ Validação de memória OK: {size_mb:.1f}MB < {MAX_VIDEO_SIZE_MB}MB")
+        
         video_info = await get_video_info(url)
         
         if not video_info:
@@ -2734,11 +2877,15 @@ async def get_video_info(url: str) -> dict:
         "extract_flat": False,
         "no_check_certificate": True,
         "prefer_insecure": True,
-        # OTIMIZAÇÃO #3: Reduz uso de memória do yt-dlp (50-70% menos RAM)
+        # ════════════════════════════════════════════════════════════
+        # ✅ OTIMIZAÇÃO #1: Reduz uso de memória do yt-dlp (50-70% menos RAM)
+        # ════════════════════════════════════════════════════════════
         "no_cache_dir": True,  # Desabilita cache em disco
         "extractor_retries": 2,  # Reduz tentativas (padrão: 3)
         "fragment_retries": 2,   # Reduz retries de fragmentos
-        "buffersize": 1024 * 64,  # 64KB buffer (padrão: 1024KB)
+        "buffersize": 1024 * 64,  # 64KB buffer (padrão: 1024KB) - REDUZ MEMÓRIA
+        "socket_timeout": 30,  # Timeout de conexão
+        "http_chunk_size": 1024 * 1024,  # Download em chunks de 1MB ao invés de tudo de uma vez
         # Adiciona formato otimizado para yt-dlp 2025.11.12+
         "format": get_format_for_url(url),
     }
@@ -3940,6 +4087,108 @@ def health():
         status_code = 200
     
     return checks, status_code
+
+# ════════════════════════════════════════════════════════════════
+# 🧹 LIMPEZA DE MEMÓRIA AGRESSIVA (NOVO - CRÍTICO PARA OTIMIZAÇÃO)
+# ════════════════════════════════════════════════════════════════
+
+def cleanup_temp_files():
+    """Limpeza agressiva de arquivos temporários"""
+    try:
+        temp_patterns = [
+            "/tmp/*ytdl*",
+            "/tmp/*download*",
+            "/tmp/*video*",
+            f"{tempfile.gettempdir()}/*ytdl*",
+        ]
+        
+        for pattern in temp_patterns:
+            for file_path in glob.glob(pattern):
+                try:
+                    if os.path.isfile(file_path):
+                        os.remove(file_path)
+                    elif os.path.isdir(file_path):
+                        shutil.rmtree(file_path)
+                except Exception as e:
+                    LOG.debug(f"Erro ao limpar {file_path}: {e}")
+        
+        LOG.debug("✅ Limpeza de arquivos temporários executada")
+    except Exception as e:
+        LOG.warning(f"⚠️ Erro na limpeza de temp: {e}")
+
+async def send_video_with_cleanup(context, chat_id, video_path: str, caption: str = "") -> bool:
+    """
+    ✅ Envia vídeo para Telegram com streaming (economiza memória)
+    DEPOIS remove arquivo e força garbage collection
+    
+    Args:
+        context: Context do Telegram
+        chat_id: Chat ID
+        video_path: Caminho do arquivo de vídeo
+        caption: Legenda do vídeo
+    
+    Returns:
+        bool: True se enviado com sucesso, False caso contrário
+    """
+    temp_dir = None
+    
+    try:
+        # Validar arquivo
+        if not os.path.exists(video_path):
+            LOG.error(f"❌ Arquivo não encontrado: {video_path}")
+            return False
+        
+        file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+        
+        # Validar tamanho máximo Telegram (50MB)
+        if file_size_mb > MAX_FILE_UPLOAD_SIZE_MB:
+            LOG.error(f"❌ Arquivo exceeds Telegram limit: {file_size_mb:.1f}MB > {MAX_FILE_UPLOAD_SIZE_MB}MB")
+            return False
+        
+        LOG.info(f"📤 Enviando vídeo para Telegram: {file_size_mb:.1f}MB")
+        
+        # ✅ OTIMIZAÇÃO: Usar streaming ao invés de ler tudo na memória
+        with open(video_path, 'rb') as video_file:
+            await context.bot.send_video(
+                chat_id=chat_id,
+                video=video_file,
+                caption=caption,
+                write_timeout=120,  # 2 minutos
+                connect_timeout=30,
+                read_timeout=30,
+            )
+        
+        LOG.info("✅ Vídeo enviado com sucesso")
+        return True
+        
+    except Exception as e:
+        LOG.error(f"❌ Erro ao enviar vídeo: {e}")
+        return False
+    
+    finally:
+        # ✅ LIMPEZA OBRIGATÓRIA
+        try:
+            # 1. Remover arquivo
+            if os.path.exists(video_path):
+                os.remove(video_path)
+                LOG.info(f"🗑️ Arquivo removido: {video_path}")
+        except Exception as e:
+            LOG.warning(f"⚠️ Erro ao remover arquivo: {e}")
+        
+        try:
+            # 2. Remover diretório temporário se existir
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+                LOG.info(f"🗑️ Diretório temp removido: {temp_dir}")
+        except Exception as e:
+            LOG.warning(f"⚠️ Erro ao remover diretório: {e}")
+        
+        # 3. Limpeza global de temp
+        cleanup_temp_files()
+        
+        # 4. FORÇAR garbage collection
+        gc.collect()
+        LOG.info("♻️ Garbage collection executado")
 
 # ════════════════════════════════════════════════════════════════
 # 📊 MONITORAMENTO DE MEMÓRIA (NOVO)
