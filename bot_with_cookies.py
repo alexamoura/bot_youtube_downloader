@@ -984,8 +984,7 @@ logging.basicConfig(
         ) if os.path.exists('/tmp') else logging.StreamHandler()
     ]
 )
-LOG = logging.getLogger("ytbot")
-LOG.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))  # Usa mesma config
+# LOG já foi definido anteriormente (linha 202)
 
 
 # Token do Bot
