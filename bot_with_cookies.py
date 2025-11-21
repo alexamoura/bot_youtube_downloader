@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Alex Moura
+Alex Moura.
 Versão: 2.1 (21/11/2025)
 """
 
