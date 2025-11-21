@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Autor: Alex Moura com auxilio de IA
-Versão: 1.0 (21/11/2025)
+Autor: Alex Moura
+Versão: 2.1 (21/11/2025)
 """
 
 # 🔧 FORÇA UTF-8 ENCODING PARA EMOJIS
@@ -192,6 +192,25 @@ class BotHealthMonitor:
 
 # Instância global do monitor
 health_monitor = BotHealthMonitor()
+
+# ════════════════════════════════════════════════════════════════
+# 📝 CONFIGURAR LOGGING (ANTES DE USAR LOG)
+# ════════════════════════════════════════════════════════════════
+LOG = logging.getLogger("ytbot")
+LOG.setLevel(logging.INFO)
+
+# Handler para arquivo
+log_file = "/tmp/ytbot.log"
+file_handler = logging.FileHandler(log_file)
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+LOG.addHandler(file_handler)
+
+# Handler para console
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+LOG.addHandler(console_handler)
 
 # ════════════════════════════════════════════════════════════════
 # ⬇️ SISTEMA DE CONTROLE DE DOWNLOADS SIMULTÂNEOS + LIMPEZA DE MEMÓRIA
