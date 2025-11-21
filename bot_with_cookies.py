@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Autor: Alex Moura
+Alex Moura
 Versão: 2.1 (21/11/2025)
 """
 
@@ -66,8 +66,7 @@ try:
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
-    LOG = logging.getLogger(__name__)  # Log temporário
-    LOG.warning("⚠️ psutil não instalado - monitoramento de memória desabilitado")
+    # LOG será definido posteriormente (linha 202)
 
 # ════════════════════════════════════════════════════════════════
 # 🔄 SISTEMA DE AUTO-RECUPERAÇÃO E KEEPALIVE
@@ -194,23 +193,36 @@ class BotHealthMonitor:
 health_monitor = BotHealthMonitor()
 
 # ════════════════════════════════════════════════════════════════
-# 📝 CONFIGURAR LOGGING (ANTES DE USAR LOG)
+# 📝 CONFIGURAR LOGGING (UMA ÚNICA VEZ - ANTES DE USAR LOG)
 # ════════════════════════════════════════════════════════════════
 LOG = logging.getLogger("ytbot")
 LOG.setLevel(logging.INFO)
 
-# Handler para arquivo
-log_file = "/tmp/ytbot.log"
-file_handler = logging.FileHandler(log_file)
-file_handler.setLevel(logging.INFO)
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-LOG.addHandler(file_handler)
+# REMOVER TODOS OS HANDLERS ANTERIORES (se houver)
+if LOG.hasHandlers():
+    for handler in LOG.handlers[:]:
+        LOG.removeHandler(handler)
 
-# Handler para console
+# Handler para console (para ver nos logs do Render)
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 LOG.addHandler(console_handler)
+
+# Handler para arquivo (se /tmp existe)
+if os.path.exists('/tmp'):
+    try:
+        file_handler = logging.handlers.RotatingFileHandler(
+            '/tmp/ytbot.log',
+            maxBytes=5*1024*1024,  # 5MB
+            backupCount=2,
+            encoding='utf-8'
+        )
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        LOG.addHandler(file_handler)
+    except Exception:
+        pass  # Se falhar, continua apenas com console
 
 # ════════════════════════════════════════════════════════════════
 # ⬇️ SISTEMA DE CONTROLE DE DOWNLOADS SIMULTÂNEOS + LIMPEZA DE MEMÓRIA
@@ -969,22 +981,8 @@ from telegram.ext import (
     filters,
 )
 
-# Configuração de Logging Otimizada
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()  # Configurável via env
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),  # Console
-        logging.handlers.RotatingFileHandler(
-            'bot.log',
-            maxBytes=5*1024*1024,  # 5MB máximo
-            backupCount=2,  # Mantém apenas 2 arquivos de backup
-            encoding='utf-8'
-        ) if os.path.exists('/tmp') else logging.StreamHandler()
-    ]
-)
-# LOG já foi definido anteriormente (linha 202)
+# ✅ Logging já configurado anteriormente (linha 202)
+# NÃO adicionar basicConfig aqui para evitar duplicação de handlers!
 
 
 # Token do Bot
