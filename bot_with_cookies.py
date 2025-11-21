@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
 """
-bot_with_cookies_melhorado.py - Versão Profissional
+bot_with_cookies_melhorado.py - Versão Profissional CORRIGIDA v2.1
 
-Telegram bot IA (webhook) com sistema de controle de downloads e suporte a pagamento PIX - ATUALIZADO EM 08/11/2025 - 10:30HS
+Telegram bot IA (webhook) com sistema de controle de downloads e suporte a pagamento PIX
+✅ Todas as falhas críticas corrigidas
+Versão: 2.1 (21/11/2025)
 """
-import os
+
+# 🔧 FORÇA UTF-8 ENCODING PARA EMOJIS
 import sys
+import io
+if sys.stdout.encoding != 'utf-8':
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+    except:
+        pass
+
+import os
 import tempfile
 import asyncio
 import base64
@@ -729,7 +741,7 @@ class WatermarkRemover:
             position = 'middle_right'
         
         try:
-            LOG.info(f"🎬 Removendo marca d'água (posição: {position})...")
+            LOG.info("🎬 Removendo marca d'água (posição: %s)...", position)
             
             # Cria arquivo temporário
             base, ext = os.path.splitext(video_path)
@@ -754,22 +766,50 @@ class WatermarkRemover:
             )
             
             if result.returncode == 0 and os.path.exists(temp_path):
-                # Substitui original
-                os.remove(video_path)
-                os.rename(temp_path, video_path)
-                LOG.info("✅ Marca d'água removida com sucesso!")
-                return video_path
+                # Substitui original COM VERIFICAÇÃO
+                try:
+                    if os.path.exists(video_path):
+                        os.remove(video_path)
+                    os.rename(temp_path, video_path)
+                    LOG.info("✅ Marca d'água removida com sucesso!")
+                    return video_path
+                except OSError as e:
+                    LOG.error("❌ Falha ao deletar arquivo: %s", e)
+                    # Tenta limpar temp_path
+                    if os.path.exists(temp_path):
+                        try:
+                            os.remove(temp_path)
+                        except OSError:
+                            pass
+                    return video_path
             else:
-                LOG.error(f"❌ FFmpeg falhou: {result.stderr[:200]}")
+                LOG.error("❌ FFmpeg falhou: %s", result.stderr[:200] if result.stderr else "erro desconhecido")
+                # Remove temp_path COM VERIFICAÇÃO
                 if os.path.exists(temp_path):
-                    os.remove(temp_path)
+                    try:
+                        os.remove(temp_path)
+                    except OSError as e:
+                        LOG.warning("⚠️ Falha ao deletar arquivo temp: %s", e)
                 return video_path
                 
         except subprocess.TimeoutExpired:
             LOG.error("❌ Timeout ao remover marca")
+            # Limpa arquivo temporário antes de retornar
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                    LOG.debug("🧹 Arquivo temporário deletado após timeout")
+                except OSError as e:
+                    LOG.warning("⚠️ Falha ao deletar temp após timeout: %s", e)
             return video_path
         except Exception as e:
-            LOG.error(f"❌ Erro ao remover marca: {e}")
+            LOG.error("❌ Erro ao remover marca: %s", e)
+            # Limpa arquivo temporário em caso de erro
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
             return video_path
 
 
@@ -881,7 +921,7 @@ def get_db_connection():
     except Exception as e:
         if conn:
             conn.rollback()
-        LOG.error(f"Erro no banco de dados: {e}")
+        LOG.error("Erro no banco de dados: %s", e)
         raise
     finally:
         if conn:
@@ -1077,7 +1117,7 @@ def get_user_download_stats(user_id: int) -> dict:
                 if is_premium and premium_expires:
                     if today > premium_expires:
                         # Premium expirou! Volta para plano gratuito
-                        LOG.info(f"🔔 Premium expirou para usuário {user_id} (expirou em {premium_expires})")
+                        LOG.info("🔔 Premium expirou para usuário %d (expirou em %s)", user_id, premium_expires)
                         is_premium = 0
                         downloads_count = 0  # Reseta contador
                         c.execute("""
@@ -1384,8 +1424,8 @@ def resolve_shopee_universal_link(url: str) -> str:
             if response.url != url:
                 LOG.info("🔗 Redirect HTTP seguido: %s", response.url[:80])
                 return response.url
-        except:
-            pass
+        except Exception as e:
+            LOG.debug("Erro ignorado: %s", type(e).__name__)
         
         LOG.warning("⚠️ Não foi possível resolver universal-link")
         return url
@@ -1761,8 +1801,8 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
                                     chat_id=pm["chat_id"],
                                     message_id=pm["message_id"]
                                 )
-                            except:
-                                pass
+                            except Exception as e:
+                                LOG.debug("Erro ignorado: %s", type(e).__name__)
         
         LOG.info("Vídeo da Shopee baixado com sucesso: %s", output_path)
         
@@ -3214,8 +3254,8 @@ async def activate_premium(user_id: int, payment_id: str):
                 ),
                 parse_mode="HTML"
             )
-        except:
-            pass
+        except Exception as e:
+            LOG.debug("Erro ignorado: %s", type(e).__name__)
 
 async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para callbacks de confirmação de download"""
@@ -3597,8 +3637,8 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
                         chat_id=pm["chat_id"],
                         message_id=pm["message_id"]
                     )
-                except:
-                    pass
+                except Exception as e:
+                    LOG.debug("Erro ignorado: %s", type(e).__name__)
                 
                 # Remove marca d'água - POSIÇÃO CORRETA: MEIO DIREITO ✅
                 path = WATERMARK_REMOVER.remove(path, position='middle_right')
