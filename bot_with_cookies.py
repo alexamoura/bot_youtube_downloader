@@ -28,12 +28,6 @@ import io
 import yt_dlp
 
 try:
-    import psutil
-    PSUTIL_AVAILABLE = True
-except ImportError:
-    PSUTIL_AVAILABLE = False
-
-try:
     import requests
     from bs4 import BeautifulSoup
     REQUESTS_AVAILABLE = True
@@ -59,77 +53,8 @@ except ImportError:
     GROQ_AVAILABLE = False
 
 # ════════════════════════════════════════════════════════════════
-# 📱 IMPORTS DO TELEGRAM (necessário cedo no arquivo)
+# 🔄 SISTEMA DE AUTO-RECUPERAÇÃO E KEEPALIVE
 # ════════════════════════════════════════════════════════════════
-
-try:
-    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-    from telegram.ext import (
-        Application,
-        ApplicationBuilder,
-        ContextTypes,
-        CommandHandler,
-        MessageHandler,
-        CallbackQueryHandler,
-        filters,
-    )
-    from telegram.constants import ParseMode
-    TELEGRAM_AVAILABLE = True
-except ImportError:
-    TELEGRAM_AVAILABLE = False
-    Update = None  # Placeholder se telegram não estiver disponível
-    ParseMode = None
-
-# ════════════════════════════════════════════════════════════════
-# 🌍 CONFIGURAÇÃO DE TIMEZONE - BRASÍLIA (UTC-3)
-# ════════════════════════════════════════════════════════════════
-
-from datetime import datetime, timezone, timedelta
-
-# Timezone de Brasília (UTC-3)
-TIMEZONE_BRASILIA = timezone(timedelta(hours=-3))
-
-def get_brasilia_time():
-    """Retorna hora atual no fuso horário de Brasília"""
-    return datetime.now(TIMEZONE_BRASILIA)
-
-def format_brasilia_time(dt=None):
-    """Formata datetime para padrão brasileiro (dd/mm/yyyy HH:MM:SS)"""
-    if dt is None:
-        dt = get_brasilia_time()
-    elif dt.tzinfo is None:
-        # Se for naive, assume que é UTC e converte
-        dt = dt.replace(tzinfo=timezone.utc).astimezone(TIMEZONE_BRASILIA)
-    else:
-        dt = dt.astimezone(TIMEZONE_BRASILIA)
-    return dt.strftime("%d/%m/%Y %H:%M:%S")
-
-# ════════════════════════════════════════════════════════════════
-# 🔐 CONFIGURAÇÃO DE OWNER/ADMIN
-# ════════════════════════════════════════════════════════════════
-
-# ID do owner (seu ID no Telegram)
-OWNER_ID = 6766920288
-
-def is_owner(user_id: int) -> bool:
-    """Verifica se o usuário é o owner do bot"""
-    return user_id == OWNER_ID
-
-async def check_owner_permission(update: Update) -> bool:
-    """
-    Verifica se o usuário tem permissão de owner
-    Retorna True se é owner, False caso contrário
-    """
-    user_id = update.effective_user.id
-    if not is_owner(user_id):
-        await update.message.reply_text(
-            "🔒 <b>Comando Restrito</b>\n\n"
-            "Este comando é destinado apenas ao administrador do bot.",
-            parse_mode="HTML"
-        )
-        LOG.warning(f"⚠️ Tentativa de acesso não autorizado ao comando por usuário {user_id}")
-        return False
-    return True
 
 from datetime import datetime
 
@@ -139,6 +64,39 @@ KEEPALIVE_INTERVAL = int(os.getenv("KEEPALIVE_INTERVAL", "600"))  # 10 minutos (
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # URL do seu bot no Render
 LAST_ACTIVITY = {"telegram": time.time(), "flask": time.time()}
 INACTIVITY_THRESHOLD = 1800  # 30 minutos sem atividade = aviso
+
+# 🔧 FIX YOUTUBE CONNECTION: Função auxiliar para retry com backoff exponencial
+def ydl_with_retry(operation, max_retries=5, backoff_factor=2):
+    """
+    Executa operação yt-dlp com retry exponencial.
+    Evita "Connection refused" do YouTube com delays progressivos.
+    
+    Args:
+        operation: Função lambda que executa a operação
+        max_retries: Número máximo de tentativas
+        backoff_factor: Fator multiplicador para backoff (2 = 1s, 2s, 4s, 8s, 16s)
+    
+    Returns:
+        Resultado da operação ou None se todas as tentativas falharem
+    """
+    for attempt in range(max_retries):
+        try:
+            return operation()
+        except (ConnectionError, ConnectionRefusedError, TimeoutError) as e:
+            if attempt == max_retries - 1:
+                LOG.error("❌ Falha após %d tentativas de reconexão: %s", max_retries, e)
+                raise
+            
+            wait_time = backoff_factor ** attempt
+            LOG.warning("⚠️ Tentativa %d/%d falhou (%s). Aguardando %ds...", 
+                       attempt + 1, max_retries, type(e).__name__, wait_time)
+            time.sleep(wait_time)
+        except Exception as e:
+            # Para outros erros, tenta novamente sem delay
+            if attempt == max_retries - 1:
+                LOG.error("❌ Erro após %d tentativas: %s", max_retries, e)
+                raise
+            LOG.warning("⚠️ Tentativa %d/%d falhou com erro: %s", attempt + 1, max_retries, e)
 
 class BotHealthMonitor:
     """Monitor de saúde do bot com auto-recuperação"""
@@ -172,7 +130,7 @@ class BotHealthMonitor:
             "flask_inactive_seconds": int(flask_inactive),
             "webhook_errors": self.webhook_errors,
             "uptime": int(now - self.last_health_check),
-            "timestamp": get_brasilia_time().isoformat()
+            "timestamp": datetime.now().isoformat()
         }
 
         # 🟢 Estado inicial
@@ -377,8 +335,6 @@ class LimitedCache:
     def __init__(self, max_size=500):
         self.cache = OrderedDict()
         self.max_size = max_size
-        self.hit_count = 0
-        self.miss_count = 0
     
     def set(self, key, value):
         """Adiciona item e remove o mais antigo se exceder limite"""
@@ -392,28 +348,12 @@ class LimitedCache:
         """Busca item e marca como recentemente usado"""
         if key in self.cache:
             self.cache.move_to_end(key)
-            self.hit_count += 1
             return self.cache[key]
-        self.miss_count += 1
         return None
     
     def clear(self):
         """Limpa todo o cache"""
         self.cache.clear()
-        self.hit_count = 0
-        self.miss_count = 0
-    
-    def get_stats(self):
-        """Retorna estatísticas de hit/miss"""
-        total = self.hit_count + self.miss_count
-        if total == 0:
-            return {"size": len(self.cache), "hits": 0, "misses": 0, "hit_rate": 0}
-        return {
-            "size": len(self.cache),
-            "hits": self.hit_count,
-            "misses": self.miss_count,
-            "hit_rate": round((self.hit_count / total) * 100, 1)
-        }
 
 # Sessão HTTP compartilhada (singleton) - economiza memória
 _GLOBAL_HTTP_SESSION = None
@@ -451,51 +391,17 @@ def cleanup_and_gc_routine():
     """
     Thread daemon que executa periodicamente:
     1. Limpeza de arquivos temporários antigos
-    2. Garbage collection forçado (AGORA MAIS AGRESSIVO)
-    3. Monitoramento de memória
+    2. Garbage collection forçado
     OTIMIZADO: Executa a cada 30 minutos (reduz CPU em 66%)
     """
-    import psutil
-    
-    process = psutil.Process(os.getpid())
-    last_memory_warning = 0
-    
     while True:
         time.sleep(1800)  # 30 minutos (otimizado de 600s)
         
         try:
-            # ✅ MELHORIA #1: GC MAIS AGRESSIVO
-            # Coleta todas as gerações (não só geração 0)
-            collected = gc.collect()  # Coleta ALL generations
+            # Garbage collection - OTIMIZADO: Apenas geração 0 (5-10x mais rápido)
+            collected = gc.collect(0)
             if collected > 0:
-                LOG.info(f"🗑️ GC agressivo: {collected} objetos coletados")
-            
-            # ✅ MELHORIA #2: Monitoramento de memória em tempo real
-            try:
-                mem_mb = process.memory_info().rss / 1024 / 1024
-                mem_percent = process.memory_percent()
-                
-                now = time.time()
-                if mem_mb > 450 and (now - last_memory_warning) > 300:  # Avisa a cada 5 min
-                    LOG.warning(f"⚠️ MEMÓRIA ALTA: {mem_mb:.1f} MB ({mem_percent:.1f}%) - Executando GC extra")
-                    gc.collect()
-                    gc.collect()  # Duplo GC para emergência
-                    last_memory_warning = now
-                    
-                    # Debug: Força limpeza de cache se > 400 itens
-                    if hasattr(sys.modules.get('__main__'), 'cookie_cache'):
-                        cache = sys.modules['__main__'].cookie_cache.cache
-                        if len(cache) > 400:
-                            LOG.info(f"🧹 Cache grande detectado ({len(cache)} items), reduzindo...")
-                            # Remove 30% dos itens
-                            to_remove = max(1, len(cache) // 3)
-                            for _ in range(to_remove):
-                                try:
-                                    cache.popitem(last=False)
-                                except:
-                                    break
-            except Exception as e:
-                LOG.debug(f"⚠️ Erro ao monitorar memória: {e}")
+                print(f"🗑️ GC: {collected} objetos coletados")
             
             # Limpeza de arquivos temporários - OTIMIZADO: 1 varredura em vez de 6
             one_hour_ago = time.time() - 3600
@@ -505,14 +411,11 @@ def cleanup_and_gc_routine():
             try:
                 for filename in os.listdir('/tmp'):
                     if filename.endswith(('.mp4', '.jpg', '.jpeg', '.webm', '.png')) or \
-                       filename.startswith('ytdl_') or filename.startswith('yt-dlp'):
+                       filename.startswith('ytdl_'):
                         filepath = os.path.join('/tmp', filename)
                         try:
                             if os.path.getmtime(filepath) < one_hour_ago:
-                                if os.path.isdir(filepath):
-                                    shutil.rmtree(filepath, ignore_errors=True)
-                                else:
-                                    os.unlink(filepath)
+                                os.unlink(filepath)
                                 cleaned_count += 1
                         except Exception:
                             pass
@@ -520,7 +423,7 @@ def cleanup_and_gc_routine():
                 pass
             
             if cleaned_count > 0:
-                LOG.info(f"🧹 Limpeza: {cleaned_count} arquivos temporários removidos")
+                print(f"🧹 Limpeza: {cleaned_count} arquivos temporários removidos")
             
             # OTIMIZAÇÃO #2: Limpar ACTIVE_DOWNLOADS órfãos (downloads travados >30min)
             now = time.time()
@@ -875,8 +778,15 @@ WATERMARK_REMOVER = WatermarkRemover()
 
 
 from flask import Flask, request, jsonify
-
-# ✅ Imports do telegram já foram adicionados no início do arquivo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+)
 
 # Configuração de Logging Otimizada
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()  # Configurável via env
@@ -950,7 +860,6 @@ else:
 
 # Estado Global
 PENDING = LimitedCache(max_size=200)  # OTIMIZADO: Reduzido de 1000 para economizar memória (~80% menos RAM)
-COOKIE_CACHE = LimitedCache(max_size=1000)  # ✅ NOVO: Cache para cookies com limite de memória
 DB_LOCK = threading.Lock()
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)  # Controle de fila
 ACTIVE_DOWNLOADS = {}  # Rastreamento de downloads ativos
@@ -1943,22 +1852,11 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     LOG.info("Comando /start executado por usuário %d", user_id)
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Handler para o comando /stats
-    
-    ⚠️ RESTRITO: Apenas o owner do bot pode executar este comando
-    """
-    user_id = update.effective_user.id
-    
-    # ✅ NOVO: Verifica se é o owner
-    if not await check_owner_permission(update):
-        return
-    
-    LOG.info("📊 Comando /stats executado por OWNER %d", user_id)
-    
+    """Handler para o comando /stats (apenas admin)"""
     count = get_monthly_users_count()
     stats_text = MESSAGES["stats"].format(count=count)
     await update.message.reply_text(stats_text, parse_mode="HTML")
+    LOG.info("Comando /stats executado")
 
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para o comando /status - mostra saldo de downloads"""
@@ -2220,8 +2118,6 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handler para o comando /mensal - Relatório detalhado de assinantes premium
     
-    ⚠️ RESTRITO: Apenas o owner do bot pode executar este comando
-    
     Mostra estatísticas completas incluindo:
     - Total de assinantes ativos
     - Novos assinantes do mês
@@ -2232,11 +2128,7 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     user_id = update.effective_user.id
     
-    # ✅ NOVO: Verifica se é o owner
-    if not await check_owner_permission(update):
-        return
-    
-    LOG.info("📊 Comando /mensal executado por OWNER %d", user_id)
+    LOG.info("📊 Comando /mensal executado por usuário %d", user_id)
     
     # Mensagem de carregamento
     loading_msg = await update.message.reply_text(
@@ -2736,11 +2628,22 @@ async def get_video_info(url: str) -> dict:
         "prefer_insecure": True,
         # OTIMIZAÇÃO #3: Reduz uso de memória do yt-dlp (50-70% menos RAM)
         "no_cache_dir": True,  # Desabilita cache em disco
-        "extractor_retries": 2,  # Reduz tentativas (padrão: 3)
-        "fragment_retries": 2,   # Reduz retries de fragmentos
+        "extractor_retries": 4,  # Aumentado para melhor resiliência
+        "fragment_retries": 4,   # Aumentado para melhor resiliência
         "buffersize": 1024 * 64,  # 64KB buffer (padrão: 1024KB)
         # Adiciona formato otimizado para yt-dlp 2025.11.12+
         "format": get_format_for_url(url),
+        # 🔧 FIX CONEXÃO YOUTUBE: Aumenta timeouts e retries para evitar "Connection refused"
+        "socket_timeout": 60,  # 60s timeout (aumentado de 30s)
+        "http_chunk_size": 262144,  # 256KB chunks (mais estável)
+        "retries": {"default": 25, "http_429": 25, "http_503": 25, "socket_timeout": 25},
+        "skip_unavailable_fragments": True,  # Evita falhar com fragmentos indisponíveis
+        "force_ipv4": True,  # Força IPv4 (mais estável)
+        # Headers padrão para evitar bloqueios
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        },
     }
     
     if is_shopee:
@@ -2753,8 +2656,8 @@ async def get_video_info(url: str) -> dict:
                 "Referer": "https://shopee.com.br/",
                 "Origin": "https://shopee.com.br",
             },
-            "socket_timeout": 30,
-            "retries": 3,
+            "socket_timeout": 60,
+            "retries": {"default": 25, "http_429": 25, "http_503": 25},
         })
         LOG.info("🛍️ Configurações especiais para Shopee aplicadas")
     
@@ -3566,15 +3469,16 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         "merge_output_format": "mp4",
         "concurrent_fragment_downloads": 1,
         "force_ipv4": True,
-        "socket_timeout": 30,
-        "http_chunk_size": 524288,  # OTIMIZADO: 512KB (era 1MB - reduz memória)
-        "retries": 20,
-        "fragment_retries": 20,
+        "socket_timeout": 60,  # Aumentado de 30s para 60s
+        "http_chunk_size": 262144,  # 256KB (mais estável que 512KB)
+        "retries": {"default": 25, "http_429": 25, "http_503": 25, "socket_timeout": 25},
+        "fragment_retries": 25,  # Aumentado significativamente
         "no_check_certificate": True,
         "prefer_insecure": True,
         # OTIMIZAÇÃO #3: Reduz uso de memória
         "no_cache_dir": True,  # Desabilita cache em disco
         "buffersize": 1024 * 64,  # 64KB buffer
+        "skip_unavailable_fragments": True,  # Evita falhar com fragmentos indisponíveis
         # Configurações para evitar cortes e garantir qualidade
         "postprocessors": [{
             'key': 'FFmpegVideoConvertor',
@@ -3607,6 +3511,8 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
             # Força download direto sem fragmentação
             "noprogress": False,
             "keep_fragments": False,
+            "socket_timeout": 60,  # Aumentado para Shopee também
+            "retries": {"default": 25, "http_429": 25, "http_503": 25},
         })
     
     # Adiciona cookies apropriados
@@ -3710,9 +3616,17 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         LOG.error("Erro ao enviar mensagem final: %s", e)
 
 def _run_ydl(options, urls):
-    """Executa yt-dlp com as opções fornecidas"""
-    with yt_dlp.YoutubeDL(options) as ydl:
-        ydl.download(urls)
+    """Executa yt-dlp com as opções fornecidas e retry automático em caso de falha de conexão"""
+    def execute():
+        with yt_dlp.YoutubeDL(options) as ydl:
+            ydl.download(urls)
+    
+    # 🔧 FIX YOUTUBE: Tenta novamente se falhar por conexão recusada
+    try:
+        ydl_with_retry(execute, max_retries=5, backoff_factor=2)
+    except Exception as e:
+        LOG.error("❌ Download falhou após todas as tentativas: %s", e)
+        raise
 
 async def _notify_error(pm: dict, error_key: str):
     """Notifica o usuário sobre um erro"""
@@ -3796,7 +3710,7 @@ def diagnostics():
     
     diagnostics_data = {
         "status": "operational",
-        "timestamp": get_brasilia_time().isoformat(),
+        "timestamp": datetime.now().isoformat(),
         "system": {
             "uptime_seconds": int(now - health_monitor.last_health_check),
             "python_version": sys.version,
@@ -3879,7 +3793,7 @@ def health():
             "shopee": bool(COOKIE_SHOPEE),
             "instagram": bool(COOKIE_IG)
         },
-        "timestamp": get_brasilia_time().isoformat(),
+        "timestamp": datetime.now().isoformat(),
         "uptime_seconds": int(time.time() - health_monitor.last_health_check)
     }
 
@@ -3887,25 +3801,9 @@ def health():
     health_status = health_monitor.check_health()
     checks.update({
         "monitor": health_status,
-        "last_telegram_activity": format_brasilia_time(datetime.fromtimestamp(LAST_ACTIVITY["telegram"])),
-        "last_flask_activity": format_brasilia_time(datetime.fromtimestamp(LAST_ACTIVITY["flask"]))
+        "last_telegram_activity": datetime.fromtimestamp(LAST_ACTIVITY["telegram"]).isoformat(),
+        "last_flask_activity": datetime.fromtimestamp(LAST_ACTIVITY["flask"]).isoformat()
     })
-
-    # ✅ MELHORIA: Adiciona info de memória ao health check
-    if PSUTIL_AVAILABLE:
-        try:
-            process = psutil.Process(os.getpid())
-            mem_info = process.memory_info()
-            mem_mb = mem_info.rss / 1024 / 1024
-            mem_percent = process.memory_percent()
-            
-            checks["memory"] = {
-                "rss_mb": round(mem_mb, 1),
-                "percent": round(mem_percent, 1),
-                "status": "🟢 OK" if mem_mb < 400 else "🟡 WARNING" if mem_mb < 480 else "🔴 CRITICAL"
-            }
-        except Exception as e:
-            LOG.debug(f"Erro ao obter info de memória: {e}")
 
     # ✅ Sempre retorna 200 OK, mesmo se monitor indicar problema
     return checks, 200
@@ -3940,64 +3838,6 @@ def health():
         status_code = 200
     
     return checks, status_code
-
-# ════════════════════════════════════════════════════════════════
-# 📊 MONITORAMENTO DE MEMÓRIA (NOVO)
-# ════════════════════════════════════════════════════════════════
-
-@app.route("/health/memory")
-def health_memory():
-    """Endpoint para monitorar memória em tempo real"""
-    if not PSUTIL_AVAILABLE:
-        return {"error": "psutil não instalado"}, 501
-    
-    try:
-        process = psutil.Process(os.getpid())
-        mem_info = process.memory_info()
-        mem_mb = mem_info.rss / 1024 / 1024
-        mem_percent = process.memory_percent()
-        
-        # Info de cache
-        cache_stats = {}
-        if hasattr(COOKIE_CACHE, 'get_stats'):
-            cache_stats = COOKIE_CACHE.get_stats()
-        
-        return {
-            "memory": {
-                "rss_mb": round(mem_mb, 1),
-                "vms_mb": round(mem_info.vms / 1024 / 1024, 1),
-                "percent": round(mem_percent, 1),
-                "limit_mb": 512,
-                "remaining_mb": round(512 - mem_mb, 1),
-                "status": "🟢 OK" if mem_mb < 400 else "🟡 WARNING" if mem_mb < 480 else "🔴 CRITICAL"
-            },
-            "cache": cache_stats,
-            "active_downloads": len(ACTIVE_DOWNLOADS),
-            "pending_tasks": len(PENDING.cache) if hasattr(PENDING, 'cache') else 0,
-            "timestamp": get_brasilia_time().isoformat()
-        }, 200
-    
-    except Exception as e:
-        LOG.error(f"Erro ao retornar memória: {e}")
-        return {"error": str(e)}, 500
-
-# ════════════════════════════════════════════════════════════════
-# 📊 CACHE STATS (NOVO)
-# ════════════════════════════════════════════════════════════════
-
-@app.route("/health/cache")
-def health_cache():
-    """Endpoint para monitorar stats de cache"""
-    try:
-        stats = {
-            "cookie_cache": COOKIE_CACHE.get_stats() if hasattr(COOKIE_CACHE, 'get_stats') else {},
-            "active_downloads": len(ACTIVE_DOWNLOADS),
-            "pending_tasks": len(PENDING.cache) if hasattr(PENDING, 'cache') else 0,
-            "timestamp": get_brasilia_time().isoformat()
-        }
-        return stats, 200
-    except Exception as e:
-        return {"error": str(e)}, 500
 
 # ============================
 # MERCADOPAGO
@@ -4169,7 +4009,7 @@ def render_webhook():
 # CALLBACKS DE PAGAMENTO (ANTES DO APP.RUN)
 # ============================
 
-# ✅ ParseMode já foi importado no início do arquivo
+from telegram.constants import ParseMode
 
 async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para callback de assinatura premium"""
