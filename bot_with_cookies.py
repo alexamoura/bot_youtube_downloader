@@ -4203,3 +4203,59 @@ if __name__ == "__main__":
     LOG.info("🚀 Iniciando servidor Flask na porta %d", port)
     LOG.info("🤖 Bot: @%s", application.bot.username if hasattr(application.bot, 'username') else 'desconhecido')
     app.run(host="0.0.0.0", port=port)
+
+
+
+# ============================
+# OTIMIZAÇÕES ADICIONAIS (SAFE)
+# Não removem nenhuma função existente
+# ============================
+
+# 1. Garante permissão segura nos cookies (Render/Linux)
+try:
+    for _cookie in [COOKIE_YT, COOKIE_SHOPEE, COOKIE_IG]:
+        if _cookie and os.path.exists(_cookie):
+            os.chmod(_cookie, 0o600)
+            LOG.info("Permissão ajustada para cookies: %s", _cookie)
+except Exception as e:
+    LOG.warning("Falha ao ajustar permissão de cookies: %s", e)
+
+
+# 2. HTTPX opcional para reduzir bloqueios (fallback em requests)
+try:
+    import httpx
+    HTTPX_AVAILABLE = True
+    LOG.info("httpx disponível - downloads mais estáveis")
+except Exception:
+    HTTPX_AVAILABLE = False
+    LOG.info("httpx não disponível - usando requests padrão")
+
+# 3. Função auxiliar otimizada de download (fallback seguro)
+async def safe_stream_download(url, headers=None, cookies=None, timeout=120):
+    if HTTPX_AVAILABLE:
+        try:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+                r = await client.get(url, headers=headers, cookies=cookies)
+                r.raise_for_status()
+                return r.content
+        except Exception as e:
+            LOG.warning("httpx falhou, usando requests: %s", e)
+
+    import requests
+    resp = requests.get(url, headers=headers, cookies=cookies, timeout=timeout)
+    resp.raise_for_status()
+    return resp.content
+
+
+# 4. Verificador de FFmpeg antes de remover watermark
+def ffmpeg_available():
+    try:
+        import subprocess
+        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except:
+        return False
+
+
+# Log final
+LOG.info("✅ Módulo de otimizações carregado sem alterar lógica existente")
