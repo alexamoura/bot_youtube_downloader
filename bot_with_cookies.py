@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """
-bot_with_cookies_melhorado.py - Versão Profissional CORRIGIDA v2.1
-
-Telegram bot IA (webhook) com sistema de controle de downloads e suporte a pagamento PIX
-✅ Todas as falhas críticas corrigidas
-Versão: 2.1 (21/11/2025)
+Autor: Alex Moura com auxilio de IA
+Versão: 1.0 (21/11/2025)
 """
 
 # 🔧 FORÇA UTF-8 ENCODING PARA EMOJIS
@@ -63,6 +60,14 @@ try:
     GROQ_AVAILABLE = True
 except ImportError:
     GROQ_AVAILABLE = False
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    LOG = logging.getLogger(__name__)  # Log temporário
+    LOG.warning("⚠️ psutil não instalado - monitoramento de memória desabilitado")
 
 # ════════════════════════════════════════════════════════════════
 # 🔄 SISTEMA DE AUTO-RECUPERAÇÃO E KEEPALIVE
@@ -188,6 +193,67 @@ class BotHealthMonitor:
 # Instância global do monitor
 health_monitor = BotHealthMonitor()
 
+# ════════════════════════════════════════════════════════════════
+# ⬇️ SISTEMA DE CONTROLE DE DOWNLOADS SIMULTÂNEOS + LIMPEZA DE MEMÓRIA
+# ════════════════════════════════════════════════════════════════
+
+# ════════════════════════════════════════════════════════════════
+# 🗑️ GARBAGE COLLECTOR MAIS AGRESSIVO
+# ════════════════════════════════════════════════════════════════
+gc.set_threshold(500, 10, 5)  # Mais agressivo: coleta a cada 500 alocações
+LOG.info("🗑️ Garbage Collector configurado (agressivo): threshold=500, factors=(10, 5)")
+
+# Semáforo para limitar downloads a 2 simultâneos
+DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)
+
+# Cache de última limpeza
+LAST_MEMORY_CLEANUP = time.time()
+MEMORY_CLEANUP_INTERVAL = 300  # 5 minutos
+MAX_MEMORY_USAGE_MB = 500  # Limpa agressivamente se passar de 500MB
+
+# Dicionário para rastrear downloads ativos
+ACTIVE_DOWNLOADS = {}
+
+# ════════════════════════════════════════════════════════════════
+# 📦 LIMITED CACHE PARA USER_LAST_DOWNLOAD
+# ════════════════════════════════════════════════════════════════
+class LimitedCache:
+    """Cache com limite máximo de entradas (FIFO quando cheio)"""
+    def __init__(self, max_size=300):
+        self.max_size = max_size
+        self.cache = OrderedDict()
+    
+    def get(self, key, default=None):
+        """Obtém valor do cache"""
+        return self.cache.get(key, default)
+    
+    def set(self, key, value):
+        """Adiciona/atualiza valor no cache"""
+        if key in self.cache:
+            # Move para o fim (more recently used)
+            del self.cache[key]
+        elif len(self.cache) >= self.max_size:
+            # Remove o mais antigo (least recently used)
+            self.cache.popitem(last=False)
+        
+        self.cache[key] = value
+    
+    def __setitem__(self, key, value):
+        self.set(key, value)
+    
+    def __getitem__(self, key):
+        return self.cache[key]
+    
+    def __contains__(self, key):
+        return key in self.cache
+    
+    def get_size(self):
+        return len(self.cache)
+
+# Instância de cache limitado para último download do usuário
+USER_LAST_DOWNLOAD = LimitedCache(max_size=300)  # Máximo 300 usuários
+LOG.info("📦 LimitedCache para USER_LAST_DOWNLOAD inicializado (max_size=300, não cresce infinito)")
+
 async def reconnect_webhook():
     """Reconecta o webhook do Telegram quando trava"""
     if not WEBHOOK_URL:
@@ -221,6 +287,62 @@ async def reconnect_webhook():
     except Exception as e:
         LOG.error("❌ Erro ao reconectar webhook: %s", e)
         return False
+
+# ════════════════════════════════════════════════════════════════
+# 💾 FUNÇÕES DE MONITORAMENTO E LIMPEZA DE MEMÓRIA
+# ════════════════════════════════════════════════════════════════
+
+def get_memory_usage_mb():
+    """Retorna uso de memória atual em MB"""
+    try:
+        if PSUTIL_AVAILABLE:
+            process = psutil.Process(os.getpid())
+            return process.memory_info().rss / 1024 / 1024  # Converte para MB
+        return 0
+    except:
+        return 0
+
+def cleanup_memory():
+    """Limpeza agressiva de memória"""
+    global LAST_MEMORY_CLEANUP
+    
+    current_time = time.time()
+    if current_time - LAST_MEMORY_CLEANUP < MEMORY_CLEANUP_INTERVAL:
+        return  # Não limpa ainda, intervalo mínimo
+    
+    try:
+        # Força garbage collection
+        collected = gc.collect()
+        
+        current_memory = get_memory_usage_mb()
+        if current_memory > 0:
+            LOG.debug(f"💾 Limpeza de memória: {current_memory:.1f}MB (coletadas {collected} objetos)")
+        
+            # Se passou do limite, limpa mais agressivamente
+            if current_memory > MAX_MEMORY_USAGE_MB:
+                LOG.warning(f"⚠️ Memória alta ({current_memory:.1f}MB)! Limpeza agressiva...")
+                gc.collect()
+                gc.collect()  # Dupla passada
+                
+                new_memory = get_memory_usage_mb()
+                LOG.info(f"✅ Memória reduzida: {current_memory:.1f}MB → {new_memory:.1f}MB")
+        else:
+            LOG.debug(f"💾 GC executado: {collected} objetos coletados")
+        
+        LAST_MEMORY_CLEANUP = current_time
+        
+    except Exception as e:
+        LOG.error(f"❌ Erro na limpeza de memória: {e}")
+
+async def memory_cleanup_routine():
+    """Rotina periódica de limpeza de memória (executa a cada 5 minutos)"""
+    while True:
+        try:
+            await asyncio.sleep(MEMORY_CLEANUP_INTERVAL)
+            cleanup_memory()
+        except Exception as e:
+            LOG.error(f"❌ Erro na rotina de limpeza: {e}")
+            await asyncio.sleep(60)  # Tenta de novo em 1 minuto
 
 def reconnect_webhook_sync():
     """Versão síncrona para chamar de threads"""
@@ -3415,35 +3537,33 @@ async def callback_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         LOG.info("📥 Download iniciado | User: %d | URL: %s", pm["user_id"], pm["url"][:60])
 
 async def _process_download(token: str, pm: dict):
-    """Processa o download em background"""
+    """Processa o download em background com controle de memória"""
     tmpdir = None
     
-    # Aguarda na fila (semáforo para controlar 3 downloads simultâneos)
+    # Aguarda na fila (semáforo para controlar 2 downloads simultâneos)
     async with DOWNLOAD_SEMAPHORE:
         try:
             tmpdir = tempfile.mkdtemp(prefix=f"ytbot_")
-            # OTIMIZADO: Log removido (detalhe desnecessário)
             
             try:
                 await _do_download(token, pm["url"], tmpdir, pm["chat_id"], pm)
             finally:
-                # Limpa arquivos temporários e envia mensagem de cleanup
+                # Limpa arquivos temporários
                 if tmpdir and os.path.exists(tmpdir):
                     try:
                         shutil.rmtree(tmpdir, ignore_errors=True)
-                        # OTIMIZADO: Log de cleanup removido (detalhe desnecessário)
-                        
-                        # Mensagem de cleanup para o usuário removida (não precisa)
                     except Exception as e:
                         LOG.error("Erro ao limpar tmpdir: %s", e)
                 
                 # Remove da lista de downloads ativos
                 if token in ACTIVE_DOWNLOADS:
                     del ACTIVE_DOWNLOADS[token]
-                    # OTIMIZADO: Log removido (detalhe desnecessário)
                 
-                # OTIMIZAÇÃO #6: Força GC após download para liberar memória imediatamente
+                # OTIMIZAÇÃO: Força GC após download para liberar memória imediatamente
                 gc.collect(0)
+                
+                # Verifica se precisa fazer limpeza agressiva
+                cleanup_memory()
                     
         except Exception as e:
             LOG.exception("Erro no processamento de download: %s", e)
@@ -3459,6 +3579,9 @@ async def _process_download(token: str, pm: dict):
                 # Remove da lista de downloads ativos em caso de erro
                 if token in ACTIVE_DOWNLOADS:
                     del ACTIVE_DOWNLOADS[token]
+                # Limpeza também em caso de erro
+                gc.collect(0)
+                cleanup_memory()
 
 async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict):
     """Executa o download do vídeo"""
@@ -4136,6 +4259,10 @@ if __name__ == "__main__":
     cleanup_thread.start()
     LOG.info("✅ Thread de limpeza automática e GC iniciada")
     
+    # 🚀 Inicia rotina periódica de limpeza de memória (assíncrona)
+    asyncio.run_coroutine_threadsafe(memory_cleanup_routine(), APP_LOOP)
+    LOG.info(f"✅ Rotina de limpeza de memória iniciada (intervalo: {MEMORY_CLEANUP_INTERVAL}s, limite: {MAX_MEMORY_USAGE_MB}MB)")
+    
     # 🔄 Inicia sistema de auto-recuperação e keepalive
     if KEEPALIVE_ENABLED:
         keepalive_thread = threading.Thread(target=keepalive_routine, daemon=True)
@@ -4231,20 +4358,86 @@ except Exception:
     LOG.info("httpx não disponível - usando requests padrão")
 
 # 3. Função auxiliar otimizada de download (fallback seguro)
-async def safe_stream_download(url, headers=None, cookies=None, timeout=120):
-    if HTTPX_AVAILABLE:
-        try:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-                r = await client.get(url, headers=headers, cookies=cookies)
-                r.raise_for_status()
-                return r.content
-        except Exception as e:
-            LOG.warning("httpx falhou, usando requests: %s", e)
+# ════════════════════════════════════════════════════════════════
+# 📥 DOWNLOAD STREAMING - Não carrega arquivo inteiro na RAM
+# ════════════════════════════════════════════════════════════════
 
-    import requests
-    resp = requests.get(url, headers=headers, cookies=cookies, timeout=timeout)
-    resp.raise_for_status()
-    return resp.content
+async def safe_stream_download(url, headers=None, cookies=None, timeout=120, output_file=None):
+    """
+    Download com streaming real - não carrega arquivo inteiro na RAM.
+    
+    Args:
+        url: URL do arquivo
+        headers: Headers HTTP (opcional)
+        cookies: Cookies (opcional)
+        timeout: Timeout em segundos
+        output_file: Caminho para salvar arquivo (streaming direto ao disco)
+    
+    Returns:
+        Se output_file: retorna caminho do arquivo
+        Se output_file é None: retorna generator de chunks
+    """
+    CHUNK_SIZE = 8192  # 8KB chunks (otimizado para Render)
+    
+    try:
+        # Preferir httpx para async streaming
+        if HTTPX_AVAILABLE:
+            try:
+                async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+                    async with client.stream('GET', url, headers=headers, cookies=cookies) as r:
+                        r.raise_for_status()
+                        
+                        # Se arquivo de saída especificado, fazer streaming direto ao disco
+                        if output_file:
+                            with open(output_file, 'wb') as f:
+                                async for chunk in r.aiter_bytes(chunk_size=CHUNK_SIZE):
+                                    if chunk:
+                                        f.write(chunk)
+                            LOG.debug(f"📥 Download (streaming): {url[:80]}... → {output_file}")
+                            return output_file
+                        else:
+                            # Retornar generator de chunks
+                            async def chunk_generator():
+                                async for chunk in r.aiter_bytes(chunk_size=CHUNK_SIZE):
+                                    if chunk:
+                                        yield chunk
+                            return chunk_generator()
+                            
+            except Exception as e:
+                LOG.warning(f"httpx streaming falhou: {e}. Usando requests...")
+        
+        # Fallback para requests (síncrono mas com streaming)
+        resp = requests.get(
+            url, 
+            headers=headers, 
+            cookies=cookies, 
+            timeout=timeout,
+            stream=True  # ← STREAMING REAL: não carrega na RAM
+        )
+        resp.raise_for_status()
+        
+        # Se arquivo de saída especificado, fazer streaming direto ao disco
+        if output_file:
+            with open(output_file, 'wb') as f:
+                for chunk in resp.iter_content(chunk_size=CHUNK_SIZE):
+                    if chunk:
+                        f.write(chunk)
+            LOG.debug(f"📥 Download (streaming via requests): {url[:80]}... → {output_file}")
+            return output_file
+        else:
+            # Retornar generator de chunks
+            def chunk_generator():
+                for chunk in resp.iter_content(chunk_size=CHUNK_SIZE):
+                    if chunk:
+                        yield chunk
+            return chunk_generator()
+    
+    except requests.Timeout:
+        LOG.error(f"⏱️ Timeout ao fazer download streaming: {url}")
+        raise
+    except Exception as e:
+        LOG.error(f"❌ Erro no streaming: {e}")
+        raise
 
 
 # 4. Verificador de FFmpeg antes de remover watermark
@@ -4258,4 +4451,7 @@ def ffmpeg_available():
 
 
 # Log final
-LOG.info("✅ Módulo de otimizações carregado sem alterar lógica existente")
+LOG.info("✅ Módulo de otimizações carregado")
+LOG.info("✅ Garbage Collector agressivo ativado")
+LOG.info("✅ LimitedCache para USER_LAST_DOWNLOAD ativado")
+LOG.info("✅ Safe streaming download implementado (streaming real, não RAM)")
