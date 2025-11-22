@@ -50,10 +50,10 @@ except ImportError:
     PIL_AVAILABLE = False
     
 try:
-    from telegram import InputFile
-    INPUTFILE_AVAILABLE = True
+    import mercadopago
+    MERCADOPAGO_AVAILABLE = True
 except ImportError:
-    INPUTFILE_AVAILABLE = False
+    MERCADOPAGO_AVAILABLE = False
 
 try:
     from groq import Groq
@@ -67,6 +67,13 @@ try:
 except ImportError:
     PSUTIL_AVAILABLE = False
     # LOG será definido posteriormente (linha 202)
+
+# 🔧 FIX 413: Compressão de vídeos grandes
+try:
+    import subprocess
+    FFMPEG_AVAILABLE = True
+except ImportError:
+    FFMPEG_AVAILABLE = False
 
 # ════════════════════════════════════════════════════════════════
 # 🔄 SISTEMA DE AUTO-RECUPERAÇÃO E KEEPALIVE
@@ -82,6 +89,8 @@ LAST_ACTIVITY = {"telegram": time.time(), "flask": time.time()}
 INACTIVITY_THRESHOLD = 1800  # 30 minutos sem atividade = aviso
 
 # 🔧 FIX YOUTUBE CONNECTION: Função auxiliar para retry com backoff exponencial
+TELEGRAM_VIDEO_SIZE_LIMIT = 50 * 1024 * 1024  # 50MB - limite do Telegram para upload via HTTP
+
 def ydl_with_retry(operation, max_retries=5, backoff_factor=2):
     """
     Executa operação yt-dlp com retry exponencial.
@@ -1691,16 +1700,16 @@ def format_filesize(bytes_size: int) -> str:
     
     return f"{bytes_size:.1f} TB"
 
-# ════════════════════════════════════════════════════════════════════════════
-# 🔧 OTIMIZAÇÕES DE MEMÓRIA
-# ════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════
+# 🔧 FIX 413 - Compressão de vídeos grandes para Telegram
+# ════════════════════════════════════════════════════════════════
 
-def ffmpeg_compress_with_pipe(input_path: str, target_size_mb: int = 35) -> bytes:
-    """Comprime vídeo com pipe FFmpeg (economiza memória)"""
+def ffmpeg_compress_video(input_path: str, output_path: str, target_size_mb: int = 45) -> bool:
+    """Comprime vídeo para caber no limite do Telegram (50MB)"""
     try:
-        LOG.info(f"🔨 Comprimindo com pipe (target: {target_size_mb}MB)...")
+        import subprocess
         
-        # Obter duração
+        # Obter duração do vídeo
         duration_cmd = [
             'ffprobe', '-v', 'error',
             '-show_entries', 'format=duration',
@@ -1709,95 +1718,75 @@ def ffmpeg_compress_with_pipe(input_path: str, target_size_mb: int = 35) -> byte
         ]
         
         result = subprocess.run(duration_cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            LOG.error(f"❌ Erro ao obter duração: {result.stderr}")
-            return None
-        
         duration = float(result.stdout.strip())
         
-        # Calcular bitrate
+        LOG.info(f"📊 Vídeo Shopee: {duration:.1f}s")
+        
+        # Calcular bitrate necessário
         target_bitrate = int((target_size_mb * 8 * 1000) / duration)
-        target_bitrate = max(min(target_bitrate, 2500), 300)
+        target_bitrate = max(target_bitrate, 400)  # Mínimo 400k
         
-        LOG.info(f"📈 Bitrate: {target_bitrate}k")
+        LOG.info(f"🎬 Comprimindo com bitrate {target_bitrate}k...")
         
-        # Comprimir com pipe
+        # Comando de compressão
         cmd = [
             'ffmpeg', '-i', input_path,
             '-c:v', 'libx264',
-            '-preset', 'ultrafast',  # Mais rápido
+            '-preset', 'fast',
             '-b:v', f'{target_bitrate}k',
             '-c:a', 'aac',
-            '-b:a', '48k',
-            '-f', 'mp4',
-            '-'  # Pipe
+            '-b:a', '64k',
+            '-y',
+            output_path
         ]
         
-        LOG.info(f"🎬 Comprimindo...")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            bufsize=32768
-        )
+        if result.returncode != 0:
+            LOG.error(f"FFmpeg error: {result.stderr[:200]}")
+            return False
         
-        # Ler em chunks pequenos
-        from io import BytesIO
-        compressed_data = BytesIO()
-        chunk_size = 65536
+        compressed_size = os.path.getsize(output_path)
+        original_size = os.path.getsize(input_path)
         
-        while True:
-            chunk = process.stdout.read(chunk_size)
-            if not chunk:
-                break
-            compressed_data.write(chunk)
+        LOG.info(f"✅ Compressão OK: {original_size/(1024*1024):.1f}MB → {compressed_size/(1024*1024):.1f}MB")
         
-        returncode = process.wait()
-        
-        if returncode != 0:
-            stderr = process.stderr.read().decode('utf-8', errors='ignore')
-            LOG.error(f"❌ FFmpeg error: {stderr[-200:]}")
-            return None
-        
-        compressed_bytes = compressed_data.getvalue()
-        LOG.info(f"✅ Comprimido: {len(compressed_bytes)/(1024*1024):.1f}MB")
-        
-        if len(compressed_bytes) > 50 * 1024 * 1024:
-            LOG.warning(f"⚠️ Ainda > 50MB!")
-            return None
-        
-        return compressed_bytes
+        return compressed_size <= TELEGRAM_VIDEO_SIZE_LIMIT
     
     except Exception as e:
-        LOG.error(f"❌ Erro na compressão: {e}")
-        return None
+        LOG.error(f"❌ Erro ao comprimir: {e}")
+        return False
 
-async def send_video_memory_optimized(bot, chat_id, video_path=None, video_bytes=None, caption="", pm=None):
-    """Envia vídeo economizando memória"""
+async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir):
+    """Envia vídeo com validação de tamanho e compressão automática"""
     try:
-        if video_path:
-            LOG.info(f"📤 Enviando arquivo do disco...")
-            if pm:
-                await bot.edit_message_text(
-                    text="📤 Enviando vídeo...",
-                    chat_id=pm["chat_id"],
-                    message_id=pm["message_id"]
-                )
-            
-            with open(video_path, 'rb') as f:
-                await bot.send_video(
-                    chat_id=chat_id,
-                    video=f,
-                    caption=caption,
-                    read_timeout=300,
-                    write_timeout=300
-                )
-            LOG.info("✅ Vídeo enviado!")
+        file_size = os.path.getsize(video_path)
+        file_size_mb = file_size / (1024 * 1024)
+        
+        LOG.info(f"📊 Arquivo a enviar: {file_size_mb:.1f}MB")
+        
+        # Se está dentro do limite, envia direto
+        if file_size <= TELEGRAM_VIDEO_SIZE_LIMIT:
+            LOG.info("✅ Tamanho OK, enviando...")
+            with open(video_path, "rb") as fh:
+                await bot.send_video(chat_id=chat_id, video=fh, caption=caption)
             return True
         
-        elif video_bytes:
-            LOG.info(f"📤 Enviando bytes comprimidos...")
+        # Arquivo excede limite
+        LOG.warning(f"⚠️ Arquivo excede 50MB! Tentando comprimir...")
+        
+        # Atualizar mensagem
+        if pm:
+            await bot.edit_message_text(
+                text="⚠️ Vídeo grande demais. Comprimindo...",
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"]
+            )
+        
+        # Tentar comprimir
+        compressed_path = os.path.join(tmpdir, "compressed_shopee.mp4")
+        
+        if ffmpeg_compress_video(video_path, compressed_path):
             if pm:
                 await bot.edit_message_text(
                     text="📤 Enviando vídeo comprimido...",
@@ -1805,39 +1794,34 @@ async def send_video_memory_optimized(bot, chat_id, video_path=None, video_bytes
                     message_id=pm["message_id"]
                 )
             
-            from io import BytesIO
-            f = BytesIO(video_bytes)
+            with open(compressed_path, "rb") as fh:
+                await bot.send_video(
+                    chat_id=chat_id,
+                    video=fh,
+                    caption=f"{caption}\n\n📦 Vídeo comprimido para caber no Telegram"
+                )
             
-            await bot.send_video(
-                chat_id=chat_id,
-                video=f,
-                caption=caption,
-                read_timeout=300,
-                write_timeout=300
-            )
-            LOG.info("✅ Vídeo comprimido enviado!")
-            return True
-        
-        return False
-    
-    except Exception as e:
-        LOG.exception(f"❌ Erro ao enviar: {e}")
-        if pm:
+            # Limpar
             try:
+                os.remove(compressed_path)
+            except:
+                pass
+            
+            return True
+        else:
+            LOG.error("❌ Falha na compressão")
+            if pm:
                 await bot.edit_message_text(
-                    text=f"❌ Erro: {str(e)[:60]}",
+                    text="❌ Arquivo muito grande! Não consegui comprimir o suficiente.\n"
+                         "Tente baixar um vídeo menor.",
                     chat_id=pm["chat_id"],
                     message_id=pm["message_id"]
                 )
-            except:
-                pass
+            return False
+    
+    except Exception as e:
+        LOG.exception(f"❌ Erro ao enviar: {e}")
         return False
-
-async def aggressive_gc():
-    """Limpeza agressiva de memória"""
-    gc.collect()
-    gc.collect()  # Duas vezes para garantir
-    LOG.debug("🧹 Memória limpa")
 
 async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
     """Download especial para Shopee Video usando extração avançada"""
@@ -1956,7 +1940,7 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             message_id=pm["message_id"]
         )
 
-        # Baixa o vídeo COM CHUNKS MENORES (economiza memória)
+        # Baixa o vídeo
         output_path = os.path.join(tmpdir, "shopee_video.mp4")
         video_response = await asyncio.to_thread(
             lambda: requests.get(video_url, headers=headers, cookies=cookies_dict, stream=True, timeout=120)
@@ -1964,14 +1948,15 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         video_response.raise_for_status()
         total_size = int(video_response.headers.get('content-length', 0))
 
+        # Shopee: SEM limite de tamanho (Telegram suporta até 2GB com Bot API)
         LOG.info("📦 Tamanho do vídeo Shopee: %.2f MB", total_size / (1024 * 1024))
 
         with open(output_path, 'wb') as f:
-            # OTIMIZAÇÃO: Chunks de 65KB (não 512KB) economizam 60% de memória
-            for chunk in video_response.iter_content(chunk_size=65536):  # 65 KB
+            # OTIMIZAÇÃO #5: Chunks maiores (512KB) reduzem overhead e memória
+            for chunk in video_response.iter_content(chunk_size=524288):  # 512 KB
                 if chunk:
                     f.write(chunk)
-                    # del chunk não é mais necessário com chunks pequenos
+                    del chunk  # Libera memória explicitamente
 
         LOG.info("✅ Vídeo da Shopee baixado com sucesso: %s", output_path)
 
@@ -2004,91 +1989,36 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             LOG.warning("⚠️ FFmpeg não disponível, enviando vídeo original.")
             caption = "🎬 Aproveite o seu vídeo 🎬"
 
-        # Validar tamanho antes de enviar
-        file_size = os.path.getsize(output_path)
-        file_size_mb = file_size / (1024 * 1024)
-        
-        LOG.info(f"📊 Arquivo a enviar: {file_size_mb:.1f}MB")
-        
-        # Atualizar mensagem
+        # Envia o vídeo com validação de tamanho
         await application.bot.edit_message_text(
-            text="✅ Download concluído, processando...",
+            text="✅ Download concluído, enviando...",
             chat_id=pm["chat_id"],
             message_id=pm["message_id"]
         )
-        
-        # Se arquivo é grande, comprimir
-        if file_size > 50 * 1024 * 1024:  # > 50MB
-            LOG.warning(f"⚠️ Arquivo > 50MB ({file_size_mb:.1f}MB), comprimindo...")
-            
-            await application.bot.edit_message_text(
-                text="⚠️ Vídeo grande. Comprimindo...",
-                chat_id=pm["chat_id"],
-                message_id=pm["message_id"]
-            )
-            
-            compressed_bytes = ffmpeg_compress_with_pipe(output_path, target_size_mb=35)
-            
-            if compressed_bytes:
-                success = await send_video_memory_optimized(
-                    bot=application.bot,
-                    chat_id=chat_id,
-                    video_bytes=compressed_bytes,
-                    caption=caption,
-                    pm=pm
-                )
-                
-                if success:
-                    await aggressive_gc()
-                    # Mensagem de sucesso
-                    stats = get_user_download_stats(pm["user_id"])
-                    success_text = MESSAGES["upload_complete"].format(
-                        remaining=stats["remaining"],
-                        total=stats["limit"] if not stats["is_premium"] else "∞"
-                    )
-                    await application.bot.edit_message_text(
-                        text=success_text,
-                        chat_id=pm["chat_id"],
-                        message_id=pm["message_id"]
-                    )
-                return
-            else:
-                LOG.error("❌ Falha na compressão")
-                await application.bot.edit_message_text(
-                    text="❌ Arquivo muito grande! Tente um vídeo menor.",
-                    chat_id=pm["chat_id"],
-                    message_id=pm["message_id"]
-                )
-                return
-        
-        # Arquivo pequeno - enviar direto
-        await application.bot.edit_message_text(
-            text="📤 Enviando vídeo...",
-            chat_id=pm["chat_id"],
-            message_id=pm["message_id"]
-        )
-        
-        success = await send_video_memory_optimized(
+
+        success = await safe_send_video_telegram(
             bot=application.bot,
             chat_id=chat_id,
             video_path=output_path,
             caption=caption,
-            pm=pm
+            pm=pm,
+            tmpdir=tmpdir
         )
         
-        if success:
-            await aggressive_gc()
-            # Mensagem de sucesso
-            stats = get_user_download_stats(pm["user_id"])
-            success_text = MESSAGES["upload_complete"].format(
-                remaining=stats["remaining"],
-                total=stats["limit"] if not stats["is_premium"] else "∞"
-            )
-            await application.bot.edit_message_text(
-                text=success_text,
-                chat_id=pm["chat_id"],
-                message_id=pm["message_id"]
-            )
+        if not success:
+            return
+
+        # Mensagem de sucesso
+        stats = get_user_download_stats(pm["user_id"])
+        success_text = MESSAGES["upload_complete"].format(
+            remaining=stats["remaining"],
+            total=stats["limit"] if not stats["is_premium"] else "∞"
+        )
+        await application.bot.edit_message_text(
+            text=success_text,
+            chat_id=pm["chat_id"],
+            message_id=pm["message_id"]
+        )
 
     except Exception as e:
         LOG.exception("Erro no download Shopee customizado: %s", e)
