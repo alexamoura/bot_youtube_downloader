@@ -37,11 +37,11 @@ import io
 import yt_dlp
 
 try:
-    from requests.adapters import HTTPAdapter
-    from urllib3.util.retry import Retry as Urllib3Retry
-    RESILIENT_AVAILABLE = True
+    import requests
+    from bs4 import BeautifulSoup
+    REQUESTS_AVAILABLE = True
 except ImportError:
-    RESILIENT_AVAILABLE = False
+    REQUESTS_AVAILABLE = False
 
 try:
     from PIL import Image
@@ -68,6 +68,13 @@ except ImportError:
     PSUTIL_AVAILABLE = False
     # LOG será definido posteriormente (linha 202)
 
+# 🔧 FIX 413: Compressão de vídeos grandes
+try:
+    import subprocess
+    FFMPEG_AVAILABLE = True
+except ImportError:
+    FFMPEG_AVAILABLE = False
+
 # ════════════════════════════════════════════════════════════════
 # 🔄 SISTEMA DE AUTO-RECUPERAÇÃO E KEEPALIVE
 # ════════════════════════════════════════════════════════════════
@@ -82,6 +89,8 @@ LAST_ACTIVITY = {"telegram": time.time(), "flask": time.time()}
 INACTIVITY_THRESHOLD = 1800  # 30 minutos sem atividade = aviso
 
 # 🔧 FIX YOUTUBE CONNECTION: Função auxiliar para retry com backoff exponencial
+TELEGRAM_VIDEO_SIZE_LIMIT = 50 * 1024 * 1024  # 50MB - limite do Telegram para upload via HTTP
+
 def ydl_with_retry(operation, max_retries=5, backoff_factor=2):
     """
     Executa operação yt-dlp com retry exponencial.
@@ -1691,118 +1700,128 @@ def format_filesize(bytes_size: int) -> str:
     
     return f"{bytes_size:.1f} TB"
 
-# ════════════════════════════════════════════════════════════════════════════
-# 🔧 DOWNLOAD RESILIENTE - Retry Automático
-# ════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════
+# 🔧 FIX 413 - Compressão de vídeos grandes para Telegram
+# ════════════════════════════════════════════════════════════════
 
-def create_robust_session():
-    """Cria sessão com retry automático para erros de conexão"""
-    session = requests.Session()
-    
-    retry_strategy = Urllib3Retry(
-        total=3,
-        backoff_factor=1,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["GET", "POST"]
-    )
-    
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    
-    return session
-
-async def download_shopee_with_retry(url, output_path, headers=None, cookies=None, timeout=120, max_retries=3):
-    """
-    Download com retry automático para ChunkedEncodingError.
-    
-    Shopee pode desconectar durante streaming - este método retentará automaticamente.
-    """
-    
-    for attempt in range(max_retries):
-        try:
-            LOG.info(f"📥 Tentativa {attempt + 1}/{max_retries}: Baixando vídeo...")
-            
-            session = create_robust_session()
-            
-            try:
-                response = await asyncio.to_thread(
-                    lambda: session.get(
-                        url,
-                        headers=headers,
-                        cookies=cookies,
-                        timeout=timeout,
-                        stream=True,
-                        allow_redirects=True
-                    )
-                )
-                response.raise_for_status()
-            
-            except requests.exceptions.RequestException as e:
-                LOG.warning(f"⚠️ Erro na conexão (tentativa {attempt + 1}): {type(e).__name__}: {str(e)[:80]}")
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt
-                    LOG.info(f"⏳ Aguardando {wait_time}s antes de retry...")
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    raise
-            
-            total_size = int(response.headers.get('content-length', 0))
-            LOG.info(f"📦 Tamanho: {total_size / (1024*1024):.2f}MB")
-            
-            downloaded = 0
-            chunk_size = 65536  # 64KB
-            
-            # Download com chunks pequenos
-            try:
-                with open(output_path, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=chunk_size):
-                        if chunk:
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            
-                            if total_size > 0 and downloaded % (10 * 1024 * 1024) == 0:
-                                progress = (downloaded / total_size) * 100
-                                LOG.debug(f"  {progress:.0f}% ({downloaded / (1024*1024):.1f}MB)")
-                
-                LOG.info(f"✅ Download completo: {total_size / (1024*1024):.2f}MB")
-                return total_size
-            
-            except (requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError) as e:
-                LOG.warning(f"⚠️ Erro de conexão durante streaming (tentativa {attempt + 1})")
-                LOG.warning(f"   Downloaded: {downloaded / (1024*1024):.2f}MB / {total_size / (1024*1024):.2f}MB")
-                
-                try:
-                    os.remove(output_path)
-                except:
-                    pass
-                
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt
-                    LOG.info(f"⏳ Aguardando {wait_time}s antes de nova tentativa...")
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    raise
+def ffmpeg_compress_video(input_path: str, output_path: str, target_size_mb: int = 45) -> bool:
+    """Comprime vídeo para caber no limite do Telegram (50MB)"""
+    try:
+        import subprocess
         
-        except Exception as e:
-            LOG.error(f"❌ Erro inesperado (tentativa {attempt + 1}): {e}")
+        # Obter duração do vídeo
+        duration_cmd = [
+            'ffprobe', '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1:nokey=1',
+            input_path
+        ]
+        
+        result = subprocess.run(duration_cmd, capture_output=True, text=True, timeout=30)
+        duration = float(result.stdout.strip())
+        
+        LOG.info(f"📊 Vídeo Shopee: {duration:.1f}s")
+        
+        # Calcular bitrate necessário
+        target_bitrate = int((target_size_mb * 8 * 1000) / duration)
+        target_bitrate = max(target_bitrate, 400)  # Mínimo 400k
+        
+        LOG.info(f"🎬 Comprimindo com bitrate {target_bitrate}k...")
+        
+        # Comando de compressão
+        cmd = [
+            'ffmpeg', '-i', input_path,
+            '-c:v', 'libx264',
+            '-preset', 'fast',
+            '-b:v', f'{target_bitrate}k',
+            '-c:a', 'aac',
+            '-b:a', '64k',
+            '-y',
+            output_path
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        
+        if result.returncode != 0:
+            LOG.error(f"FFmpeg error: {result.stderr[:200]}")
+            return False
+        
+        compressed_size = os.path.getsize(output_path)
+        original_size = os.path.getsize(input_path)
+        
+        LOG.info(f"✅ Compressão OK: {original_size/(1024*1024):.1f}MB → {compressed_size/(1024*1024):.1f}MB")
+        
+        return compressed_size <= TELEGRAM_VIDEO_SIZE_LIMIT
+    
+    except Exception as e:
+        LOG.error(f"❌ Erro ao comprimir: {e}")
+        return False
+
+async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir):
+    """Envia vídeo com validação de tamanho e compressão automática"""
+    try:
+        file_size = os.path.getsize(video_path)
+        file_size_mb = file_size / (1024 * 1024)
+        
+        LOG.info(f"📊 Arquivo a enviar: {file_size_mb:.1f}MB")
+        
+        # Se está dentro do limite, envia direto
+        if file_size <= TELEGRAM_VIDEO_SIZE_LIMIT:
+            LOG.info("✅ Tamanho OK, enviando...")
+            with open(video_path, "rb") as fh:
+                await bot.send_video(chat_id=chat_id, video=fh, caption=caption)
+            return True
+        
+        # Arquivo excede limite
+        LOG.warning(f"⚠️ Arquivo excede 50MB! Tentando comprimir...")
+        
+        # Atualizar mensagem
+        if pm:
+            await bot.edit_message_text(
+                text="⚠️ Vídeo grande demais. Tome um café, estamos comprimindo para você ...",
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"]
+            )
+        
+        # Tentar comprimir
+        compressed_path = os.path.join(tmpdir, "compressed_shopee.mp4")
+        
+        if ffmpeg_compress_video(video_path, compressed_path):
+            if pm:
+                await bot.edit_message_text(
+                    text="📤 Enviando vídeo comprimido...",
+                    chat_id=pm["chat_id"],
+                    message_id=pm["message_id"]
+                )
             
+            with open(compressed_path, "rb") as fh:
+                await bot.send_video(
+                    chat_id=chat_id,
+                    video=fh,
+                    caption=f"{caption}\n\n📦 Vídeo comprimido para caber no Telegram"
+                )
+            
+            # Limpar
             try:
-                os.remove(output_path)
+                os.remove(compressed_path)
             except:
                 pass
             
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt
-                LOG.info(f"⏳ Aguardando {wait_time}s antes de nova tentativa...")
-                await asyncio.sleep(wait_time)
-                continue
-            else:
-                raise
+            return True
+        else:
+            LOG.error("❌ Falha na compressão")
+            if pm:
+                await bot.edit_message_text(
+                    text="❌ Arquivo muito grande! Não consegui comprimir o suficiente.\n"
+                         "Tente baixar um vídeo menor.",
+                    chat_id=pm["chat_id"],
+                    message_id=pm["message_id"]
+                )
+            return False
     
-    return None
+    except Exception as e:
+        LOG.exception(f"❌ Erro ao enviar: {e}")
+        return False
 
 async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
     """Download especial para Shopee Video usando extração avançada"""
@@ -1921,41 +1940,23 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             message_id=pm["message_id"]
         )
 
-        # Baixa o vídeo COM RETRY AUTOMÁTICO (Shopee desconecta às vezes)
+        # Baixa o vídeo
         output_path = os.path.join(tmpdir, "shopee_video.mp4")
-        
-        try:
-            total_size = await download_shopee_with_retry(
-                url=video_url,
-                output_path=output_path,
-                headers=headers,
-                cookies=cookies_dict,
-                timeout=120,
-                max_retries=3
-            )
-            
-            if total_size is None:
-                LOG.error("❌ Falha no download após 3 tentativas")
-                await application.bot.edit_message_text(
-                    text="⚠️ <b>Erro ao baixar vídeo da Shopee</b>\n\n"
-                         "Servidor da Shopee respondeu com erro de conexão.\n"
-                         "Tente novamente em alguns segundos.",
-                    chat_id=pm["chat_id"],
-                    message_id=pm["message_id"],
-                    parse_mode="HTML"
-                )
-                return
-        
-        except Exception as e:
-            LOG.exception("❌ Erro no download após retries: %s", e)
-            await application.bot.edit_message_text(
-                text="⚠️ <b>Erro ao baixar vídeo da Shopee</b>\n\n"
-                     "Tente novamente.",
-                chat_id=pm["chat_id"],
-                message_id=pm["message_id"],
-                parse_mode="HTML"
-            )
-            return
+        video_response = await asyncio.to_thread(
+            lambda: requests.get(video_url, headers=headers, cookies=cookies_dict, stream=True, timeout=120)
+        )
+        video_response.raise_for_status()
+        total_size = int(video_response.headers.get('content-length', 0))
+
+        # Shopee: SEM limite de tamanho (Telegram suporta até 2GB com Bot API)
+        LOG.info("📦 Tamanho do vídeo Shopee: %.2f MB", total_size / (1024 * 1024))
+
+        with open(output_path, 'wb') as f:
+            # OTIMIZAÇÃO #5: Chunks maiores (512KB) reduzem overhead e memória
+            for chunk in video_response.iter_content(chunk_size=524288):  # 512 KB
+                if chunk:
+                    f.write(chunk)
+                    del chunk  # Libera memória explicitamente
 
         LOG.info("✅ Vídeo da Shopee baixado com sucesso: %s", output_path)
 
@@ -1988,15 +1989,24 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             LOG.warning("⚠️ FFmpeg não disponível, enviando vídeo original.")
             caption = "🎬 Aproveite o seu vídeo 🎬"
 
-        # Envia o vídeo
+        # Envia o vídeo com validação de tamanho
         await application.bot.edit_message_text(
             text="✅ Download concluído, enviando...",
             chat_id=pm["chat_id"],
             message_id=pm["message_id"]
         )
 
-        with open(output_path, "rb") as fh:
-            await application.bot.send_video(chat_id=chat_id, video=fh, caption=caption)
+        success = await safe_send_video_telegram(
+            bot=application.bot,
+            chat_id=chat_id,
+            video_path=output_path,
+            caption=caption,
+            pm=pm,
+            tmpdir=tmpdir
+        )
+        
+        if not success:
+            return
 
         # Mensagem de sucesso
         stats = get_user_download_stats(pm["user_id"])
