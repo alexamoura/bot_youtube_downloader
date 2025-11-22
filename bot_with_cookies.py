@@ -1778,7 +1778,7 @@ async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir
         # Atualizar mensagem
         if pm:
             await bot.edit_message_text(
-                text="⚠️ Vídeo grande demais. Comprimindo...",
+                text="⚠️ Vídeo grande demais. Tome um café, estamos comprimindo para você ...",
                 chat_id=pm["chat_id"],
                 message_id=pm["message_id"]
             )
