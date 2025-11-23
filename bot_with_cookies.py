@@ -1948,9 +1948,34 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         video_response.raise_for_status()
         total_size = int(video_response.headers.get('content-length', 0))
 
-        # Shopee: SEM limite de tamanho (Telegram suporta até 2GB com Bot API)
-        LOG.info("📦 Tamanho do vídeo Shopee: %.2f MB", total_size / (1024 * 1024))
+        # ✅ NOVA LÓGICA ANTI-CRASH: Verifica tamanho ANTES de processar
+        file_size_mb = total_size / (1024 * 1024)
+        LOG.info("📦 Tamanho do vídeo Shopee: %.2f MB", file_size_mb)
 
+        # 🚫 Se vídeo > 50MB: NÃO comprime, apenas avisa o usuário
+        if file_size_mb > 50:
+            LOG.warning("⚠️ Vídeo Shopee excede 50MB (%.2f MB) - Implementando lógica anti-crash", file_size_mb)
+            await application.bot.edit_message_text(
+                text=(
+                    "⚠️ <b>Arquivo muito grande</b>\n\n"
+                    "O vídeo tem <code>{:.1f} MB</code> e excede o limite de <code>50 MB</code> "
+                    "do Telegram.\n\n"
+                    "❌ Não vou tentar comprimir (pode causar travamento)\n"
+                    "✅ Sugestões:\n"
+                    "  • Baixe pelo app oficial da Shopee\n"
+                    "  • Solicite uma versão menor ao criador\n"
+                    "  • Tente converter em outro formato"
+                ).format(file_size_mb),
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"],
+                parse_mode="HTML"
+            )
+            # Limpa arquivo temporário
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            return
+
+        # Prossegue normalmente se arquivo ≤ 50MB
         with open(output_path, 'wb') as f:
             # OTIMIZAÇÃO #5: Chunks maiores (512KB) reduzem overhead e memória
             for chunk in video_response.iter_content(chunk_size=524288):  # 512 KB
@@ -2031,22 +2056,6 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             parse_mode="HTML"
         )
         return
-       
-        # Ajusta URL se necessário
-        if not video_url.startswith('http'):
-            video_url = 'https:' + video_url if video_url.startswith('//') else 'https://sv.shopee.com.br' + video_url
-        
-        LOG.info("Baixando vídeo da URL: %s", video_url[:100])
-        
-        # Atualiza mensagem
-        await application.bot.edit_message_text(
-            text="📥 Baixando vídeo da Shopee...",
-            chat_id=pm["chat_id"],
-            message_id=pm["message_id"]
-        )
-        
-        # Baixa o vídeo
-        output_path = os.path.join(tmpdir, "shopee_video.mp4")
         
         video_response = await asyncio.to_thread(
             lambda: requests.get(video_url, headers=headers, cookies=cookies_dict, stream=True, timeout=120)
