@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import gc
 import glob
+import weakref
 from collections import OrderedDict, deque
 from contextlib import contextmanager
 from urllib.parse import urlparse, parse_qs, unquote
@@ -258,7 +259,7 @@ ACTIVE_DOWNLOADS = {}
 # ════════════════════════════════════════════════════════════════
 class LimitedCache:
     """Cache com limite máximo de entradas (FIFO quando cheio)"""
-    def __init__(self, max_size=300):
+    def __init__(self, max_size=50):  # Reduzido de 300 para 50 - economiza ~80MB
         self.max_size = max_size
         self.cache = OrderedDict()
     
@@ -290,8 +291,8 @@ class LimitedCache:
         return len(self.cache)
 
 # Instância de cache limitado para último download do usuário
-USER_LAST_DOWNLOAD = LimitedCache(max_size=300)  # Máximo 300 usuários
-LOG.info("📦 LimitedCache para USER_LAST_DOWNLOAD inicializado (max_size=300, não cresce infinito)")
+USER_LAST_DOWNLOAD = LimitedCache(max_size=50)  # Reduzido de 300 para 50 - economiza ~50MB
+LOG.info("📦 LimitedCache para USER_LAST_DOWNLOAD inicializado (max_size=50, não cresce infinito)")
 
 async def reconnect_webhook():
     """Reconecta o webhook do Telegram quando trava"""
@@ -1053,7 +1054,7 @@ DB_LOCK = threading.Lock()
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)  # Controle de fila
 ACTIVE_DOWNLOADS = {}  # Rastreamento de downloads ativos
 DOWNLOAD_HISTORY = deque(maxlen=100)  # Histórico limitado aos últimos 100 downloads
-USER_LAST_DOWNLOAD = {}  # Último download por usuário (OK manter assim)
+# USER_LAST_DOWNLOAD já está definido acima como LimitedCache(max_size=50) - não redefina aqui!
 
 @contextmanager
 def get_db_connection():
@@ -4423,6 +4424,22 @@ if __name__ == "__main__":
     cleanup_thread = threading.Thread(target=cleanup_and_gc_routine, daemon=True)
     cleanup_thread.start()
     LOG.info("✅ Thread de limpeza automática e GC iniciada")
+    
+    # 🧹 Garbage collection agressivo a cada 5 minutos
+    def aggressive_gc_routine():
+        """Força garbage collection periodicamente para liberar memória"""
+        while True:
+            try:
+                time.sleep(300)  # 5 minutos
+                collected = gc.collect()
+                if collected > 0:
+                    LOG.debug(f"🧹 GC agressivo: {collected} objetos coletados")
+            except Exception as e:
+                LOG.error(f"❌ Erro em GC agressivo: {e}")
+    
+    gc_thread = threading.Thread(target=aggressive_gc_routine, daemon=True)
+    gc_thread.start()
+    LOG.info("✅ Thread de GC agressivo iniciada (intervalo: 5min)")
     
     # 🚀 Inicia rotina periódica de limpeza de memória (assíncrona)
     asyncio.run_coroutine_threadsafe(memory_cleanup_routine(), APP_LOOP)
