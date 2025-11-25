@@ -1132,7 +1132,7 @@ MESSAGES = {
     ),
     "stats": "📈 <b>Estatísticas do Bot</b>\n\n👥 Usuários ativos esta semana: {count}",
     "error_timeout": "⏱️ O tempo de processamento excedeu o limite. Por favor, tente novamente.",
-    "error_network": "🌐 Erro de conexão detectado. Verifique sua internet e tente novamente em alguns instantes.",
+    "error_network": "🌐 Link inválido: Este bot só funciona com links de vídeos da Shopee. Links de produtos não são compatíveis.",
     "error_file_large": "📦 O arquivo excede o limite de 50 MB. Por favor, escolha um vídeo mais curto.",
     "error_ffmpeg": "🎬 Ocorreu um erro durante o processamento do vídeo.",
     "error_upload": "📤 Falha ao enviar o arquivo. Por favor, tente novamente.",
