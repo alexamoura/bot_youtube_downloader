@@ -4509,9 +4509,9 @@ if __name__ == "__main__":
         LOG.warning("⚠️ WEBHOOK_URL não definida - bot não receberá updates!")
     
     if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    LOG.info("🚀 Iniciando servidor Flask na porta %d", port)
-    app.run(host="0.0.0.0", port=port)
+        port = int(os.environ.get("PORT", 10000))
+        LOG.info("🚀 Iniciando servidor Flask na porta %d", port)
+        app.run(host="0.0.0.0", port=port)
 
 # ============================
 # OTIMIZAÇÕES ADICIONAIS (SAFE)
