@@ -1770,30 +1770,30 @@ async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir
             LOG.info("✅ Tamanho OK, enviando...")
 
             max_retries = 3
-            delay = 5  # segundos
+            wait_time = 5  # segundos
 
             for attempt in range(1, max_retries + 1):
                 try:
                     with open(video_path, "rb") as fh:
                         await bot.send_video(
-                        chat_id=chat_id,
-                        video=fh,
-                        caption=caption,
-                        timeout=180  # aumenta timeout do Telegram
-                    )
-                LOG.info("📤 Envio concluído na tentativa %d", attempt)
-                return True
+                            chat_id=chat_id,
+                            video=fh,
+                            caption=caption,
+                            timeout=180  # aumento de timeout
+                        )
+                    LOG.info(f"📤 Vídeo enviado com sucesso na tentativa {attempt}")
+                    return True
 
-            except Exception as e:
-                LOG.error(f"❌ Erro ao enviar vídeo (tentativa {attempt}/{max_retries}): {e}")
+                except Exception as e:
+                    LOG.error(f"❌ Erro ao enviar vídeo (tentativa {attempt}/{max_retries}): {e}")
 
-                if attempt == max_retries:
-                    LOG.error("❌ Falha final após todas tentativas.")
-                    return False
+                    if attempt == max_retries:
+                        LOG.error("❌ Todas as tentativas de envio falharam.")
+                        return False
 
-                LOG.warning(f"⏳ Aguardando {delay}s antes da nova tentativa...")
-                await asyncio.sleep(delay)
-                delay *= 2 
+                    LOG.warning(f"⏳ Esperando {wait_time}s antes da nova tentativa...")
+                    await asyncio.sleep(wait_time)
+                    wait_time *= 2 
         
         # Arquivo excede limite
         LOG.warning(f"⚠️ Arquivo excede 50MB! Tentando comprimir...")
