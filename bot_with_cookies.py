@@ -1768,32 +1768,9 @@ async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir
         # Se está dentro do limite, envia direto
         if file_size <= TELEGRAM_VIDEO_SIZE_LIMIT:
             LOG.info("✅ Tamanho OK, enviando...")
-
-            max_retries = 3
-            wait_time = 5  # segundos
-
-            for attempt in range(1, max_retries + 1):
-                try:
-                    with open(video_path, "rb") as fh:
-                        await bot.send_video(
-                            chat_id=chat_id,
-                            video=fh,
-                            caption=caption,
-                            timeout=180  # aumento de timeout
-                        )
-                    LOG.info(f"📤 Vídeo enviado com sucesso na tentativa {attempt}")
-                    return True
-
-                except Exception as e:
-                    LOG.error(f"❌ Erro ao enviar vídeo (tentativa {attempt}/{max_retries}): {e}")
-
-                    if attempt == max_retries:
-                        LOG.error("❌ Todas as tentativas de envio falharam.")
-                        return False
-
-                    LOG.warning(f"⏳ Esperando {wait_time}s antes da nova tentativa...")
-                    await asyncio.sleep(wait_time)
-                    wait_time *= 2 
+            with open(video_path, "rb") as fh:
+                await bot.send_video(chat_id=chat_id, video=fh, caption=caption)
+            return True
         
         # Arquivo excede limite
         LOG.warning(f"⚠️ Arquivo excede 50MB! Tentando comprimir...")
