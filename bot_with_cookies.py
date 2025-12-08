@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Alex Moura.
 Versão: 2.1 (23/11/2025)
@@ -35,7 +34,7 @@ import glob
 import weakref
 
 # Import necessário para o retry de timeout
-from telegram.error import TimedOut, NetworkError, RetryAfter
+from telegram.error import TimedOut
 
 from collections import OrderedDict, deque
 from contextlib import contextmanager
@@ -1158,7 +1157,7 @@ try:
     request = HTTPXRequest(
         connect_timeout=30,   # tempo para conectar ao Telegram
         read_timeout=600,     # tempo esperando resposta do Telegram
-        write_timeout=1800,    # tempo enviando o vídeo (o mais importante)
+        write_timeout=600,    # tempo enviando o vídeo (o mais importante)
         pool_timeout=30
     )
 
@@ -1781,93 +1780,104 @@ def ffmpeg_compress_video(input_path: str, output_path: str, target_size_mb: int
         return False
 
 async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir):
-    """Envia vídeo com validação de tamanho, compressão automática e retries (sem emojis na legenda)"""
+    """Envia vídeo com validação de tamanho e compressão automática"""
     try:
         file_size = os.path.getsize(video_path)
         file_size_mb = file_size / (1024 * 1024)
-        LOG.info(f"Arquivo a enviar: {file_size_mb:.1f}MB")
-        # Dentro do limite -> envia com retry
+        
+        LOG.info(f"📊 Arquivo a enviar: {file_size_mb:.1f}MB")
+        
+        # Se está dentro do limite, envia direto
         if file_size <= TELEGRAM_VIDEO_SIZE_LIMIT:
+            LOG.info("✅ Tamanho OK, enviando...")
+
             MAX_RETRIES = 3
-            retry_delay = [1, 3, 5]
+            retry_delay = [1, 3, 5]  # segundos
+
             for attempt in range(MAX_RETRIES):
                 fh = open(video_path, "rb")
                 try:
                     fh.seek(0)
-                    await bot.send_video(chat_id=chat_id, video=fh, caption=caption, supports_streaming=True)
-                    fh.close()
-                    return True
-                except RetryAfter as e:
-                    fh.close()
-                    wait_s = int(getattr(e, 'retry_after', 5)) + 1
-                    LOG.warning(f"Rate limited. Aguardando {wait_s}s...")
-                    await asyncio.sleep(wait_s)
-                    continue
-                except (TimedOut, NetworkError) as e:
-                    fh.close()
-                    LOG.warning(f"Timeout/NetworkError ao enviar (tentativa {attempt + 1}): {e}")
-                    if attempt + 1 < MAX_RETRIES:
-                        delay = retry_delay[attempt]
-                        await asyncio.sleep(delay)
-                        continue
-                    return False
-                except Exception as e:
-                    fh.close()
-                    LOG.error(f"Erro inesperado ao enviar vídeo: {e}")
-                    return False
-        # Excede -> comprimir
-        if pm:
-            try:
-                await bot.edit_message_text(text="Video grande. Comprimindo...", chat_id=pm["chat_id"], message_id=pm["message_id"])
-            except Exception:
-                pass
-        compressed_path = os.path.join(tmpdir, "compressed_shopee.mp4")
-        if ffmpeg_compress_video(video_path, compressed_path):
-            comp_caption = caption + "
 
-Video comprimido para caber no Telegram"
-            MAX_RETRIES = 3
-            retry_delay = [1, 3, 5]
-            for attempt in range(MAX_RETRIES):
-                fh = open(compressed_path, "rb")
-                try:
-                    fh.seek(0)
-                    await bot.send_video(chat_id=chat_id, video=fh, caption=comp_caption, supports_streaming=True)
+                    LOG.info(f"📤 Tentando enviar vídeo (tentativa {attempt + 1}/{MAX_RETRIES})...")
+
+                    await bot.send_video(
+                        chat_id=chat_id,
+                        video=fh,
+                        caption=caption
+                    )
+
+                    LOG.info("✅ Vídeo enviado com sucesso!")
                     fh.close()
-                    try:
-                        os.remove(compressed_path)
-                    except Exception:
-                        pass
                     return True
-                except RetryAfter as e:
+
+                except TimedOut:
                     fh.close()
-                    wait_s = int(getattr(e, 'retry_after', 5)) + 1
-                    LOG.warning(f"Rate limited. Aguardando {wait_s}s...")
-                    await asyncio.sleep(wait_s)
-                    continue
-                except (TimedOut, NetworkError) as e:
-                    fh.close()
-                    LOG.warning(f"Timeout/NetworkError (tentativa {attempt + 1}): {e}")
+                    LOG.warning(f"⚠️ Timeout ao enviar vídeo (tentativa {attempt + 1})")
+
                     if attempt + 1 < MAX_RETRIES:
                         delay = retry_delay[attempt]
+                        LOG.info(f"⏳ Aguardando {delay}s antes da nova tentativa...")
                         await asyncio.sleep(delay)
                         continue
+
+                    LOG.error("❌ Falhou após todas as tentativas de envio (timeout)")
                     return False
+
                 except Exception as e:
                     fh.close()
-                    LOG.error(f"Erro inesperado ao enviar vídeo comprimido: {e}")
+                    LOG.error(f"❌ Erro inesperado ao enviar vídeo: {e}")
                     return False
-            return False
-        else:
-            LOG.error("Falha na compressão")
+        
+        # Arquivo excede limite
+        LOG.warning(f"⚠️ Arquivo excede 50MB! Tentando comprimir...")
+        
+        # Atualizar mensagem
+        if pm:
+            await bot.edit_message_text(
+                text="⚠️ Vídeo grande demais. Tome um café, estamos comprimindo para você ...",
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"]
+            )
+        
+        # Tentar comprimir
+        compressed_path = os.path.join(tmpdir, "compressed_shopee.mp4")
+        
+        if ffmpeg_compress_video(video_path, compressed_path):
             if pm:
-                try:
-                    await bot.edit_message_text(text="Falha na compressão. Tente um vídeo menor.", chat_id=pm["chat_id"], message_id=pm["message_id"])
-                except Exception:
-                    pass
+                await bot.edit_message_text(
+                    text="📤 Enviando vídeo comprimido...",
+                    chat_id=pm["chat_id"],
+                    message_id=pm["message_id"]
+                )
+            
+            with open(compressed_path, "rb") as fh:
+                await bot.send_video(
+                    chat_id=chat_id,
+                    video=fh,
+                    caption=f"{caption}\n\n📦 Vídeo comprimido para caber no Telegram"
+                )
+            
+            # Limpar
+            try:
+                os.remove(compressed_path)
+            except:
+                pass
+            
+            return True
+        else:
+            LOG.error("❌ Falha na compressão")
+            if pm:
+                await bot.edit_message_text(
+                    text="❌ Arquivo muito grande! Não consegui comprimir o suficiente.\n"
+                         "Tente baixar um vídeo menor.",
+                    chat_id=pm["chat_id"],
+                    message_id=pm["message_id"]
+                )
             return False
+    
     except Exception as e:
-        LOG.exception(f"Erro ao enviar: {e}")
+        LOG.exception(f"❌ Erro ao enviar: {e}")
         return False
 
 async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
@@ -2153,7 +2163,7 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
         )
         
         with open(output_path, "rb") as fh:
-            await application.bot.send_video(chat_id=chat_id, video=fh, caption="🎬 Aproveite o seu vídeo 🎬", supports_streaming=True)
+            await application.bot.send_video(chat_id=chat_id, video=fh, caption="🎬 Aproveite o seu vídeo 🎬")
         
         # Mensagem de sucesso com contador
         stats = get_user_download_stats(pm["user_id"])
@@ -3998,7 +4008,7 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
                     chat_id=chat_id,
                     video=fh,
                     caption=caption
-                , supports_streaming=True)
+                )
                     
         except Exception as e:
             LOG.exception("Erro ao enviar arquivo %s: %s", path, e)
