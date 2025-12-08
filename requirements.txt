@@ -1,21 +1,22 @@
 gunicorn>=23.0.0
 
-# Core dependencies
-Flask==3.0.3
-python-telegram-bot>=21.4
-yt-dlp[default]>=2025.11.12
+# Core
+Flask>=3.0.3
+werkzeug>=3.0.0
+python-telegram-bot==22.5
+yt-dlp[default]
 
-# Para extrator Shopee customizado
-requests
-beautifulsoup4==4.12.3
-lxml==5.1.0
+# Shopee extraction
+requests>=2.31.0
+beautifulsoup4
+lxml>=4.9.0
 
-#API PIX Mercado Pago
-mercadopago==2.2.1
-Pillow==10.1.0
+# Mercado Pago PIX
+mercadopago>=2.2.1
+Pillow>=10.0.0
 
-# IA APIs
-groq>=0.11.0             # Groq (gratuito)
+# IA
+groq
 
-werkzeug==3.0.1
-psutil
+# Sistema / Monitoramento
+psutil>=5.9.0
