@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Alex Moura.
 Versão: 2.1 (23/11/2025)
@@ -1785,7 +1786,7 @@ async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir
     try:
         file_size = os.path.getsize(video_path)
         file_size_mb = file_size / (1024 * 1024)
-        LOG.info(f"📈 Arquivo a enviar: {file_size_mb:.1f}MB")
+        LOG.info(f"Arquivo a enviar: {file_size_mb:.1f}MB")
         # Se está dentro do limite, envia direto (com retry)
         if file_size <= TELEGRAM_VIDEO_SIZE_LIMIT:
             LOG.info("✅ Tamanho OK, enviando...")
@@ -1827,11 +1828,11 @@ async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir
         # Arquivo excede limite -> tentar comprimir
         LOG.warning("⚠️ Arquivo excede 50MB! Tentando comprimir...")
         if pm:
-            await bot.edit_message_text(text="⚠️ Vídeo grande demais. Tome um café, estamos comprimindo para você ...", chat_id=pm["chat_id"], message_id=pm["message_id"]) 
+            await bot.edit_message_text(text="Video grande demais. Estamos comprimindo para voce ...", chat_id=pm["chat_id"], message_id=pm["message_id"]) 
         compressed_path = os.path.join(tmpdir, "compressed_shopee.mp4")
         if ffmpeg_compress_video(video_path, compressed_path):
             if pm:
-                await bot.edit_message_text(text="📤 Enviando vídeo comprimido...", chat_id=pm["chat_id"], message_id=pm["message_id"]) 
+                await bot.edit_message_text(text="Enviando video comprimido...", chat_id=pm["chat_id"], message_id=pm["message_id"]) 
             MAX_RETRIES = 3
             retry_delay = [1, 3, 5]
             comp_caption = caption + "
