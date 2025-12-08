@@ -1786,8 +1786,17 @@ async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir
         if file_size <= TELEGRAM_VIDEO_SIZE_LIMIT:
             LOG.info("✅ Tamanho OK, enviando...")
             with open(video_path, "rb") as fh:
-                await bot.send_video(chat_id=chat_id, video=fh, caption=caption)
-            return True
+    try:
+        await bot.send_video(chat_id=chat_id, video=fh, caption=caption)
+        return True
+
+    except telegram.error.TimedOut:
+        LOG.warning("⚠️ Timeout do Telegram — o vídeo provavelmente FOI enviado.")
+        return True  # ← assume sucesso porque o vídeo quase sempre chega
+
+    except Exception as e:
+        LOG.error(f"❌ Erro inesperado ao enviar vídeo: {e}")
+        return False
         
         # Arquivo excede limite
         LOG.warning(f"⚠️ Arquivo excede 50MB! Tentando comprimir...")
