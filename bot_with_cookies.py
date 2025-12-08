@@ -1785,18 +1785,44 @@ async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir
         # Se está dentro do limite, envia direto
         if file_size <= TELEGRAM_VIDEO_SIZE_LIMIT:
             LOG.info("✅ Tamanho OK, enviando...")
-            fh = open(video_path, "rb")
-            try:
-                fh.seek(0)  # garante que o arquivo começa do início
-                await bot.send_video(chat_id=chat_id, video=fh, caption=caption)
-                return True
 
-            except Exception as e:
-                LOG.error(f"❌ Erro ao enviar vídeo: {e}")
-                return False
+            MAX_RETRIES = 3
+            retry_delay = [1, 3, 5]  # segundos
 
-            finally:
-                fh.close()  # garantir fechamento só DEPOIS do upload
+            for attempt in range(MAX_RETRIES):
+                fh = open(video_path, "rb")
+                try:
+                    fh.seek(0)
+
+                    LOG.info(f"📤 Tentando enviar vídeo (tentativa {attempt + 1}/{MAX_RETRIES})...")
+
+                    await bot.send_video(
+                        chat_id=chat_id,
+                        video=fh,
+                        caption=caption
+                    )
+
+                    LOG.info("✅ Vídeo enviado com sucesso!")
+                    fh.close()
+                    return True
+
+                except telegram.error.TimedOut:
+                    fh.close()
+                    LOG.warning(f"⚠️ Timeout ao enviar vídeo (tentativa {attempt + 1})")
+
+                    if attempt + 1 < MAX_RETRIES:
+                        delay = retry_delay[attempt]
+                        LOG.info(f"⏳ Aguardando {delay}s antes da nova tentativa...")
+                        await asyncio.sleep(delay)
+                        continue
+
+                    LOG.error("❌ Falhou após todas as tentativas de envio (timeout)")
+                    return False
+
+                except Exception as e:
+                    fh.close()
+                    LOG.error(f"❌ Erro inesperado ao enviar vídeo: {e}")
+                    return False
         
         # Arquivo excede limite
         LOG.warning(f"⚠️ Arquivo excede 50MB! Tentando comprimir...")
