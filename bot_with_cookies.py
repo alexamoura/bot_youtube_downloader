@@ -34,7 +34,7 @@ import glob
 import weakref
 
 # Import necessário para o retry de timeout
-from telegram.error import TimedOut
+from telegram.error import TimedOut, NetworkError, RetryAfter
 
 from collections import OrderedDict, deque
 from contextlib import contextmanager
@@ -1151,13 +1151,14 @@ app = Flask(__name__)
 
 # Inicialização do Telegram Application
 from telegram.request import HTTPXRequest
+from telegram.constants import ChatAction
 
 # Inicialização do Telegram Application
 try:
     request = HTTPXRequest(
         connect_timeout=30,   # tempo para conectar ao Telegram
         read_timeout=600,     # tempo esperando resposta do Telegram
-        write_timeout=600,    # tempo enviando o vídeo (o mais importante)
+        write_timeout=1800,    # tempo enviando o vídeo (o mais importante)
         pool_timeout=30
     )
 
@@ -1790,6 +1791,10 @@ async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir
         # Se está dentro do limite, envia direto
         if file_size <= TELEGRAM_VIDEO_SIZE_LIMIT:
             LOG.info("✅ Tamanho OK, enviando...")
+        try:
+            await bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
+        except Exception:
+            pass
 
             MAX_RETRIES = 3
             retry_delay = [1, 3, 5]  # segundos
@@ -1811,7 +1816,12 @@ async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir
                     fh.close()
                     return True
 
-                except TimedOut:
+                except RetryAfter as e:
+                fh.close()
+                LOG.warning(f"⏳ Rate limited pelo Telegram. Aguardando {getattr(e, 'retry_after', 5)}s...")
+                await asyncio.sleep(int(getattr(e, 'retry_after', 5)) + 1)
+                continue
+            except (TimedOut, NetworkError):
                     fh.close()
                     LOG.warning(f"⚠️ Timeout ao enviar vídeo (tentativa {attempt + 1})")
 
@@ -2162,8 +2172,16 @@ async def _download_shopee_video(url: str, tmpdir: str, chat_id: int, pm: dict):
             message_id=pm["message_id"]
         )
         
-        with open(output_path, "rb") as fh:
-            await application.bot.send_video(chat_id=chat_id, video=fh, caption="🎬 Aproveite o seu vídeo 🎬")
+        success = await safe_send_video_telegram(
+        bot=application.bot,
+        chat_id=chat_id,
+        video_path=output_path,
+        caption="🎬 Aproveite o seu vídeo 🎬",
+        pm=pm,
+        tmpdir=tmpdir
+    )
+if not success:
+    return
         
         # Mensagem de sucesso com contador
         stats = get_user_download_stats(pm["user_id"])
@@ -4001,14 +4019,17 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
                             continue
             
             # Envia o vídeo
-            with open(path, "rb") as fh:
-                caption = "🎬 Aproveite o seu vídeo 🎬"
-                
-                await application.bot.send_video(
-                    chat_id=chat_id,
-                    video=fh,
-                    caption=caption
-                )
+            caption = "🎬 Aproveite o seu vídeo 🎬"
+success = await safe_send_video_telegram(
+        bot=application.bot,
+        chat_id=chat_id,
+        video_path=path,
+        caption=caption,
+        pm=pm,
+        tmpdir=tmpdir
+    )
+if not success:
+    return
                     
         except Exception as e:
             LOG.exception("Erro ao enviar arquivo %s: %s", path, e)
