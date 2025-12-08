@@ -4001,19 +4001,46 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
                             continue
             
             # Envia o vídeo
-            with open(path, "rb") as fh:
-                caption = "🎬 Aproveite o seu vídeo 🎬"
-                
-                await application.bot.send_video(
-                    chat_id=chat_id,
-                    video=fh,
-                    caption=caption
-                )
-                    
-        except Exception as e:
-            LOG.exception("Erro ao enviar arquivo %s: %s", path, e)
-            await _notify_error(pm, "error_upload")
-            return
+            MAX_RETRIES = 3
+            retry_delay = [1, 3, 5]
+
+            caption = "🎬 Aproveite o seu vídeo 🎬"
+
+            for attempt in range(MAX_RETRIES):
+                fh = open(path, "rb")
+                try:
+                    fh.seek(0)
+                    LOG.info(f"📤 Tentando enviar vídeo (tentativa {attempt + 1}/{MAX_RETRIES})...")
+
+                    await application.bot.send_video(
+                        chat_id=chat_id,
+                        video=fh,
+                        caption=caption
+                    )
+
+                    fh.close()
+                    LOG.info("✅ Vídeo enviado com sucesso!")
+                    break
+
+            except TimedOut:
+                fh.close()
+                LOG.warning(f"⚠️ Timeout ao enviar vídeo (tentativa {attempt + 1})")
+
+                if attempt + 1 < MAX_RETRIES:
+                    delay = retry_delay[attempt]
+                    LOG.info(f"⏳ Aguardando {delay}s antes da nova tentativa...")
+                    await asyncio.sleep(delay)
+                    continue
+
+                LOG.error("❌ Falhou após todas as tentativas de envio")
+                await _notify_error(pm, "error_upload")
+                return
+
+            except Exception as e:
+                fh.close()
+                LOG.exception("Erro ao enviar arquivo %s: %s", path, e)
+                await _notify_error(pm, "error_upload")
+                return
 
     # Mensagem de sucesso com contador de downloads
     stats = get_user_download_stats(pm["user_id"])
