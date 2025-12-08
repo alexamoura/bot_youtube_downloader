@@ -7,6 +7,8 @@ Versão: 2.1 (23/11/2025)
 # 🔧 FORÇA UTF-8 ENCODING PARA EMOJIS
 import sys
 import io
+
+# Garantir saída UTF-8 mesmo no Render
 if sys.stdout.encoding != 'utf-8':
     try:
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -30,11 +32,15 @@ import subprocess
 import gc
 import glob
 import weakref
+
+# Import necessário para o retry de timeout
+from telegram.error import TimedOut
+
 from collections import OrderedDict, deque
 from contextlib import contextmanager
 from urllib.parse import urlparse, parse_qs, unquote
 from datetime import datetime, timedelta
-import io
+
 import yt_dlp
 
 try:
@@ -67,7 +73,6 @@ try:
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
-    # LOG será definido posteriormente (linha 202)
 
 # 🔧 FIX 413: Compressão de vídeos grandes
 try:
