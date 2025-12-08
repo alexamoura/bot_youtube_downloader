@@ -1800,12 +1800,7 @@ async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir
                 try:
                     fh.seek(0)
                     LOG.info(f"📤 Tentando enviar vídeo (tentativa {attempt + 1}/{MAX_RETRIES})...")
-                    await bot.send_video(
-                        chat_id=chat_id,
-                        video=fh,
-                        caption=caption,
-                        supports_streaming=True
-                    )
+                    await bot.send_video(chat_id=chat_id, video=fh, caption=caption, supports_streaming=True)
                     LOG.info("✅ Vídeo enviado com sucesso!")
                     fh.close()
                     return True
@@ -1832,33 +1827,21 @@ async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir
         # Arquivo excede limite -> tentar comprimir
         LOG.warning("⚠️ Arquivo excede 50MB! Tentando comprimir...")
         if pm:
-            await bot.edit_message_text(
-                text="⚠️ Vídeo grande demais. Tome um café, estamos comprimindo para você ...",
-                chat_id=pm["chat_id"],
-                message_id=pm["message_id"]
-            )
+            await bot.edit_message_text(text="⚠️ Vídeo grande demais. Tome um café, estamos comprimindo para você ...", chat_id=pm["chat_id"], message_id=pm["message_id"]) 
         compressed_path = os.path.join(tmpdir, "compressed_shopee.mp4")
         if ffmpeg_compress_video(video_path, compressed_path):
             if pm:
-                await bot.edit_message_text(
-                    text="📤 Enviando vídeo comprimido...",
-                    chat_id=pm["chat_id"],
-                    message_id=pm["message_id"]
-                )
+                await bot.edit_message_text(text="📤 Enviando vídeo comprimido...", chat_id=pm["chat_id"], message_id=pm["message_id"]) 
             MAX_RETRIES = 3
             retry_delay = [1, 3, 5]
+            comp_caption = caption + "
+
+📦 Vídeo comprimido para caber no Telegram"
             for attempt in range(MAX_RETRIES):
                 fh = open(compressed_path, "rb")
                 try:
                     fh.seek(0)
-                    await bot.send_video(
-                        chat_id=chat_id,
-                        video=fh,
-                        caption=f"{caption}
-
-📦 Vídeo comprimido para caber no Telegram",
-                        supports_streaming=True
-                    )
+                    await bot.send_video(chat_id=chat_id, video=fh, caption=comp_caption, supports_streaming=True)
                     fh.close()
                     try:
                         os.remove(compressed_path)
@@ -1888,15 +1871,8 @@ async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir
         else:
             LOG.error("❌ Falha na compressão")
             if pm:
-                await bot.edit_message_text(
-                    text=(
-                        "❌ Arquivo muito grande! Não consegui comprimir o suficiente.
-"
-                        "Tente baixar um vídeo menor."
-                    ),
-                    chat_id=pm["chat_id"],
-                    message_id=pm["message_id"]
-                )
+                await bot.edit_message_text(text=("❌ Arquivo muito grande! Não consegui comprimir o suficiente.
+" "Tente baixar um vídeo menor."), chat_id=pm["chat_id"], message_id=pm["message_id"]) 
             return False
     except Exception as e:
         LOG.exception(f"❌ Erro ao enviar: {e}")
