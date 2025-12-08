@@ -4000,11 +4000,11 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
                         except:
                             continue
             
-            # Envia o vídeo
-            MAX_RETRIES = 3
-            retry_delay = [1, 3, 5]
+# Envia o vídeo
+caption = "🎬 Aproveite o seu vídeo 🎬"
 
-            caption = "🎬 Aproveite o seu vídeo 🎬"
+MAX_RETRIES = 3
+retry_delay = [1, 3, 5]
 
 for attempt in range(MAX_RETRIES):
     fh = open(path, "rb")
