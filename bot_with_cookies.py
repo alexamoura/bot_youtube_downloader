@@ -1145,9 +1145,26 @@ MESSAGES = {
 app = Flask(__name__)
 
 # Inicialização do Telegram Application
+from telegram.request import HTTPXRequest
+
+# Inicialização do Telegram Application
 try:
-    application = ApplicationBuilder().token(TOKEN).build()
-    LOG.info("ApplicationBuilder criado com sucesso.")
+    request = HTTPXRequest(
+        connect_timeout=30,   # tempo para conectar ao Telegram
+        read_timeout=600,     # tempo esperando resposta do Telegram
+        write_timeout=600,    # tempo enviando o vídeo (o mais importante)
+        pool_timeout=30
+    )
+
+    application = (
+        ApplicationBuilder()
+        .token(TOKEN)
+        .request(request)
+        .build()
+    )
+
+    LOG.info("ApplicationBuilder criado com sucesso (com timeouts customizados).")
+
 except Exception as e:
     LOG.exception("Erro ao construir ApplicationBuilder")
     sys.exit(1)
