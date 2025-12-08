@@ -1806,7 +1806,7 @@ async def safe_send_video_telegram(bot, chat_id, video_path, caption, pm, tmpdir
                     fh.close()
                     return True
 
-                except telegram.error.TimedOut:
+                except TimedOut:
                     fh.close()
                     LOG.warning(f"⚠️ Timeout ao enviar vídeo (tentativa {attempt + 1})")
 
