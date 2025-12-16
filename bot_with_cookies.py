@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Alex Moura.
-Versão: 2.1 (23/11/2025)
+Versão: 2.1 (12/2025)
 """
 
 # 🔧 FORÇA UTF-8 ENCODING PARA EMOJIS
@@ -4692,3 +4692,84 @@ LOG.info("✅ Módulo de otimizações carregado")
 LOG.info("✅ Garbage Collector agressivo ativado")
 LOG.info("✅ LimitedCache para USER_LAST_DOWNLOAD ativado")
 LOG.info("✅ Safe streaming download implementado (streaming real, não RAM)")
+
+
+
+# ============================================================
+# 🔥 EXTENSÕES ADICIONAIS (MENU + IA) - GERADO AUTOMATICAMENTE
+# ============================================================
+
+# --- Mensagem de recursos
+MESSAGES["features"] = (
+    "✨ <b>Recursos do Bot</b>\n\n"
+    "✅ Downloads de vídeos sem marca d'água\n"
+    "✅ Shopee, Instagram, TikTok e YouTube\n"
+    "✅ Compressão automática para Telegram (50MB)\n"
+    "✅ Fila inteligente de downloads\n"
+    "✅ Geração de textos com IA 🤖\n"
+    "✅ Plano Premium com downloads ilimitados\n"
+)
+
+def main_menu():
+    keyboard = [
+        [
+            InlineKeyboardButton("📋 Recursos", callback_data="features"),
+            InlineKeyboardButton("💎 Premium", callback_data="premium"),
+        ],
+        [
+            InlineKeyboardButton("🤖 Gerar Texto com IA", callback_data="ai_text"),
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+async def menu_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "features":
+        await query.edit_message_text(MESSAGES["features"], parse_mode="HTML")
+
+    elif query.data == "premium":
+        await query.edit_message_text(MESSAGES["premium_info"], parse_mode="HTML")
+
+    elif query.data == "ai_text":
+        await query.edit_message_text(
+            "🤖 Envie o nome do produto ou vídeo que deseja divulgar."
+        )
+        context.user_data["awaiting_ai_text"] = True
+
+def generate_ai_text(prompt: str) -> str:
+    if not groq_client:
+        return "⚠️ IA indisponível no momento."
+    try:
+        completion = groq_client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[
+                {"role": "system", "content": "Você é um especialista em marketing digital."},
+                {"role": "user", "content": f"Crie um texto curto e persuasivo para divulgar: {prompt}"}
+            ],
+            temperature=0.7,
+            max_tokens=200
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        LOG.error("Erro IA: %s", e)
+        return "❌ Erro ao gerar texto com IA."
+
+# Handler de captura de texto para IA
+async def ai_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("awaiting_ai_text"):
+        context.user_data["awaiting_ai_text"] = False
+        texto = generate_ai_text(update.message.text)
+        await update.message.reply_text(
+            f"🤖 <b>Texto gerado com IA:</b>\n\n{texto}",
+            parse_mode="HTML"
+        )
+        return
+
+application.add_handler(CallbackQueryHandler(menu_callbacks))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_text_handler))
+
+# ============================================================
+# 🔥 FIM DAS EXTENSÕES
+# ============================================================
