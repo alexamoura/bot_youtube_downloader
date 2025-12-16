@@ -4696,10 +4696,66 @@ LOG.info("✅ Safe streaming download implementado (streaming real, não RAM)")
 
 
 # ============================================================
-# 🔥 FIX REAL – CONECTANDO MENU, IA E START (VERSÃO V2)
+# 🔥 FIX DEFINITIVO V3 – MENU + IA (SEM NameError)
 # ============================================================
 
-# --- Sobrescreve /start para incluir menu
+# --- Mensagem de recursos
+MESSAGES["features"] = (
+    "✨ <b>Recursos do Bot</b>\n\n"
+    "✅ Downloads de vídeos sem marca d'água\n"
+    "✅ Shopee, Instagram, TikTok e YouTube\n"
+    "✅ Compressão automática para Telegram (50MB)\n"
+    "✅ Fila inteligente de downloads\n"
+    "✅ Geração de textos com IA 🤖\n"
+    "✅ Plano Premium com downloads ilimitados\n"
+)
+
+def main_menu():
+    keyboard = [
+        [
+            InlineKeyboardButton("📋 Recursos", callback_data="features"),
+            InlineKeyboardButton("💎 Premium", callback_data="premium"),
+        ],
+        [
+            InlineKeyboardButton("🤖 Gerar Texto com IA", callback_data="ai_text"),
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+# --- CALLBACK DEFINIDO ANTES DO REGISTRO
+async def menu_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "features":
+        await query.edit_message_text(MESSAGES["features"], parse_mode="HTML")
+
+    elif query.data == "premium":
+        await query.edit_message_text(MESSAGES["premium_info"], parse_mode="HTML")
+
+    elif query.data == "ai_text":
+        await query.edit_message_text("🤖 Envie o nome do produto ou vídeo.")
+        context.user_data["awaiting_ai_text"] = True
+
+def generate_ai_text(prompt: str) -> str:
+    if not groq_client:
+        return "⚠️ IA indisponível no momento."
+    try:
+        completion = groq_client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[
+                {"role": "system", "content": "Você é um especialista em marketing digital."},
+                {"role": "user", "content": f"Crie um texto curto e persuasivo para divulgar: {prompt}"}
+            ],
+            temperature=0.7,
+            max_tokens=200
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        LOG.error("Erro IA: %s", e)
+        return "❌ Erro ao gerar texto com IA."
+
+# --- START SOBRESCRITO COM MENU
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         MESSAGES["welcome"],
@@ -4707,13 +4763,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
-# Registra novamente o /start (override seguro)
-application.add_handler(CommandHandler("start", start), group=0)
-
-# --- PRIORIDADE PARA CALLBACKS (botões)
-application.add_handler(CallbackQueryHandler(menu_callbacks), group=0)
-
-# --- PRIORIDADE PARA IA (antes do handler geral)
+# --- HANDLER DE IA COM PRIORIDADE (SEM CONFLITO)
 async def ai_priority_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("awaiting_ai_text"):
         context.user_data["awaiting_ai_text"] = False
@@ -4722,21 +4772,19 @@ async def ai_priority_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"🤖 <b>Texto gerado com IA:</b>\n\n{texto}",
             parse_mode="HTML"
         )
-        return True
-    return False
-
-# Wrapper para garantir prioridade da IA
-async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    handled = await ai_priority_handler(update, context)
-    if handled:
         return
 
-# Registra router antes dos outros handlers de texto
+# ============================================================
+# 🔗 REGISTRO SEGURO DOS HANDLERS (ORDEM IMPORTA)
+# ============================================================
+
+application.add_handler(CommandHandler("start", start), group=0)
+application.add_handler(CallbackQueryHandler(menu_callbacks), group=0)
 application.add_handler(
-    MessageHandler(filters.TEXT & ~filters.COMMAND, text_router),
+    MessageHandler(filters.TEXT & ~filters.COMMAND, ai_priority_handler),
     group=0
 )
 
 # ============================================================
-# 🔥 FIM DO FIX REAL
+# 🔥 FIM DO FIX V3
 # ============================================================
