@@ -4692,3 +4692,18 @@ LOG.info("✅ Módulo de otimizações carregado")
 LOG.info("✅ Garbage Collector agressivo ativado")
 LOG.info("✅ LimitedCache para USER_LAST_DOWNLOAD ativado")
 LOG.info("✅ Safe streaming download implementado (streaming real, não RAM)")
+
+# ============================================================
+# TWITTER BOT (CONTROLADO POR VARIÁVEL DE AMBIENTE)
+# ============================================================
+ENABLE_TWITTER = os.getenv("ENABLE_TWITTER", "false").lower() == "true"
+
+if ENABLE_TWITTER:
+    try:
+        import twitter_bot
+        twitter_bot.twitter_entrypoint()
+        LOG.info("🤖 Twitter bot habilitado via ENABLE_TWITTER")
+    except Exception as e:
+        LOG.warning(f"⚠️ Falha ao iniciar Twitter bot: {e}")
+else:
+    LOG.info("⛔ Twitter bot desabilitado (ENABLE_TWITTER=false)")
