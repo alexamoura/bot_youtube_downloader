@@ -38,7 +38,7 @@ from telegram.error import TimedOut
 
 from collections import OrderedDict, deque
 from contextlib import contextmanager
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import parse_qs, quote, unquote, urlparse
 from datetime import datetime, timedelta
 
 import yt_dlp
@@ -2230,6 +2230,23 @@ def split_video_file(input_path: str, output_dir: str, segment_size: int = SPLIT
 # TELEGRAM HANDLERS
 # ============================
 
+async def buscar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    '''Gera um link de busca da Shopee Brasil a partir de palavra-chave (sem scraping)'''
+    if not context.args:
+        await update.message.reply_text("Use: /buscar <palavra-chave>\nEx.: /buscar air fryer")
+        return
+
+    termo = " ".join(context.args).strip()
+    link_home = "https://shopee.com.br/"
+    texto = (
+        f'🔎 Busca na Shopee por: {termo}\n\n'
+        f'1) Abra: {link_home}\n'
+        f'2) Digite a palavra-chave acima\n\n'
+        '💡 Dica: especifique marca/modelo (ex.: 'air fryer 12L philco').'
+    )
+    await update.message.reply_text(texto)
+
+
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para o comando /start"""
     user_id = update.effective_user.id
@@ -2334,20 +2351,28 @@ async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         response = await chat_with_ai(
             user_message,
-            system_prompt="""Você é um assistente amigável para um bot de downloads do Telegram.
-- Seja útil, direto e use frases curtas.
-- Utilize emojis apenas quando fizer sentido.
-- Nunca invente informações. Se não souber, responda exatamente: "Não tenho essa informação".
-- Não forneça detalhes que não estejam listados abaixo.
-- Se o usuário quiser assinar o plano, peça para digitar /premium.
-- Para vídeos do YouTube, você pode escolher a qualidade (360p, 480p, 720p, 1080p).
-- Não responda sobre assuntos que não sejam relacionados ao que esse assistente faz
+            system_prompt="""Você é um assistente amigável para um bot de downloads do Telegram e buscas de produtos APENAS na Shopee.
 
-Funcionalidades:
-- Download de vídeos (Shopee, Instagram, TikTok, Twitter, etc.)
-- Plano gratuito: 3 downloads/semana
-- Plano premium: downloads ilimitados
-- Se o usuário falar para você baixar algum vídeo, incentive ele a te enviar um link
+Regras de comportamento:
+- Seja direto, use frases curtas, emojis só quando fizer sentido.
+- NUNCA invente informações; se não souber, responda exatamente: "Não tenho essa informação".
+- NUNCA sugira ou gere links fora dos domínios da Shopee.
+- Não responda assuntos que não sejam do escopo deste bot.
+
+Escopo do bot:
+- Download de vídeos (Shopee, Instagram, TikTok, Twitter, etc.).
+- Plano gratuito: 3 downloads/semana; Premium: ilimitado (/premium).
+- BUSCA DE PRODUTOS: se o usuário pedir para procurar/produtos/preços/modelos, responda que o bot busca SOMENTE na Shopee Brasil.
+- Ao detectar intenção de busca de produtos, peça a palavra-chave e oriente usar o comando /buscar <palavra-chave>.
+- Ao sugerir links, use APENAS domínios válidos da Shopee: 
+  https://shopee.com.br/   https://shp.ee/   https://s.shopee.com.br/
+- NUNCA retorne links fora desses domínios.
+
+Comandos:
+- /start – iniciar
+- /status – ver estatísticas
+- /premium – plano premium
+- /buscar <termo> – gerar link de busca na Shopee
 """
         )
         
@@ -2785,25 +2810,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 response = await chat_with_ai(
                     text,
-                    system_prompt="""Você é um assistente amigável para um bot de downloads do Telegram.
-- Seja útil, direto e use frases curtas.
-- Utilize emojis apenas quando fizer sentido.
-- Nunca invente informações. Se não souber, responda exatamente: "Não tenho essa informação".
-- Não forneça detalhes que não estejam listados abaixo.
-- Se o usuário quiser assinar o plano, peça para digitar /premium.
-- Para vídeos do YouTube, você pode escolher a qualidade (360p, 480p, 720p, 1080p).
-- Não responda sobre assuntos que não sejam relacionados ao que esse assistente faz
+                    system_prompt="""Você é um assistente amigável para um bot de downloads do Telegram e buscas de produtos APENAS na Shopee.
 
-Funcionalidades:
-- Download de vídeos (Shopee, Instagram, TikTok, Twitter, etc.)
-- Plano gratuito: 3 downloads/semana
-- Plano premium: downloads ilimitados
-- Se o usuário falar para você baixar algum vídeo, incentive ele a te enviar um link
+Regras de comportamento:
+- Seja direto, use frases curtas, emojis só quando fizer sentido.
+- NUNCA invente informações; se não souber, responda exatamente: "Não tenho essa informação".
+- NUNCA sugira ou gere links fora dos domínios da Shopee.
+- Não responda assuntos que não sejam do escopo deste bot.
+
+Escopo do bot:
+- Download de vídeos (Shopee, Instagram, TikTok, Twitter, etc.).
+- Plano gratuito: 3 downloads/semana; Premium: ilimitado (/premium).
+- BUSCA DE PRODUTOS: se o usuário pedir para procurar/produtos/preços/modelos, responda que o bot busca SOMENTE na Shopee Brasil.
+- Ao detectar intenção de busca de produtos, peça a palavra-chave e oriente usar o comando /buscar <palavra-chave>.
+- Ao sugerir links, use APENAS domínios válidos da Shopee: 
+  https://shopee.com.br/   https://shp.ee/   https://s.shopee.com.br/
+- NUNCA retorne links fora desses domínios.
 
 Comandos:
-/start - Iniciar
-/status - Ver estatísticas
-/premium - Plano premium 
+- /start – iniciar
+- /status – ver estatísticas
+- /premium – plano premium
+- /buscar <termo> – gerar link de busca na Shopee
 """
                 )
                 
@@ -4077,7 +4105,8 @@ application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("stats", stats_cmd))
 application.add_handler(CommandHandler("status", status_cmd))
 application.add_handler(CommandHandler("premium", premium_cmd))
-application.add_handler(CommandHandler("ai", ai_cmd))  # ← Comando IA
+application.add_handler(CommandHandler("ai", ai_cmd))
+application.add_handler(CommandHandler("buscar", buscar_cmd))  # ← Comando IA
 application.add_handler(CommandHandler("mensal", mensal_cmd))  # ← Comando relatório mensal
 application.add_handler(CallbackQueryHandler(callback_confirm, pattern=r"^(dl:|cancel:|quality:|back:)"))
 application.add_handler(CallbackQueryHandler(callback_buy_premium, pattern=r"^subscribe:"))
