@@ -2242,7 +2242,7 @@ async def buscar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f'🔎 Busca na Shopee por: {termo}\n\n'
         f'1) Abra: {link_home}\n'
         f'2) Digite a palavra-chave acima\n\n'
-        '💡 Dica: especifique marca/modelo (ex.: 'air fryer 12L philco').'
+        '💡 Dica: especifique marca/modelo (ex.: "air fryer 12L philco").'
     )
     await update.message.reply_text(texto)
 
