@@ -1521,17 +1521,17 @@ def get_youtube_format_by_quality(quality: str) -> str:
     
     Otimizado para yt-dlp>=2025.11.12 com melhor suporte a formatos do YouTube
     """
-    # Para yt-dlp 2025.11.12+, usa seletores simplificados que funcionam melhor
+    # Para yt-dlp 2025.11.12+, bestvideo+bestaudio para garantir merge correto
     quality_formats = {
-        "360p": "best[height<=360]/worst",
-        "480p": "best[height<=480]/best[height<=360]/worst",
-        "720p": "best[height<=720]/best[height<=480]/best",
-        "1080p": "best[height<=1080]/best[height<=720]/best",
-        "best": "best"
+        "360p": "bestvideo[height<=360]+bestaudio/best[height<=360]/best",
+        "480p": "bestvideo[height<=480]+bestaudio/best[height<=480]/best[height<=360]/best",
+        "720p": "bestvideo[height<=720]+bestaudio/best[height<=720]/best[height<=480]/best",
+        "1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best[height<=720]/best",
+        "best": "bestvideo+bestaudio/best"
     }
     
     # Retorna o formato com fallback garantido
-    return quality_formats.get(quality, "best")
+    return quality_formats.get(quality, "bestvideo+bestaudio/best")
 
 def get_format_for_url(url: str, quality: str = None) -> str:
     """Retorna o formato apropriado baseado na plataforma - OTIMIZADO PARA 50MB
