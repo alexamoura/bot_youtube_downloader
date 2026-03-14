@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Alex Moura.
-Versão: 2.1 (23/11/2025)
+Versão: 2.1 (14/03/2026)
 """
 
 # 🔧 FORÇA UTF-8 ENCODING PARA EMOJIS
