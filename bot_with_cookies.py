@@ -1517,20 +1517,37 @@ def get_cookie_for_url(url: str):
     return None
 
 def get_youtube_format_by_quality(quality: str) -> str:
-    """Retorna string de formato yt-dlp baseado na qualidade escolhida
-    
-    Otimizado para yt-dlp>=2025.11.12 com melhor suporte a formatos do YouTube
-    """
-    # Para yt-dlp 2025.11.12+, bestvideo+bestaudio para garantir merge correto
+    """Retorna string de formato yt-dlp baseado na qualidade escolhida"""
     quality_formats = {
-        "360p": "bestvideo[height<=360]+bestaudio/best[height<=360]/best",
-        "480p": "bestvideo[height<=480]+bestaudio/best[height<=480]/best[height<=360]/best",
-        "720p": "bestvideo[height<=720]+bestaudio/best[height<=720]/best[height<=480]/best",
-        "1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best[height<=720]/best",
+        "360p": (
+            "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/"
+            "bestvideo[height<=360]+bestaudio/"
+            "best[height<=360]/"
+            "best"
+        ),
+        "480p": (
+            "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/"
+            "bestvideo[height<=480]+bestaudio/"
+            "best[height<=480]/"
+            "best"
+        ),
+        "720p": (
+            "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/"
+            "bestvideo[height<=720]+bestaudio/"
+            "best[height<=720]/"
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+            "best"
+        ),
+        "1080p": (
+            "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/"
+            "bestvideo[height<=1080]+bestaudio/"
+            "best[height<=1080]/"
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+            "best"
+        ),
         "best": "bestvideo+bestaudio/best"
     }
     
-    # Retorna o formato com fallback garantido
     return quality_formats.get(quality, "bestvideo+bestaudio/best")
 
 def get_format_for_url(url: str, quality: str = None) -> str:
