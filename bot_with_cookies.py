@@ -3093,7 +3093,7 @@ async def get_video_info(url: str) -> dict:
         "fragment_retries": 4,   # Aumentado para melhor resiliência
         "buffersize": 1024 * 64,  # 64KB buffer (padrão: 1024KB)
         # Adiciona formato otimizado para yt-dlp 2025.11.12+
-        "format": get_format_for_url(url),
+        "format": "bestvideo+bestaudio/best",
         # 🔧 FIX CONEXÃO YOUTUBE: Aumenta timeouts e retries para evitar "Connection refused"
         "socket_timeout": 60,  # 60s timeout (aumentado de 30s)
         "http_chunk_size": 262144,  # 256KB chunks (mais estável)
