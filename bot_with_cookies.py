@@ -3990,8 +3990,29 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
     try:
         await asyncio.to_thread(lambda: _run_ydl(ydl_opts, [url]))
     except Exception as e:
+        error_msg = str(e)
         LOG.exception("Erro no yt-dlp: %s", e)
-        await _notify_error(pm, "error_network")
+        
+        if "No video formats found" in error_msg or "Only images are available" in error_msg:
+            await application.bot.edit_message_text(
+                text="⚠️ <b>Nenhum vídeo encontrado</b>\n\n"
+                     "Este link não contém um vídeo disponível para download.\n"
+                     "Pode ser um post de imagem ou conteúdo não suportado.",
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"],
+                parse_mode="HTML"
+            )
+        elif "Requested format is not available" in error_msg:
+            await application.bot.edit_message_text(
+                text="⚠️ <b>Formato não disponível</b>\n\n"
+                     "O vídeo não está disponível na qualidade solicitada.\n"
+                     "Tente novamente escolhendo uma qualidade menor.",
+                chat_id=pm["chat_id"],
+                message_id=pm["message_id"],
+                parse_mode="HTML"
+            )
+        else:
+            await _notify_error(pm, "error_network")
         return
 
     # Envia arquivos baixados
