@@ -4,7 +4,7 @@ gunicorn>=23.0.0
 Flask>=3.0.3
 werkzeug>=3.0.0
 python-telegram-bot==22.5
-yt-dlp>=2026.01.01
+yt-dlp>=2025.1.1
 
 # Shopee extraction
 requests>=2.31.0
