@@ -3093,7 +3093,8 @@ async def get_video_info(url: str) -> dict:
         "fragment_retries": 4,   # Aumentado para melhor resiliência
         "buffersize": 1024 * 64,  # 64KB buffer (padrão: 1024KB)
         # Adiciona formato otimizado para yt-dlp 2025.11.12+
-        "format": "bestvideo+bestaudio/best",
+        "format": "bestvideo+bestaudio/best/bestvideo/bestaudio",
+        "ignore_no_formats_error": True,
         # 🔧 FIX CONEXÃO YOUTUBE: Aumenta timeouts e retries para evitar "Connection refused"
         "socket_timeout": 60,  # 60s timeout (aumentado de 30s)
         "http_chunk_size": 262144,  # 256KB chunks (mais estável)
@@ -3124,6 +3125,8 @@ async def get_video_info(url: str) -> dict:
     
     if cookie_file:
         ydl_opts["cookiefile"] = cookie_file
+    
+    ydl_opts.pop("format", None)
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
