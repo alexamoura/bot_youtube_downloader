@@ -3945,7 +3945,6 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         "no_cache_dir": True,
         "buffersize": 1024 * 64,
         "skip_unavailable_fragments": True,
-        "extractor_args": {"youtube": {"skip": ["dash", "hls"]}},
         "postprocessors": [{
             'key': 'FFmpegVideoConvertor',
             'preferedformat': 'mp4',
