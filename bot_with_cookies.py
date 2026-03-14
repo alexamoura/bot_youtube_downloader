@@ -3931,26 +3931,27 @@ async def _do_download(token: str, url: str, tmpdir: str, chat_id: int, pm: dict
         "quiet": False,
         "logger": LOG,
         "format": get_format_for_url(url, quality=quality),
+        "format_sort": ["res", "ext:mp4:m4a"],
+        "ignore_no_formats_error": True,
         "merge_output_format": "mp4",
         "concurrent_fragment_downloads": 1,
         "force_ipv4": True,
-        "socket_timeout": 60,  # Aumentado de 30s para 60s
-        "http_chunk_size": 262144,  # 256KB (mais estável que 512KB)
-        "retries": 25,  # ✅ CORRIGIDO: Número simples (não dicionário)
-        "fragment_retries": 25,  # Aumentado significativamente
+        "socket_timeout": 60,
+        "http_chunk_size": 262144,
+        "retries": 25,
+        "fragment_retries": 25,
         "no_check_certificate": True,
         "prefer_insecure": True,
-        # OTIMIZAÇÃO #3: Reduz uso de memória
-        "no_cache_dir": True,  # Desabilita cache em disco
-        "buffersize": 1024 * 64,  # 64KB buffer
-        "skip_unavailable_fragments": True,  # Evita falhar com fragmentos indisponíveis
-        # Configurações para evitar cortes e garantir qualidade
+        "no_cache_dir": True,
+        "buffersize": 1024 * 64,
+        "skip_unavailable_fragments": True,
+        "extractor_args": {"youtube": {"skip": ["dash", "hls"]}},
         "postprocessors": [{
             'key': 'FFmpegVideoConvertor',
             'preferedformat': 'mp4',
         }],
-        "keepvideo": False,  # Remove arquivos temporários
-        "prefer_ffmpeg": True,  # Usa FFmpeg para merge (evita cortes)
+        "keepvideo": False,
+        "prefer_ffmpeg": True,
     }
     
     # Configurações específicas para Shopee
