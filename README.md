@@ -1,112 +1,77 @@
-# 🎬 Telegram Media Downloader Bot
+# 🎬 Bot Downloader (Telegram)
 
 <div align="center">
 
-![Python](https://img.shields.io/badge/python-3.9+-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
+![Python](https://img.shields.io/badge/python-3.11-blue.svg)
 ![Telegram](https://img.shields.io/badge/Telegram-Bot-blue.svg?logo=telegram)
-
-**Bot profissional para download de mídias de múltiplas plataformas**
+![Status](https://img.shields.io/badge/status-parado%2Fabandonado-lightgrey.svg)
 
 </div>
+
+> **Status:** projeto parado/abandonado, não está em produção no momento.
 
 ---
 
 ## 📋 Sobre
 
-Bot Telegram para download de vídeos e áudios de diversas plataformas, com sistema de controle de usuários e planos de acesso.
+Bot de Telegram para download de vídeos (YouTube via `yt-dlp` e Shopee via extração direta), com sistema de plano premium pago via **PIX** (Mercado Pago), remoção de marca d'água em vídeos e um assistente de IA (Groq) integrado.
+
+O ponto de entrada real da aplicação é **`bot_with_cookies.py`** — um módulo único (Flask + python-telegram-bot rodando lado a lado) que concentra toda a lógica do projeto.
 
 ### ✨ Funcionalidades
 
-- 🎥 Download de vídeos e áudios
-- 📱 Múltiplas plataformas suportadas
-- 💎 Sistema de planos (gratuito e premium)
-- 🔒 Controle de limites por usuário
-- ⚡ Processamento assíncrono com filas
-- 📊 Estatísticas de uso
+- 🎥 Download de vídeos do YouTube (`yt-dlp`, com suporte a cookies)
+- 🛍️ Extração e download de vídeos do Shopee (link universal + extração direta)
+- 💎 Plano premium com cobrança via **PIX** (Mercado Pago) e ativação automática por webhook
+- 🧼 Remoção de marca d'água em vídeos (`WatermarkRemover`)
+- 🤖 Assistente de IA via Groq (`/ai`, `/buscar`)
+- 📊 Relatórios de uso (`/stats`, `/mensal`)
+- ❤️ Monitoramento de saúde/memória do processo e watchdog de reconexão do webhook
 
 ---
 
 ## 🛠️ Tecnologias
 
-```python
-Python 3.9+
-python-telegram-bot 20.6
+```
+Python 3.11
+python-telegram-bot 22.5
+Flask 3.x + Gunicorn
 yt-dlp
-Flask 3.0
-Gunicorn 21.2
-SQLite 3
+Mercado Pago SDK (PIX)
+Groq (IA)
+SQLite (persistência local)
 ```
 
 ---
 
-## 📦 Instalação
-
-### Pré-requisitos
-
-- Python 3.9+
-- Conta no Telegram Bot ([@BotFather](https://t.me/BotFather))
-
-### Instalação Local
+## 📦 Instalação local
 
 ```bash
-# Clone o repositório
-git clone https://github.com/seu-usuario/telegram-media-bot.git
-cd telegram-media-bot
+git clone https://github.com/alexamoura/bot_youtube_downloader.git
+cd bot_youtube_downloader
 
-# Crie um ambiente virtual
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# Instale as dependências
 pip install -r requirements.txt
-
-# Configure as variáveis de ambiente
-cp .env.example .env
-nano .env
 ```
 
-### requirements.txt
+Também é necessário ter o `ffmpeg` instalado no sistema (usado para processar/comprimir vídeo). Veja o `Dockerfile` para a lista completa de dependências de sistema (inclui também Deno, usado pelo `yt-dlp` para alguns desafios de extração).
 
-```txt
-python-telegram-bot==20.6
-flask==3.0.0
-gunicorn==21.2.0
-yt-dlp==2024.10.22
-requests==2.31.0
-beautifulsoup4==4.12.2
-Pillow==10.1.0
-```
+### Variáveis de ambiente
 
----
-
-## ⚙️ Configuração
-
-### Variáveis de Ambiente
-
-Crie um arquivo `.env`:
-
-```bash
-# Bot Telegram
-TELEGRAM_BOT_TOKEN=seu_token_aqui
-
-# Limites
-FREE_DOWNLOADS_LIMIT=10
-MAX_CONCURRENT_DOWNLOADS=3
-
-# Banco de Dados
-DB_FILE=/data/users.db
-
-# Servidor
-PORT=10000
-```
-
-### Obter Token do Telegram
-
-1. Fale com [@BotFather](https://t.me/BotFather)
-2. Envie `/newbot`
-3. Escolha nome e username
-4. Copie o token fornecido
+| Variável | Obrigatória | Descrição |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | sim | Token do bot, obtido com [@BotFather](https://t.me/BotFather) |
+| `MERCADOPAGO_ACCESS_TOKEN` | sim (para premium) | Access token do Mercado Pago para gerar cobranças PIX |
+| `GROQ_API_KEY` | sim (para IA) | Chave da API Groq usada pelos comandos `/ai` e `/buscar` |
+| `WEBHOOK_URL` | sim (produção) | URL pública para onde o Telegram envia updates (webhook) |
+| `RENDER_EXTERNAL_URL` | opcional | URL externa quando hospedado no Render, usada pelo keepalive |
+| `PORT` | opcional (padrão `10000`) | Porta em que o Gunicorn sobe o servidor Flask |
+| `DB_FILE` | opcional | Caminho do arquivo SQLite de persistência |
+| `PREMIUM_PRICE` | opcional | Valor cobrado pelo plano premium |
+| `PREMIUM_DURATION_DAYS` | opcional | Duração do plano premium em dias |
+| `KEEPALIVE_ENABLED` / `KEEPALIVE_INTERVAL` | opcional | Liga/ajusta a rotina de keepalive (evita hibernação em free tiers) |
 
 ---
 
@@ -115,160 +80,83 @@ PORT=10000
 ### Local
 
 ```bash
-# Ativar ambiente virtual
-source venv/bin/activate
-
-# Executar bot
-python bot.py
-
-# Ou com Gunicorn
-gunicorn bot:app --bind 0.0.0.0:10000
+gunicorn bot_with_cookies:app --bind 0.0.0.0:10000 --workers 1
 ```
 
-### Deploy
+### Docker (recomendado — é como o projeto foi pensado para rodar)
 
-O bot pode ser hospedado em plataformas como:
-
-- **Render** (recomendado para iniciantes)
-- **Heroku**
-- **Railway**
-- **VPS** (Digital Ocean, AWS, etc)
-
-#### Exemplo de Configuração
-
-```yaml
-# render.yaml
-services:
-  - type: web
-    name: telegram-bot
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn bot:app --bind 0.0.0.0:$PORT
+```bash
+docker build -t bot-downloader .
+docker run -p 10000:10000 --env-file .env bot-downloader
 ```
+
+O `Dockerfile` já instala `ffmpeg`, `curl`, `unzip` e `Deno`, e sobe a aplicação com Gunicorn usando um único worker (importante: o estado do bot — caches, filas de pagamento pendente — vive em memória do processo, então não use múltiplos workers sem revisar essa parte primeiro).
 
 ---
 
 ## 📱 Uso
 
-### Comandos
+### Comandos do Telegram
 
 ```
-/start   - Inicializar bot
-/help    - Ajuda
-/status  - Ver estatísticas
+/start    - Inicializar o bot
+/status   - Status/uso do usuário atual
+/stats    - Estatísticas de uso
+/premium  - Informações e compra do plano premium (PIX)
+/ai       - Conversar com o assistente de IA
+/buscar   - Comando de busca via IA
+/mensal   - Relatório mensal (uso administrativo)
 ```
 
-### Exemplo
+Fora dos comandos, o fluxo principal é: o usuário envia um link (YouTube ou Shopee) → o bot detecta a plataforma → baixa/extrai o vídeo → aplica remoção de marca d'água quando configurado → envia o resultado.
 
-```
-Usuário: [envia link de vídeo]
-Bot: [mostra opções de qualidade]
-Usuário: [escolhe qualidade]
-Bot: [processa e envia vídeo]
-```
+### Rotas HTTP (Flask)
+
+| Rota | Descrição |
+|---|---|
+| `POST /<TELEGRAM_BOT_TOKEN>` | Webhook do Telegram (recebe updates) |
+| `GET /` | Rota raiz / ping |
+| `GET /health` | Health check (usado por plataformas de deploy) |
+| `GET /diagnostics` | Diagnóstico de estado interno (memória, filas, etc.) |
+| `POST /webhook/pix` | Webhook do Mercado Pago — confirma pagamento e ativa o premium |
+| `GET/POST /render-webhook` | Endpoint auxiliar usado no keepalive/deploy no Render |
 
 ---
 
-## 🏗️ Arquitetura
+## 🏗️ Arquitetura (real)
+
+Tudo roda dentro do processo único `bot_with_cookies.py`:
 
 ```
-┌─────────────────┐
-│  Telegram API   │
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│  Flask Server   │
-├─────────────────┤
-│  • Webhooks     │
-│  • Routing      │
-└────────┬────────┘
-         │
-    ┌────┴────┐
-    ▼         ▼
-┌────────┐ ┌──────────┐
-│Download│ │ Database │
-│Manager │ │ SQLite   │
-└────────┘ └──────────┘
+┌────────────────────┐        ┌───────────────────────┐
+│   Telegram API      │──────▶│  Flask (webhook route) │
+└────────────────────┘        └──────────┬────────────┘
+                                          │
+                       ┌──────────────────┼──────────────────┐
+                       ▼                  ▼                  ▼
+              ┌────────────────┐ ┌────────────────┐ ┌─────────────────┐
+              │ yt-dlp /       │ │ Mercado Pago    │ │ Groq (IA)       │
+              │ Shopee extractor│ │ PIX (premium)   │ │ /ai, /buscar    │
+              └────────┬───────┘ └────────┬────────┘ └─────────────────┘
+                       ▼                  ▼
+              ┌────────────────┐ ┌────────────────┐
+              │ WatermarkRemover│ │ SQLite (users, │
+              │                 │ │ pagamentos)     │
+              └────────────────┘ └────────────────┘
 ```
 
----
-
-## 📊 Banco de Dados
-
-### Estrutura
-
-```sql
--- Usuários
-CREATE TABLE user_downloads (
-    user_id INTEGER PRIMARY KEY,
-    downloads_count INTEGER DEFAULT 0,
-    last_reset TEXT,
-    is_premium INTEGER DEFAULT 0
-);
-```
+Esse desenho de "tudo em um módulo só" funciona, mas o arquivo já passou de 4700 linhas — uma futura divisão em módulos (bot/, payments/, downloaders/, ai/) é recomendada antes de qualquer nova funcionalidade grande, mas está **fora do escopo** desta limpeza.
 
 ---
 
 ## 🔒 Segurança
 
-### Boas Práticas
-
-- ✅ Nunca commite credenciais
-- ✅ Use variáveis de ambiente
-- ✅ Mantenha dependências atualizadas
-- ✅ Implemente rate limiting
-- ✅ Valide inputs do usuário
-- ✅ Use HTTPS em produção
-
-### .gitignore
-
-```bash
-# Credenciais
-.env
-.env.local
-
-# Database
-*.db
-
-# Python
-__pycache__/
-*.pyc
-
-# Logs
-*.log
-```
-
----
-
-## 🤝 Contribuindo
-
-Contribuições são bem-vindas!
-
-### Como Contribuir
-
-1. Fork o projeto
-2. Crie uma branch (`git checkout -b feature/nova-funcionalidade`)
-3. Commit suas mudanças (`git commit -m 'feat: adiciona funcionalidade'`)
-4. Push para a branch (`git push origin feature/nova-funcionalidade`)
-5. Abra um Pull Request
-
-### Padrões de Código
-
-- Siga PEP 8
-- Use type hints
-- Documente funções
-- Escreva testes quando possível
+- Nunca commite `TELEGRAM_BOT_TOKEN`, `MERCADOPAGO_ACCESS_TOKEN`, `GROQ_API_KEY` ou `cookies.txt` — todos já estão no `.gitignore`.
+- O webhook do Mercado Pago (`/webhook/pix`) processa confirmação de pagamento; qualquer alteração nessa rota deve ser revisada com cuidado antes de ir para produção.
+- Use HTTPS em produção (obrigatório para o webhook do Telegram funcionar).
 
 ---
 
 ## ⚠️ Disclaimer
 
-Este bot é fornecido apenas para fins educacionais. Certifique-se de respeitar os termos de serviço das plataformas. O uso inadequado é de responsabilidade do usuário.
-
----
-
-## 📞 Suporte
-
-- 🐛 [Reportar Bug](https://github.com/seu-usuario/telegram-media-bot/issues)
-- 💡 [Sugerir Funcionalidade](https://github.com/seu-usuario/telegram-media-bot/issues)
-- 📖 [Documentação](https://github.com/seu-usuario/telegram-media-bot/wiki)
+Este projeto está **parado/abandonado** no momento. O download de vídeos de terceiros deve respeitar os termos de serviço de cada plataforma; o uso é de responsabilidade de quem operar o bot.

@@ -291,9 +291,13 @@ class LimitedCache:
     
     def __contains__(self, key):
         return key in self.cache
-    
+
     def get_size(self):
         return len(self.cache)
+
+    def clear(self):
+        """Limpa todo o cache"""
+        self.cache.clear()
 
 # Instância de cache limitado para último download do usuário
 USER_LAST_DOWNLOAD = LimitedCache(max_size=50)  # Reduzido de 300 para 50 - economiza ~50MB
@@ -508,31 +512,6 @@ def webhook_watchdog():
 # ════════════════════════════════════════════════════════════════
 # OTIMIZAÇÕES DE MEMÓRIA
 # ════════════════════════════════════════════════════════════════
-
-class LimitedCache:
-    """Cache com tamanho máximo - evita crescimento infinito de memória"""
-    def __init__(self, max_size=500):
-        self.cache = OrderedDict()
-        self.max_size = max_size
-    
-    def set(self, key, value):
-        """Adiciona item e remove o mais antigo se exceder limite"""
-        if key in self.cache:
-            self.cache.move_to_end(key)
-        self.cache[key] = value
-        if len(self.cache) > self.max_size:
-            self.cache.popitem(last=False)
-    
-    def get(self, key):
-        """Busca item e marca como recentemente usado"""
-        if key in self.cache:
-            self.cache.move_to_end(key)
-            return self.cache[key]
-        return None
-    
-    def clear(self):
-        """Limpa todo o cache"""
-        self.cache.clear()
 
 # Sessão HTTP compartilhada (singleton) - economiza memória
 _GLOBAL_HTTP_SESSION = None
