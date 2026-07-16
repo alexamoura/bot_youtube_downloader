@@ -4353,7 +4353,7 @@ from flask import Flask, request
 from datetime import datetime, timezone, timedelta
 import os
 
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1435259548255518813/JA9d0SJD8n8SWtnjWMLJUr5kA9jLdQyVn5fOi5lYWULKYB2Nv94rD37wF_d8RiGGt5-Z"  # Substitua pela URL do Discord
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")  # opcional: URL de webhook do Discord para alertas
 
 @app.route("/render-webhook", methods=["GET", "POST"])
 def render_webhook():
@@ -4525,6 +4525,20 @@ async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # MAIN
 # ============================
 
+async def _start_long_polling():
+    """Remove webhook (se houver) e inicia o bot em modo long-polling.
+
+    Usado quando WEBHOOK_URL não está definida (ex: VM sem domínio/HTTPS
+    público) — o bot passa a buscar updates ativamente no Telegram em vez
+    de esperar POSTs, então não precisa de porta pública exposta.
+    """
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    await application.start()
+    await application.updater.start_polling(
+        drop_pending_updates=True,
+        allowed_updates=["message", "callback_query"]
+    )
+
 if __name__ == "__main__":
     # Inicia thread de limpeza automática e garbage collection
     cleanup_thread = threading.Thread(target=cleanup_and_gc_routine, daemon=True)
@@ -4612,8 +4626,14 @@ if __name__ == "__main__":
         except Exception as e:
             LOG.error("❌ Erro ao configurar webhook: %s", e)
     else:
-        LOG.warning("⚠️ WEBHOOK_URL não definida - bot não receberá updates!")
-    
+        LOG.info("🔄 WEBHOOK_URL não definida - iniciando em modo long-polling")
+        try:
+            polling_future = asyncio.run_coroutine_threadsafe(_start_long_polling(), APP_LOOP)
+            polling_future.result(timeout=30)
+            LOG.info("✅ Long-polling iniciado com sucesso!")
+        except Exception as e:
+            LOG.exception("❌ Erro ao iniciar long-polling: %s", e)
+
     if __name__ == "__main__":
         port = int(os.environ.get("PORT", 10000))
         LOG.info("🚀 Iniciando servidor Flask na porta %d", port)

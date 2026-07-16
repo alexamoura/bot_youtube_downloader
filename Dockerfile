@@ -24,8 +24,12 @@ RUN pip install --upgrade pip \
 # Copia código da aplicação
 COPY . .
 
-# Define porta padrão (Render usa $PORT)
+# Define porta padrão
 ENV PORT=10000
 
 # Comando para iniciar
-CMD ["gunicorn", "bot_with_cookies:app", "--bind", "0.0.0.0:10000", "--workers", "1"]
+# IMPORTANTE: roda o módulo direto (não via gunicorn) porque a inicialização
+# real (threads de limpeza/GC, keepalive, watchdog, webhook/long-polling)
+# vive dentro do bloco `if __name__ == "__main__":` — sob gunicorn (que
+# importa o módulo) esse bloco nunca executava.
+CMD ["python", "bot_with_cookies.py"]
