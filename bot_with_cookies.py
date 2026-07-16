@@ -2530,15 +2530,6 @@ def format_currency(value: float) -> str:
     """Formata valor monetário em BRL"""
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-def generate_bar_chart(value: int, max_value: int, length: int = 10) -> str:
-    """Gera barra de progresso em ASCII"""
-    if max_value == 0:
-        return "░" * length
-    
-    filled = int((value / max_value) * length)
-    bar = "█" * filled + "░" * (length - filled)
-    return bar
-
 async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handler para o comando /mensal - Relatório detalhado de assinantes premium
@@ -2569,15 +2560,14 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Mensagem de carregamento
     loading_msg = await update.message.reply_text(
-        "📊 <b>Gerando Relatório...</b>\n\n"
-        "⏳ Analisando dados dos assinantes premium...",
+        "Gerando relatório mensal...",
         parse_mode="HTML"
     )
-    
+
     try:
         # Busca estatísticas
         stats = get_premium_monthly_stats()
-        
+
         # Data atual
         now = datetime.now()
         month_name = now.strftime("%B/%Y")
@@ -2589,197 +2579,158 @@ async def mensal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         for en, pt in month_name_pt.items():
             month_name = month_name.replace(en, pt)
-        
+
         # ═══════════════════════════════════════════════════════════
-        # 📊 CABEÇALHO DO RELATÓRIO
+        # CABEÇALHO
         # ═══════════════════════════════════════════════════════════
-        
-        report = f"""╔══════════════════════════════════════════╗
-║   📊 <b>RELATÓRIO MENSAL PREMIUM</b>         ║
-╚══════════════════════════════════════════╝
 
-📅 <b>Período:</b> {month_name}
-🕐 <b>Gerado em:</b> {now.strftime("%d/%m/%Y às %H:%M")}
+        report = (
+            f"<b>Relatório Mensal — Plano Premium</b>\n"
+            f"{month_name} · gerado em {now.strftime('%d/%m/%Y %H:%M')}\n\n"
+        )
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-"""
-        
         # ═══════════════════════════════════════════════════════════
-        # 💎 VISÃO GERAL
+        # VISÃO GERAL
         # ═══════════════════════════════════════════════════════════
-        
-        report += f"""<b>💎 VISÃO GERAL</b>
 
-┌─────────────────────────────────────────┐
-│ 👥 Assinantes Ativos:  <b>{stats['total_active']:>12}</b> │
-│ ✨ Novos este mês:     <b>{stats['new_this_month']:>12}</b> │
-│ ⚠️ Expiram este mês:   <b>{stats['expires_this_month']:>12}</b> │
-│ 📅 Expiram próx. mês:  <b>{stats['expires_next_month']:>12}</b> │
-└─────────────────────────────────────────┘
+        overview_rows = [
+            ("Assinantes ativos", stats['total_active']),
+            ("Novos no mês", stats['new_this_month']),
+            ("Expiram este mês", stats['expires_this_month']),
+            ("Expiram mês seguinte", stats['expires_next_month']),
+        ]
+        overview_table = "\n".join(f"{label:<22}{value:>6}" for label, value in overview_rows)
+        report += f"<b>Visão Geral</b>\n<pre>{overview_table}</pre>\n\n"
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-"""
-        
         # ═══════════════════════════════════════════════════════════
-        # 💰 RECEITA
+        # RECEITA
         # ═══════════════════════════════════════════════════════════
-        
-        report += f"""<b>💰 RECEITA</b>
 
-┌─────────────────────────────────────────┐
-│ 📈 Mensal:  <b>{format_currency(stats['revenue_month']):>21}</b> │
-│ 💎 Total:   <b>{format_currency(stats['revenue_total']):>21}</b> │
-└─────────────────────────────────────────┘
-
-"""
-        
-        # Calcula média por assinante
         avg_per_subscriber = stats['revenue_month'] / stats['new_this_month'] if stats['new_this_month'] > 0 else 0
-        report += f"💵 <b>Ticket Médio:</b> {format_currency(avg_per_subscriber)}\n\n"
-        
-        report += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        
+        revenue_rows = [
+            ("Receita do mês", format_currency(stats['revenue_month'])),
+            ("Receita total", format_currency(stats['revenue_total'])),
+            ("Ticket médio", format_currency(avg_per_subscriber)),
+        ]
+        revenue_table = "\n".join(f"{label:<22}{value:>14}" for label, value in revenue_rows)
+        report += f"<b>Receita</b>\n<pre>{revenue_table}</pre>\n\n"
+
         # ═══════════════════════════════════════════════════════════
-        # 📊 GRÁFICO DE RENOVAÇÕES (próximos 30 dias)
+        # RENOVAÇÕES PRÓXIMAS (30 DIAS)
         # ═══════════════════════════════════════════════════════════
-        
+
         if stats['by_expiry_date']:
-            report += "<b>📊 RENOVAÇÕES PRÓXIMAS (30 DIAS)</b>\n\n"
-            
-            # Filtra apenas próximos 30 dias
             next_30_days = [
                 (date, count) for date, count in stats['by_expiry_date']
                 if datetime.strptime(date, "%Y-%m-%d") <= now + timedelta(days=30)
             ]
-            
+
+            report += "<b>Renovações nos Próximos 30 Dias</b>\n"
             if next_30_days:
-                max_count = max(count for _, count in next_30_days)
-                
-                for expiry_date, count in next_30_days[:10]:  # Mostra apenas primeiros 10
+                lines = []
+                for expiry_date, count in next_30_days[:10]:
                     date_obj = datetime.strptime(expiry_date, "%Y-%m-%d")
-                    days_until = (date_obj - now).days
-                    
-                    # Formatação da data
                     date_formatted = date_obj.strftime("%d/%m")
-                    
-                    # Barra de progresso
-                    bar = generate_bar_chart(count, max_count, length=8)
-                    
-                    # Emoji baseado na urgência
-                    if days_until <= 7:
-                        urgency = "🔴"
-                    elif days_until <= 14:
-                        urgency = "🟡"
-                    else:
-                        urgency = "🟢"
-                    
-                    report += f"{urgency} <code>{date_formatted}</code> │{bar}│ <b>{count}</b>\n"
-                
+                    label = f"{count} assinatura{'s' if count != 1 else ''}"
+                    lines.append(f"{date_formatted:<10}{label:>18}")
+                report += f"<pre>{chr(10).join(lines)}</pre>\n"
                 if len(next_30_days) > 10:
-                    report += f"\n<i>... e mais {len(next_30_days) - 10} datas</i>\n"
+                    report += f"<i>+ {len(next_30_days) - 10} datas adicionais</i>\n"
             else:
-                report += "✅ Nenhuma renovação nos próximos 30 dias\n"
-            
-            report += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        
+                report += "Nenhuma renovação prevista.\n"
+            report += "\n"
+
         # ═══════════════════════════════════════════════════════════
-        # 👥 ÚLTIMOS ASSINANTES
+        # ÚLTIMOS ASSINANTES
         # ═══════════════════════════════════════════════════════════
-        
+
         if stats['recent_subscribers']:
-            report += "<b>👥 ÚLTIMOS ASSINANTES</b>\n\n"
-            
+            report += "<b>Últimos Assinantes</b>\n"
+            lines = []
             for user_id_sub, confirmed_at, amount in stats['recent_subscribers'][:5]:
-                # Formata data
                 try:
                     date_obj = datetime.fromisoformat(confirmed_at.replace('Z', '+00:00'))
-                    date_str = date_obj.strftime("%d/%m/%y %H:%M")
-                except:
+                    date_str = date_obj.strftime("%d/%m %H:%M")
+                except Exception:
                     date_str = confirmed_at[:16] if len(confirmed_at) >= 16 else confirmed_at
-                
+
                 # Mascara user_id (primeiros 3 e últimos 3 dígitos)
                 user_id_str = str(user_id_sub)
                 if len(user_id_str) > 6:
                     masked_id = f"{user_id_str[:3]}***{user_id_str[-3:]}"
                 else:
                     masked_id = user_id_str
-                
-                report += f"🆔 <code>{masked_id}</code> │ {date_str} │ {format_currency(amount)}\n"
-            
+
+                lines.append(f"{masked_id:<12}{date_str:<14}{format_currency(amount):>10}")
+            report += f"<pre>{chr(10).join(lines)}</pre>\n"
             if len(stats['recent_subscribers']) > 5:
-                report += f"\n<i>... e mais {len(stats['recent_subscribers']) - 5} assinantes</i>\n"
-            
-            report += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        
+                report += f"<i>+ {len(stats['recent_subscribers']) - 5} assinantes</i>\n"
+            report += "\n"
+
         # ═══════════════════════════════════════════════════════════
-        # 📈 INSIGHTS E ANÁLISES
+        # INDICADORES
         # ═══════════════════════════════════════════════════════════
-        
-        report += "<b>📈 ANÁLISE</b>\n\n"
-        
-        # Taxa de renovação esperada
+
+        indicator_lines = []
+
         if stats['total_active'] > 0:
             churn_rate = (stats['expires_this_month'] / stats['total_active']) * 100
-            report += f"📊 <b>Taxa de Vencimento:</b> {churn_rate:.1f}%\n"
-        
-        # Crescimento
+            indicator_lines.append(f"Taxa de vencimento: {churn_rate:.1f}%")
+
         if stats['new_this_month'] > stats['expires_this_month']:
             growth = stats['new_this_month'] - stats['expires_this_month']
-            report += f"📈 <b>Crescimento Líquido:</b> +{growth} assinantes\n"
+            indicator_lines.append(f"Crescimento líquido: +{growth}")
         elif stats['new_this_month'] < stats['expires_this_month']:
             decline = stats['expires_this_month'] - stats['new_this_month']
-            report += f"📉 <b>Redução Líquida:</b> -{decline} assinantes\n"
+            indicator_lines.append(f"Redução líquida: -{decline}")
         else:
-            report += f"➡️ <b>Crescimento:</b> Estável\n"
-        
-        # Projeção próximo mês
-        projected_active = stats['total_active'] - stats['expires_this_month'] + stats['expires_this_month']
-        report += f"\n🔮 <b>Projeção próx. mês:</b> {projected_active} ativos\n"
-        
-        report += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        
+            indicator_lines.append("Crescimento: estável")
+
+        if indicator_lines:
+            report += "<b>Indicadores</b>\n"
+            report += "\n".join(f"• {line}" for line in indicator_lines) + "\n\n"
+
         # ═══════════════════════════════════════════════════════════
-        # 🎯 AÇÕES RECOMENDADAS
+        # RECOMENDAÇÕES
         # ═══════════════════════════════════════════════════════════
-        
-        report += "<b>🎯 AÇÕES RECOMENDADAS</b>\n\n"
-        
+
+        recommendations = []
+
         if stats['expires_this_month'] > 0:
-            report += f"⚠️ <b>{stats['expires_this_month']}</b> assinaturas expiram este mês\n"
-            report += "   → Enviar lembrete de renovação\n\n"
-        
+            recommendations.append(
+                f"{stats['expires_this_month']} assinatura(s) expiram este mês — considerar lembrete de renovação."
+            )
+
         if stats['expires_next_month'] > 0:
-            report += f"📅 <b>{stats['expires_next_month']}</b> assinaturas expiram próx. mês\n"
-            report += "   → Preparar campanha de retenção\n\n"
-        
+            recommendations.append(
+                f"{stats['expires_next_month']} assinatura(s) expiram no mês seguinte — planejar retenção."
+            )
+
         if stats['new_this_month'] == 0:
-            report += "🔴 <b>Nenhum novo assinante este mês</b>\n"
-            report += "   → Iniciar campanha de aquisição\n\n"
-        
+            recommendations.append("Nenhum assinante novo este mês — avaliar ações de aquisição.")
+
         if not stats['recent_subscribers']:
-            report += "💡 <b>Dica:</b> Considere criar promoções\n\n"
-        
+            recommendations.append("Sem histórico de assinantes — considerar promoções de lançamento.")
+
+        if recommendations:
+            report += "<b>Recomendações</b>\n"
+            report += "\n".join(f"• {r}" for r in recommendations) + "\n\n"
+
         # ═══════════════════════════════════════════════════════════
-        # 🔗 RODAPÉ
+        # RODAPÉ
         # ═══════════════════════════════════════════════════════════
-        
-        report += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        report += "💡 <i>Use /status para ver dados individuais</i>\n"
-        report += "💳 <i>Use /premium para ver opções de assinatura</i>"
-        
+
+        report += "<i>/status — dados individuais · /premium — planos disponíveis</i>"
+
         # Envia relatório
         await loading_msg.edit_text(report, parse_mode="HTML")
-        
+
         LOG.info("✅ Relatório mensal enviado para usuário %d", user_id)
-        
+
     except Exception as e:
         LOG.exception("❌ Erro ao gerar relatório mensal: %s", e)
         await loading_msg.edit_text(
-            "❌ <b>Erro ao Gerar Relatório</b>\n\n"
-            "Ocorreu um erro ao processar as estatísticas.\n"
-            "Tente novamente em alguns instantes.",
+            "Erro ao gerar relatório. Tente novamente em alguns instantes.",
             parse_mode="HTML"
         )
 
