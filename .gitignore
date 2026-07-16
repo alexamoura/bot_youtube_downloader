@@ -10,6 +10,7 @@ venv/
 cookies.txt
 *.b64
 .env
+dozzle-data/
 
 # OS
 .DS_Store
