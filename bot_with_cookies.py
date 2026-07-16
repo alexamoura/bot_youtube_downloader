@@ -3046,23 +3046,37 @@ async def get_video_info(url: str) -> dict:
         ydl_opts["cookiefile"] = cookie_file
     
     ydl_opts.pop("format", None)
-    
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = await asyncio.to_thread(ydl.extract_info, url, download=False)
-            return info
-    except Exception as e:
-        LOG.error("Erro ao extrair informações com yt-dlp: %s", e)
-        
-        # Se for Shopee e yt-dlp falhou, tenta extração direta
-        if is_shopee:
-            LOG.info("🛍️ Tentando extração direta da Shopee como fallback...")
-            direct_info = extract_shopee_video_direct(url)
-            if direct_info:
-                LOG.info("✅ Extração direta bem-sucedida!")
-                return direct_info
-        
-        return None
+
+    # Retentativa com backoff: extractors como o do TikTok falham de forma
+    # intermitente (challenge anti-bot) mesmo com extractor_retries interno
+    # do yt-dlp, porque esse erro é um ExtractorError "fatal", não um erro
+    # de rede retryable. Tentamos algumas vezes antes de desistir.
+    max_attempts = 3
+    last_error = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = await asyncio.to_thread(ydl.extract_info, url, download=False)
+                return info
+        except Exception as e:
+            last_error = e
+            LOG.warning("Tentativa %d/%d falhou ao extrair informações (%s): %s",
+                        attempt, max_attempts, url[:60], e)
+            if attempt < max_attempts:
+                await asyncio.sleep(2 * attempt)
+
+    LOG.error("Erro ao extrair informações com yt-dlp após %d tentativas: %s", max_attempts, last_error)
+
+    # Se for Shopee e yt-dlp falhou, tenta extração direta
+    if is_shopee:
+        LOG.info("🛍️ Tentando extração direta da Shopee como fallback...")
+        direct_info = extract_shopee_video_direct(url)
+        if direct_info:
+            LOG.info("✅ Extração direta bem-sucedida!")
+            return direct_info
+
+    return None
 
 # ====================================================================
 # FUNÇÕES DE INTELIGÊNCIA ARTIFICIAL (GROQ)
